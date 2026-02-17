@@ -1,0 +1,3 @@
+[submodule "rsrc/chipi-spec"]
+	path = rsrc/chipi-spec
+	url = https://github.com/ioncodes/chipi-spec
