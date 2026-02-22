@@ -27,3 +27,48 @@ pub fn colorize_instr(instr: &disasm::gekko::GekkoInstruction) -> String {
         .collect::<Vec<_>>()
         .join("")
 }
+
+pub fn gpr_refs(instr: &disasm::gekko::GekkoInstruction) -> Vec<u8> {
+    let text = format!("{}", instr);
+    let tokens = tokenizer::tokenize(&text);
+    let mut seen = [false; 32];
+    let mut refs = Vec::new();
+    for tok in tokens {
+        if let AsmToken::Gpr(n) = tok {
+            let n = n as usize;
+            if !seen[n] {
+                seen[n] = true;
+                refs.push(n as u8);
+            }
+        }
+    }
+    refs
+}
+
+pub fn reg_comment(gprs: &[u32; 32], refs: &[u8]) -> String {
+    if refs.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = refs
+        .iter()
+        .map(|&n| format!("r{}={:08X}", n, gprs[n as usize]))
+        .collect();
+    format!("; {}", parts.join(", ")).dimmed().to_string()
+}
+
+pub fn visible_len(s: &str) -> usize {
+    let mut len = 0;
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for c2 in chars.by_ref() {
+                if c2 == 'm' {
+                    break;
+                }
+            }
+        } else {
+            len += 1;
+        }
+    }
+    len
+}

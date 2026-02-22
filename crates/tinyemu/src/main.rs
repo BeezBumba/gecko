@@ -11,6 +11,14 @@ fn main() {
         .expect("Usage: debugger <path_to_rom>");
     let is_debug = std::env::args().any(|arg| arg == "--debug");
 
+    tracing_subscriber::fmt()
+        .without_time()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
+
     let mut gekko = gekko::gekko::Gekko::new(&path);
     let mut prev_snapshot = CpuSnapshot::from_cpu(&gekko.cpu);
 
@@ -23,11 +31,22 @@ fn main() {
             dbg!(&instr);
         }
 
-        println!(
+        let refs = fmt::gpr_refs(&instr);
+        let comment = fmt::reg_comment(&prev_snapshot.gprs, &refs);
+
+        let prefix = format!(
             "{}: {}",
             format!("{:08X}", gekko.cpu.pc).bold(),
             fmt::colorize_instr(&instr)
         );
+        const COMMENT_COL: usize = 50;
+        let pad = COMMENT_COL.saturating_sub(fmt::visible_len(&prefix));
+
+        if comment.is_empty() {
+            println!("{}", prefix);
+        } else {
+            println!("{}{}{}", prefix, " ".repeat(pad), comment);
+        }
 
         gekko.run_until_event();
         let curr_snapshot = CpuSnapshot::from_cpu(&gekko.cpu);

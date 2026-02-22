@@ -21,24 +21,32 @@ impl Mmu {
 
     /// Resolve a physical address to a `(backing_slice, offset)` pair
     /// This is the one place that maps physical addresses to memory regions
+    #[tracing::instrument(skip(self), level = "trace")]
     fn resolve(&self, phys: u32) -> (&[u8], usize) {
         match phys {
             RAM_BASE..=RAM_END => (&self.ram, phys as usize),
             EFB_BASE..=EFB_END => (&self.efb, (phys - EFB_BASE) as usize),
             HW_REG_BASE..=HW_REG_END => (&self.hwr, (phys - HW_REG_BASE) as usize),
-            _ => panic!("unmapped physical read at {phys:#010X}"),
+            _ => {
+                tracing::error!("unmapped physical read at {:08X}", phys);
+                (&self.ram, 0)
+            }
         }
     }
 
     /// Resolve a physical address to a `(backing_slice, offset)` pair
     /// This is the one place that maps physical addresses to memory regions
     /// Returns a mutable slice for write operations
+    #[tracing::instrument(skip(self), level = "trace")]
     fn resolve_mut(&mut self, phys: u32) -> (&mut [u8], usize) {
         match phys {
             RAM_BASE..=RAM_END => (&mut self.ram, phys as usize),
             EFB_BASE..=EFB_END => (&mut self.efb, (phys - EFB_BASE) as usize),
             HW_REG_BASE..=HW_REG_END => (&mut self.hwr, (phys - HW_REG_BASE) as usize),
-            _ => panic!("unmapped physical write at {phys:#010X}"),
+            _ => {
+                tracing::error!("unmapped physical write at {:08X}", phys);
+                (&mut self.ram, 0)
+            }
         }
     }
 

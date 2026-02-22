@@ -1,3 +1,5 @@
+use crate::cpu::branch::BranchControl;
+
 pub fn branch<const OP: u32>(
     ctx: &mut crate::gekko::Gekko,
     instr: crate::cpu::semantics::Instruction,
@@ -6,18 +8,45 @@ pub fn branch<const OP: u32>(
         ctx.cpu.lr = ctx.cpu.cia.wrapping_add(4);
     }
 
-    let target = match OP {
+    match OP {
         crate::cpu::lut::OP_BX => {
-            if instr.aa() {
+            ctx.cpu.nia = if instr.aa() {
                 instr.li() as u32
             } else {
                 ctx.cpu.cia.wrapping_add_signed(instr.li())
             }
         }
-        crate::cpu::lut::OP_BCLRX => ctx.cpu.lr,
+        crate::cpu::lut::OP_BCLRX | crate::cpu::lut::OP_BCX => {
+            let ctrl = BranchControl::from_bo(instr.bo());
+            tracing::trace!("Branch control: {ctrl:?}");
+
+            if ctrl.should_decrement_ctr() {
+                ctx.cpu.ctr = ctx.cpu.ctr.wrapping_sub(1);
+            }
+
+            // TODO: cond missing
+            if !ctrl.should_branch(ctx.cpu.ctr, true) {
+                return;
+            }
+
+            match OP {
+                crate::cpu::lut::OP_BCLRX => {
+                    ctx.cpu.nia = ctx.cpu.lr;
+                }
+                crate::cpu::lut::OP_BCX => {
+                    ctx.cpu.nia = if instr.aa() {
+                        instr.bd() as u32
+                    } else {
+                        ctx.cpu.cia.wrapping_add_signed(instr.bd())
+                    }
+                }
+                _ => {
+                    tracing::error!("missing OP = {OP:#x}");
+                }
+            }
+        }
         _ => todo!("branch instruction with OP = {OP:#x}"),
     };
-    ctx.cpu.nia = target;
 }
 
 pub fn alu<const OP: u32>(
@@ -57,10 +86,10 @@ pub fn msr<const OP: u32>(
 ) {
     match OP {
         crate::cpu::lut::OP_MTMSR => {
-            println!("OP_MTMSR!!");
+            tracing::error!("OP_MTMSR!!");
         }
         crate::cpu::lut::OP_MFMSR => {
-            println!("OP_MFMSR!!");
+            tracing::error!("OP_MFMSR!!");
         }
         _ => todo!("MSR instruction with OP = {OP:#x}"),
     }
@@ -71,9 +100,12 @@ pub fn spr<const OP: u32>(
     instr: crate::cpu::semantics::Instruction,
 ) {
     match OP {
-        crate::cpu::lut::OP_MTSPR => {
-            println!("OP_MTSPR!! {}", instr.spr());
-        }
+        crate::cpu::lut::OP_MTSPR => match instr.spr() {
+            1 => ctx.cpu.xer = ctx.cpu.gprs[instr.rs()],
+            8 => ctx.cpu.lr = ctx.cpu.gprs[instr.rs()],
+            9 => ctx.cpu.ctr = ctx.cpu.gprs[instr.rs()],
+            _ => todo!("unimplemented SPR number {}", instr.spr()),
+        },
         crate::cpu::lut::OP_MFSPR => match instr.spr() {
             1 => ctx.cpu.gprs[instr.rd()] = ctx.cpu.xer,
             8 => ctx.cpu.gprs[instr.rd()] = ctx.cpu.lr,

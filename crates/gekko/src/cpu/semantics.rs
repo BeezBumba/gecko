@@ -32,6 +32,6 @@ impl Instruction {
 
     #[inline] pub fn spr(&self)     -> u32 { let raw = (self.0 >> 11) & 0x3ff; (raw >> 5) | ((raw & 0x1f) << 5) }
 
-    #[inline] pub fn bo(&self)      -> u32 { (self.0 >> 21) & 0x1f }
-    #[inline] pub fn bi(&self)      -> u32 { (self.0 >> 16) & 0x1f }
+    #[inline] pub fn bo(&self)      -> u8 { ((self.0 >> 21) & 0x1f) as u8 }
+    #[inline] pub fn bi(&self)      -> u8 { ((self.0 >> 16) & 0x1f) as u8 }
 }

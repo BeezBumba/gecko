@@ -1,5 +1,6 @@
 pub mod interpreter;
 pub mod semantics;
+pub mod branch;
 
 #[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
 pub mod lut {
