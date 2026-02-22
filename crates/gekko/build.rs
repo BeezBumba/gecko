@@ -13,7 +13,8 @@ fn main() {
         .group("branch", ["bx", "bclrx"])
         .group("alu", ["ori", "addi", "addis"])
         .group("msr", ["mtmsr", "mfmsr"])
-        .group("spr", ["mtspr", "mfspr"]);
+        .group("spr", ["mtspr", "mfspr"])
+        .group("store_load", ["stwu", "sth", "sthu"]);
 
     // Always regenerate the LUT dispatch tables
     builder

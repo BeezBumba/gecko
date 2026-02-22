@@ -1,24 +1,120 @@
+#[cfg(test)]
+mod tests;
+
+pub mod constants;
+use constants::*;
+
 pub struct Mmu {
-    pub memory: Vec<u8>,
+    pub ram: Vec<u8>,
+    pub efb: Vec<u8>,
 }
 
 impl Mmu {
     pub fn new() -> Self {
         Mmu {
-            memory: vec![0; 16 * 1024 * 1024],
+            ram: vec![0; RAM_SIZE],
+            efb: vec![0; EFB_SIZE],
         }
     }
 
-    pub fn read_u8(&self, addr: u32) -> u8 {
-        self.memory[addr as usize]
+    /// Resolve a physical address to a `(backing_slice, offset)` pair
+    /// This is the one place that maps physical addresses to memory regions
+    fn resolve(&self, phys: u32) -> (&[u8], usize) {
+        match phys {
+            RAM_BASE..=RAM_END => (&self.ram, phys as usize),
+            EFB_BASE..=EFB_END => (&self.efb, (phys - EFB_BASE) as usize),
+            HW_REG_BASE..=HW_REG_END => {
+                panic!("unimplemented HW register read at physical {phys:#010X}")
+            }
+            _ => panic!("unmapped physical read at {phys:#010X}"),
+        }
     }
 
-    pub fn read_u32(&self, addr: u32) -> u32 {
-        let a = addr as usize;
-        u32::from_be_bytes(self.memory[a..a + 4].try_into().unwrap())
+    /// Resolve a physical address to a `(backing_slice, offset)` pair
+    /// This is the one place that maps physical addresses to memory regions
+    /// Returns a mutable slice for write operations
+    fn resolve_mut(&mut self, phys: u32) -> (&mut [u8], usize) {
+        match phys {
+            RAM_BASE..=RAM_END => (&mut self.ram, phys as usize),
+            EFB_BASE..=EFB_END => (&mut self.efb, (phys - EFB_BASE) as usize),
+            HW_REG_BASE..=HW_REG_END => {
+                panic!("unimplemented HW register write at physical {phys:#010X}")
+            }
+            _ => panic!("unmapped physical write at {phys:#010X}"),
+        }
     }
 
-    pub fn write_u8(&mut self, addr: u32, value: u8) {
-        self.memory[addr as usize] = value;
+    pub fn phys_read_u8(&self, addr: u32) -> u8 {
+        let (slice, offset) = self.resolve(addr);
+        slice[offset]
+    }
+
+    pub fn phys_read_u16(&self, addr: u32) -> u16 {
+        let (slice, offset) = self.resolve(addr);
+        u16::from_be_bytes(slice[offset..offset + 2].try_into().unwrap())
+    }
+
+    pub fn phys_read_u32(&self, addr: u32) -> u32 {
+        let (slice, offset) = self.resolve(addr);
+        u32::from_be_bytes(slice[offset..offset + 4].try_into().unwrap())
+    }
+
+    pub fn phys_write_u8(&mut self, addr: u32, value: u8) {
+        let (slice, offset) = self.resolve_mut(addr);
+        slice[offset] = value;
+    }
+
+    pub fn phys_write_u16(&mut self, addr: u32, value: u16) {
+        let (slice, offset) = self.resolve_mut(addr);
+        let bytes = value.to_be_bytes();
+        slice[offset..offset + 2].copy_from_slice(&bytes);
+    }
+
+    pub fn phys_write_u32(&mut self, addr: u32, value: u32) {
+        let (slice, offset) = self.resolve_mut(addr);
+        let bytes = value.to_be_bytes();
+        slice[offset..offset + 4].copy_from_slice(&bytes);
+    }
+
+    pub fn virt_read_u8(&self, addr: u32) -> u8 {
+        self.phys_read_u8(Self::virt_to_phys(addr))
+    }
+
+    pub fn virt_read_u16(&self, addr: u32) -> u16 {
+        self.phys_read_u16(Self::virt_to_phys(addr))
+    }
+
+    pub fn virt_read_u32(&self, addr: u32) -> u32 {
+        self.phys_read_u32(Self::virt_to_phys(addr))
+    }
+
+    pub fn virt_write_u8(&mut self, addr: u32, value: u8) {
+        self.phys_write_u8(Self::virt_to_phys(addr), value);
+    }
+
+    pub fn virt_write_u16(&mut self, addr: u32, value: u16) {
+        self.phys_write_u16(Self::virt_to_phys(addr), value);
+    }
+
+    pub fn virt_write_u32(&mut self, addr: u32, value: u32) {
+        self.phys_write_u32(Self::virt_to_phys(addr), value);
+    }
+
+    /// Return a slice of physical memory starting at `addr` with length `len`
+    /// Useful for bulk reads (e.g. disassembler)
+    pub fn phys_slice(&self, addr: u32, len: usize) -> &[u8] {
+        let (slice, offset) = self.resolve(addr);
+        &slice[offset..offset + len]
+    }
+
+    /// Return a slice of virtual memory starting at `addr` with length `len`
+    /// This is just a thin wrapper around `phys_slice` that applies virtual-to-physical translation
+    pub fn virt_slice(&self, addr: u32, len: usize) -> &[u8] {
+        self.phys_slice(Self::virt_to_phys(addr), len)
+    }
+
+    // Simple virtual to physical translation that ignores caching and other MMU features
+    pub fn virt_to_phys(addr: u32) -> u32 {
+        addr & 0x3FFFFFFF
     }
 }

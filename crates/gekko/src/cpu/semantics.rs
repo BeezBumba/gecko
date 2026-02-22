@@ -21,6 +21,7 @@ impl Instruction {
     #[inline] pub fn oe(&self)      -> bool { (self.0 >> 10) & 1 != 0 }
 
     #[inline] pub fn simm(&self)    -> i32 { (self.0 as i16) as i32 }
+    #[inline] pub fn disp(&self)    -> i32 { (self.0 as i16) as i32 }
     #[inline] pub fn uimm(&self)    -> u32 { self.0 & 0xffff }
     #[inline] pub fn sh(&self)      -> u32 { (self.0 >> 11) & 0x1f }
     #[inline] pub fn mb(&self)      -> u32 { (self.0 >>  6) & 0x1f }

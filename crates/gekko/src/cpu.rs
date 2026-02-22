@@ -26,9 +26,9 @@ impl Cpu {
         Cpu {
             gprs: [0; 32],
             fprs: [0.0; 32],
-            pc: 0x100,
-            cia: 0x100,
-            nia: 0x104,
+            pc: 0x80000100,
+            cia: 0x80000100,
+            nia: 0x80000104,
             lr: 0,
             ctr: 0,
             xer: 0,
