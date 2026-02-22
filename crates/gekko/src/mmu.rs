@@ -7,6 +7,7 @@ use constants::*;
 pub struct Mmu {
     pub ram: Vec<u8>,
     pub efb: Vec<u8>,
+    pub hwr: Vec<u8>,
 }
 
 impl Mmu {
@@ -14,6 +15,7 @@ impl Mmu {
         Mmu {
             ram: vec![0; RAM_SIZE],
             efb: vec![0; EFB_SIZE],
+            hwr: vec![0; HW_REG_SIZE],
         }
     }
 
@@ -23,9 +25,7 @@ impl Mmu {
         match phys {
             RAM_BASE..=RAM_END => (&self.ram, phys as usize),
             EFB_BASE..=EFB_END => (&self.efb, (phys - EFB_BASE) as usize),
-            HW_REG_BASE..=HW_REG_END => {
-                panic!("unimplemented HW register read at physical {phys:#010X}")
-            }
+            HW_REG_BASE..=HW_REG_END => (&self.hwr, (phys - HW_REG_BASE) as usize),
             _ => panic!("unmapped physical read at {phys:#010X}"),
         }
     }
@@ -37,9 +37,7 @@ impl Mmu {
         match phys {
             RAM_BASE..=RAM_END => (&mut self.ram, phys as usize),
             EFB_BASE..=EFB_END => (&mut self.efb, (phys - EFB_BASE) as usize),
-            HW_REG_BASE..=HW_REG_END => {
-                panic!("unimplemented HW register write at physical {phys:#010X}")
-            }
+            HW_REG_BASE..=HW_REG_END => (&mut self.hwr, (phys - HW_REG_BASE) as usize),
             _ => panic!("unmapped physical write at {phys:#010X}"),
         }
     }
