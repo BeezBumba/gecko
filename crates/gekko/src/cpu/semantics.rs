@@ -19,3 +19,4 @@ impl Instruction {
         (raw >> 5) | ((raw & 0x1f) << 5)
     }
 }
+

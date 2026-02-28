@@ -117,8 +117,15 @@ pub fn rotate<const OP: u32>(
     match OP {
         crate::cpu::lut::OP_RLWINMX => {
             let r = ctx.cpu.read_gpr(instr.rs()).rotate_left(instr.sh() as u32);
-            let m = ((1u32.overflowing_shl(32 - instr.mb() as u32).0) - 1)
-                & !((1u32.overflowing_shl(31 - instr.me() as u32).0) - 1);
+            let mb = instr.mb() as u32;
+            let me = instr.me() as u32;
+            let begin = 0xFFFF_FFFFu32 >> mb;
+            let end = if me >= 31 {
+                0
+            } else {
+                0xFFFF_FFFFu32 >> (me + 1)
+            };
+            let m = if mb <= me { begin & !end } else { begin | !end };
             ctx.cpu.write_gpr(instr.ra(), r & m);
         }
         _ => todo!("Rotate instruction with OP = {OP:#x}"),
