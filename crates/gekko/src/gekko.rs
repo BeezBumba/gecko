@@ -13,7 +13,7 @@ impl Gekko {
     pub fn new(path: &str) -> Self {
         let mut mmu = mmu::Mmu::new();
         let data = std::fs::read(path).expect("failed to read ROM");
-        mmu.ram[..data.len()].copy_from_slice(&data);
+        mmu.ram[0x3F00..0x3F00 + data.len()].copy_from_slice(&data);
 
         Gekko {
             cpu: cpu::Cpu::new(),

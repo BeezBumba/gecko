@@ -30,7 +30,10 @@ impl Mmu {
                 (&self.hwr, (phys - HW_REG_BASE) as usize)
             }
             _ => {
-                tracing::error!(phys_addr = format!("{:08X}", phys), "unmapped physical read");
+                tracing::error!(
+                    phys_addr = format!("{:08X}", phys),
+                    "unmapped physical read"
+                );
                 (&self.ram, 0)
             }
         }
@@ -48,7 +51,10 @@ impl Mmu {
                 (&mut self.hwr, (phys - HW_REG_BASE) as usize)
             }
             _ => {
-                tracing::error!(phys_addr = format!("{:08X}", phys), "unmapped physical write");
+                tracing::error!(
+                    phys_addr = format!("{:08X}", phys),
+                    "unmapped physical write"
+                );
                 (&mut self.ram, 0)
             }
         }
@@ -56,33 +62,65 @@ impl Mmu {
 
     pub fn phys_read_u8(&self, addr: u32) -> u8 {
         let (slice, offset) = self.resolve(addr);
+        tracing::trace!(
+            phys_addr = format!("{:08X}", addr),
+            value = format!("{:02X}", slice[offset]),
+            "read_u8"
+        );
         slice[offset]
     }
 
     pub fn phys_read_u16(&self, addr: u32) -> u16 {
         let (slice, offset) = self.resolve(addr);
-        u16::from_be_bytes(slice[offset..offset + 2].try_into().unwrap())
+        let value = u16::from_be_bytes(slice[offset..offset + 2].try_into().unwrap());
+        tracing::trace!(
+            phys_addr = format!("{:08X}", addr),
+            value = format!("{:04X}", value),
+            "read_u16"
+        );
+        value
     }
 
     pub fn phys_read_u32(&self, addr: u32) -> u32 {
         let (slice, offset) = self.resolve(addr);
-        u32::from_be_bytes(slice[offset..offset + 4].try_into().unwrap())
+        let value = u32::from_be_bytes(slice[offset..offset + 4].try_into().unwrap());
+        tracing::trace!(
+            phys_addr = format!("{:08X}", addr),
+            value = format!("{:08X}", value),
+            "read_u32"
+        );
+        value
     }
 
     pub fn phys_write_u8(&mut self, addr: u32, value: u8) {
         let (slice, offset) = self.resolve_mut(addr);
+        tracing::trace!(
+            phys_addr = format!("{:08X}", addr),
+            value = format!("{:02X}", value),
+            "write_u8"
+        );
         slice[offset] = value;
     }
 
     pub fn phys_write_u16(&mut self, addr: u32, value: u16) {
         let (slice, offset) = self.resolve_mut(addr);
         let bytes = value.to_be_bytes();
+        tracing::trace!(
+            phys_addr = format!("{:08X}", addr),
+            value = format!("{:04X}", value),
+            "write_u16"
+        );
         slice[offset..offset + 2].copy_from_slice(&bytes);
     }
 
     pub fn phys_write_u32(&mut self, addr: u32, value: u32) {
         let (slice, offset) = self.resolve_mut(addr);
         let bytes = value.to_be_bytes();
+        tracing::trace!(
+            phys_addr = format!("{:08X}", addr),
+            value = format!("{:08X}", value),
+            "write_u32"
+        );
         slice[offset..offset + 4].copy_from_slice(&bytes);
     }
 
@@ -125,6 +163,7 @@ impl Mmu {
 
     // Simple virtual to physical translation that ignores caching and other MMU features
     pub fn virt_to_phys(addr: u32) -> u32 {
+        tracing::trace!(virt_addr = format!("{:08X}", addr), "virt_to_phys");
         addr & 0x3FFFFFFF
     }
 }

@@ -27,7 +27,12 @@ fn main() {
     loop {
         if !is_busyloop {
             let instr = GekkoInstruction::decode(gekko.mmu.virt_slice(gekko.cpu.pc, 4))
-                .expect("failed to decode instruction")
+                .unwrap_or_else(|| {
+                    dump_registers(&prev_snapshot, &prev_snapshot);
+                    dump_memory(&gekko.mmu, gekko.cpu.read_gpr(1));
+
+                    panic!("Failed to decode instruction at {:08X}", gekko.cpu.pc)
+                })
                 .0;
 
             if is_debug {
@@ -141,4 +146,24 @@ fn dump_registers(curr: &CpuSnapshot, prev: &CpuSnapshot) {
     println!("{}", cr_line.trim_end());
 
     println!();
+}
+
+fn dump_memory(mmu: &gekko::mmu::Mmu, addr: u32) {
+    let aligned_addr = addr & !0xF;
+    let start = aligned_addr.wrapping_sub(0x40);
+    let data = mmu.virt_slice(start, 0x80);
+
+    for (i, line) in data.chunks(16).enumerate() {
+        let line_addr = start.wrapping_add((i as u32) * 16);
+        let hex = line
+            .chunks(4)
+            .map(|chunk| {
+                let word = u32::from_be_bytes(chunk.try_into().unwrap());
+                format!("{:08X}", word)
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        println!("{} {}", format!("{:08X}:", line_addr).blue().bold(), hex);
+    }
 }

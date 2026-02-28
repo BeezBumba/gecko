@@ -1,4 +1,4 @@
-use crate::cpu::condition::{self, BranchControl, ConditionField};
+use crate::cpu::condition::{BranchControl, ConditionField};
 
 pub fn branch<const OP: u32>(
     ctx: &mut crate::gekko::Gekko,
@@ -61,6 +61,21 @@ pub fn alu<const OP: u32>(
     instr: crate::cpu::semantics::Instruction,
 ) {
     match OP {
+        crate::cpu::lut::OP_ADDX => {
+            let (res, carry) = ctx
+                .cpu
+                .read_gpr(instr.ra())
+                .overflowing_add(ctx.cpu.read_gpr(instr.rb()));
+            ctx.cpu.write_gpr(instr.rd(), res);
+            if instr.rc() {
+                let cr0 = ConditionField::new()
+                    .with_lt((res as i32) < 0)
+                    .with_gt(res > 0)
+                    .with_eq(res == 0)
+                    .with_so(carry);
+                ctx.cpu.cr.set_cr0(cr0);
+            }
+        }
         crate::cpu::lut::OP_ADDI => {
             let ra = if instr.ra() == 0 {
                 0
@@ -92,6 +107,21 @@ pub fn alu<const OP: u32>(
             );
         }
         _ => todo!("ALU instruction with OP = {OP:#x}"),
+    }
+}
+
+pub fn rotate<const OP: u32>(
+    ctx: &mut crate::gekko::Gekko,
+    instr: crate::cpu::semantics::Instruction,
+) {
+    match OP {
+        crate::cpu::lut::OP_RLWINMX => {
+            let r = ctx.cpu.read_gpr(instr.rs()).rotate_left(instr.sh() as u32);
+            let m = ((1u32.overflowing_shl(32 - instr.mb() as u32).0) - 1)
+                & !((1u32.overflowing_shl(31 - instr.me() as u32).0) - 1);
+            ctx.cpu.write_gpr(instr.ra(), r & m);
+        }
+        _ => todo!("Rotate instruction with OP = {OP:#x}"),
     }
 }
 
