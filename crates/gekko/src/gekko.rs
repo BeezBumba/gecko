@@ -1,19 +1,23 @@
 use crate::{
-    cpu::{self, semantics::Instruction},
-    mmio, scheduler,
+    cpu::{self, Cpu, semantics::Instruction},
+    mmio::Mmio,
+    scheduler::Scheduler,
+    vi::Vi,
 };
+use dol::Dol;
 
 pub struct Gekko {
-    pub cpu: cpu::Cpu,
-    pub scheduler: scheduler::Scheduler,
-    pub mmio: mmio::Mmio,
+    pub cpu: Cpu,
+    pub scheduler: Scheduler,
+    pub mmio: Mmio,
+    pub vi: Vi,
 }
 
 impl Gekko {
     pub fn new(path: &str) -> Self {
-        let mut mmio = mmio::Mmio::new();
+        let mut mmio = Mmio::new();
         let data = std::fs::read(path).expect("failed to read ROM");
-        let dol = dol::Dol::parse(&data);
+        let dol = Dol::parse(&data);
 
         // Copy TEXT sections to memory
         for section in &dol.text_sections {
@@ -40,9 +44,10 @@ impl Gekko {
         }
 
         Gekko {
-            cpu: cpu::Cpu::new(dol.entry_point),
-            scheduler: scheduler::Scheduler { cycles: 0 },
+            cpu: Cpu::new(dol.entry_point),
+            scheduler: Scheduler { cycles: 0 },
             mmio,
+            vi: Vi::new(),
         }
     }
 
@@ -50,6 +55,7 @@ impl Gekko {
         self.cpu.cia = self.cpu.pc;
         self.cpu.nia = self.cpu.cia.wrapping_add(4);
 
+        // Bypass the bus, instructions are always fetched from RAM
         let instr = Instruction(self.mmio.virt_read_u32(self.cpu.cia));
         cpu::lut::dispatch(self, instr);
         self.scheduler.cycles += 1;

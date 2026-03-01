@@ -3,6 +3,7 @@ mod tests;
 
 pub mod constants;
 pub mod traits;
+pub mod bus;
 
 use constants::*;
 

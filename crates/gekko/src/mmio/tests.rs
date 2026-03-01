@@ -45,17 +45,16 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unmapped physical")]
-    fn unmapped_address_panics() {
+    fn unmapped_address_returns_fallback() {
         let mmio = Mmio::new();
-        mmio.phys_read_u8(0x1000_0000);
+        let _ = mmio.phys_read_u8(0x1000_0000);
     }
 
     #[test]
-    #[should_panic(expected = "unimplemented HW register")]
-    fn hw_register_panics() {
+    fn hw_register_range_reads_from_hwr_fallback() {
+        // HW reg reads go to the hwr fallback Vec; default value is 0
         let mmio = Mmio::new();
-        mmio.phys_read_u8(0x0C00_0000);
+        assert_eq!(mmio.phys_read_u8(0x0C00_0000), 0);
     }
 
     #[test]

@@ -1,5 +1,16 @@
-use crate::mmio::{Mmio, traits::MmioRegister};
+use crate::mmio::{Mmio, traits::{MmioAccess, MmioRegister}};
 use chapa::BitEnum;
+
+use super::Vi;
+
+macro_rules! impl_mmio_access {
+    ($reg:ty, $owner:ty, $field:ident) => {
+        impl MmioAccess<$owner> for $reg {
+            fn read(dev: &$owner) -> Self { dev.$field }
+            fn write(self, dev: &mut $owner) { dev.$field = self; }
+        }
+    };
+}
 
 #[derive(Debug, BitEnum)]
 pub enum VideoFormat {
@@ -30,15 +41,30 @@ impl MmioRegister for DisplayConfiguration {
     fn to_raw(self) -> u32 { self.raw() as u32 }
 }
 
+impl MmioAccess<Vi> for DisplayConfiguration {
+    fn read(vi: &Vi) -> Self {
+        vi.dcr
+    }
+
+    fn write(self, vi: &mut Vi) {
+        // TODO: Rising-edge on RST clears the register? Just to test for now
+        if self.reset() && !vi.dcr.reset() {
+            vi.dcr = <DisplayConfiguration as MmioRegister>::from_raw(0);
+        } else {
+            vi.dcr = self;
+        }
+    }
+}
+
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Copy, Clone, Debug)]
 pub struct TopFieldBase {
     #[bits(9..=23, alias = "fbb")]
     pub xfb_addr: u32,
-    
+
     #[bits(24..=27, alias = "xof")]
     pub horizontal_offset: u8,
-    
+
     #[bits(28)]
     pub page_offset: bool,
 
@@ -72,3 +98,6 @@ impl MmioRegister for BottomFieldBase {
     fn from_raw(raw: u32) -> Self { raw.into() }
     fn to_raw(self) -> u32 { self.raw() }
 }
+
+impl_mmio_access!(TopFieldBase, Vi, top_field_base);
+impl_mmio_access!(BottomFieldBase, Vi, bottom_field_base);

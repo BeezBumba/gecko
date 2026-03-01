@@ -9,3 +9,7 @@ pub const EFB_SIZE: usize = 0x0020_0000; // 2 MB
 pub const HW_REG_BASE: u32 = 0x0C00_0000;
 pub const HW_REG_END: u32 = 0x0C7F_FFFF;
 pub const HW_REG_SIZE: usize = 0x0080_0000; // 8 MB
+
+// Hardware block address ranges (physical)
+pub const VI_BASE: u32 = 0x0C00_2000;
+pub const VI_END: u32 = 0x0C00_27FF;

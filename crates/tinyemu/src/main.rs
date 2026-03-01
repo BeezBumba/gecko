@@ -94,9 +94,10 @@ fn main() {
         prev_snapshot = curr_snapshot;
     }
 
-    dump_mmio(&gekko.mmio);
+    dump_mmio(&gekko.vi);
 
-    let pixels = vi::render_xfb(&mut gekko.mmio);
+    println!("Render current XFB:");
+    let pixels = gekko.render_xfb();
     render_kitty(&pixels, vi::XFB_WIDTH, vi::XFB_HEIGHT);
 }
 
@@ -188,14 +189,11 @@ fn dump_memory(mmio: &gekko::mmio::Mmio, addr: u32) {
     }
 }
 
-fn dump_mmio(mmio: &gekko::mmio::Mmio) {
-    let dcr = mmio.read_register::<vi::regs::DisplayConfiguration>();
-    println!("Display Configuration: {:?}", dcr);
-    let tfbl = mmio.read_register::<vi::regs::BottomFieldBase>();
-    println!("Bottom Field Base: {:08X?}", tfbl);
-    let tfbr = mmio.read_register::<vi::regs::TopFieldBase>();
-    println!("Top Field Base: {:08X?}", tfbr);
-    println!("XFB Address: {:08X}", vi::xfb_addr(mmio));
+fn dump_mmio(vi: &gekko::vi::Vi) {
+    println!("Display Configuration: {:?}", vi.dcr);
+    println!("Bottom Field Base: {:08X?}", vi.bottom_field_base);
+    println!("Top Field Base: {:08X?}", vi.top_field_base);
+    println!("XFB Address: {:08X}", vi.xfb_addr());
 }
 
 /// Render pixels (packed 0x00RRGGBB u32s) to the terminal via the Kitty
@@ -206,6 +204,7 @@ fn dump_mmio(mmio: &gekko::mmio::Mmio) {
 ///   f=32    – 32-bit RGBA pixels
 ///   s=W,v=H – dimensions
 ///   m=1     – more chunks follow; m=0 – last (or only) chunk
+#[rustfmt::skip]
 fn render_kitty(pixels: &[u32], width: usize, height: usize) {
     use std::io::Write as _;
 
@@ -215,7 +214,7 @@ fn render_kitty(pixels: &[u32], width: usize, height: usize) {
         rgba.push(((px >> 16) & 0xFF) as u8); // R
         rgba.push(((px >>  8) & 0xFF) as u8); // G
         rgba.push(( px        & 0xFF) as u8); // B
-        rgba.push(0xFF);                        // A
+        rgba.push(0xFF);                      // A
     }
 
     let encoded = base64::engine::general_purpose::STANDARD.encode(&rgba);
