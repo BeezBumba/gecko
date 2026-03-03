@@ -2,22 +2,37 @@ mod fmt;
 mod snaptshot;
 
 use base64::Engine as _;
+use clap::Parser;
 use colored::Colorize;
 use disasm::gekko::GekkoInstruction;
 use snaptshot::CpuSnapshot;
 
+#[derive(Parser)]
+#[command(about = "Gekko CPU emulator / debugger")]
+struct Args {
+    /// Path to the ROM/DOL file
+    rom: String,
+
+    /// Print decoded instructions and register diffs after each step
+    #[arg(long)]
+    debug: bool,
+
+    /// Stop emulation when PC reaches this address (hex, e.g. 0x80003A00)
+    #[arg(long, value_parser = parse_hex_addr)]
+    until: Option<u32>,
+
+    /// Suppress all stdout output (tracing is unaffected)
+    #[arg(long)]
+    quiet: bool,
+}
+
+fn parse_hex_addr(s: &str) -> Result<u32, String> {
+    u32::from_str_radix(s.trim_start_matches("0x"), 16)
+        .map_err(|e| format!("invalid hex address: {e}"))
+}
+
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).expect("Usage: debugger <path_to_rom>").clone();
-    let is_debug = args.iter().any(|arg| arg == "--debug");
-    let until_addr: Option<u32> = args
-        .iter()
-        .position(|arg| arg == "--until")
-        .and_then(|i| args.get(i + 1))
-        .map(|s| {
-            u32::from_str_radix(s.trim_start_matches("0x"), 16)
-                .expect("--until: invalid hex address")
-        });
+    let args = Args::parse();
 
     tracing_subscriber::fmt()
         .without_time()
@@ -27,78 +42,85 @@ fn main() {
         )
         .init();
 
-    let mut gekko = gekko::gekko::Gekko::new(&path);
+    let mut gekko = gekko::gekko::Gekko::new(&args.rom);
+    run_emulator(&mut gekko, &args);
+
+    if !args.quiet {
+        dump_mmio(&gekko.vi);
+        println!("Render current XFB:");
+    }
+
+    let pixels = gekko.render_xfb();
+    let video_format = gekko.vi.dcr.video_format();
+    render_kitty(&pixels, video_format.columns(), video_format.lines());
+}
+
+fn run_emulator(gekko: &mut gekko::gekko::Gekko, args: &Args) {
     let mut prev_snapshot = CpuSnapshot::from_cpu(&gekko.cpu);
-    let mut current_addr = gekko.cpu.pc;
-    let mut is_busyloop = false;
+    let mut prev_pc = gekko.cpu.pc;
+    let mut in_busyloop = false;
 
     loop {
-        if !is_busyloop {
-            let instr = GekkoInstruction::decode(gekko.mmio.virt_slice(gekko.cpu.pc, 4))
-                .unwrap_or_else(|| {
-                    dump_registers(&prev_snapshot, &prev_snapshot);
-                    dump_memory(&gekko.mmio, gekko.cpu.read_gpr(1));
-
-                    panic!("Failed to decode instruction at {:08X}", gekko.cpu.pc)
-                })
-                .0;
-
-            if is_debug {
-                dbg!(&instr);
-            }
-
-            let refs = fmt::gpr_refs(&instr);
-            let comment = fmt::reg_comment(&prev_snapshot.gprs, &refs);
-
-            let prefix = format!(
-                "{}: {}",
-                format!("{:08X}", gekko.cpu.pc).bold(),
-                fmt::colorize_instr(&instr)
-            );
-            const COMMENT_COL: usize = 50;
-            let pad = COMMENT_COL.saturating_sub(fmt::visible_len(&prefix));
-
-            if comment.is_empty() {
-                println!("{}", prefix);
-            } else {
-                println!("{}{}{}", prefix, " ".repeat(pad), comment);
-            }
+        if !in_busyloop && !args.quiet {
+            print_instruction(gekko, &prev_snapshot, args.debug);
         }
 
         gekko.run_until_event();
 
         let curr_snapshot = CpuSnapshot::from_cpu(&gekko.cpu);
+        let curr_pc = gekko.cpu.pc;
 
-        if current_addr == gekko.cpu.pc {
-            if !is_busyloop {
+        if curr_pc == prev_pc {
+            if !in_busyloop && !args.quiet {
                 println!("{}", "Busyloop detected!".bright_red().bold());
-                is_busyloop = true;
             }
+            in_busyloop = true;
         } else {
-            is_busyloop = false;
+            in_busyloop = false;
         }
 
-        current_addr = gekko.cpu.pc;
-
-        if let Some(until) = until_addr {
-            if gekko.cpu.pc == until {
-                break;
-            }
-        }
-
-        if is_debug && !is_busyloop {
+        if args.debug && !in_busyloop && !args.quiet {
             dump_registers(&curr_snapshot, &prev_snapshot);
         }
 
+        prev_pc = curr_pc;
         prev_snapshot = curr_snapshot;
+
+        if args.until.is_some_and(|addr| curr_pc == addr) {
+            break;
+        }
+    }
+}
+
+fn print_instruction(gekko: &gekko::gekko::Gekko, prev_snapshot: &CpuSnapshot, debug: bool) {
+    let instr = GekkoInstruction::decode(gekko.mmio.virt_slice(gekko.cpu.pc, 4))
+        .unwrap_or_else(|| {
+            dump_registers(prev_snapshot, prev_snapshot);
+            dump_memory(&gekko.mmio, gekko.cpu.read_gpr(1));
+            panic!("Failed to decode instruction at {:08X}", gekko.cpu.pc)
+        })
+        .0;
+
+    if debug {
+        dbg!(&instr);
     }
 
-    dump_mmio(&gekko.vi);
+    let refs = fmt::gpr_refs(&instr);
+    let comment = fmt::reg_comment(&prev_snapshot.gprs, &refs);
+    let prefix = format!(
+        "{}: {}",
+        format!("{:08X}", gekko.cpu.pc).bold(),
+        fmt::colorize_instr(&instr)
+    );
 
-    println!("Render current XFB:");
-    let pixels = gekko.render_xfb();
-    let video_format = gekko.vi.dcr.video_format();
-    render_kitty(&pixels, video_format.columns(), video_format.lines());
+    const COMMENT_COL: usize = 50;
+    let pad = COMMENT_COL.saturating_sub(fmt::visible_len(&prefix));
+
+    if comment.is_empty() {
+        println!("{}", prefix);
+    } else {
+        println!("{}{}{}", prefix, " ".repeat(pad), comment);
+    }
 }
 
 fn dump_registers(curr: &CpuSnapshot, prev: &CpuSnapshot) {
@@ -197,7 +219,7 @@ fn dump_mmio(vi: &gekko::vi::Vi) {
 }
 
 /// Render pixels (packed 0x00RRGGBB u32s) to the terminal via the Kitty
-/// graphics protocol
+/// graphics protocol.
 ///
 /// Protocol: APC escape  \x1b_G<key=value,...>;<base64-payload>\x1b\\
 ///   a=T     – transmit + display immediately
@@ -233,7 +255,6 @@ fn render_kitty(pixels: &[u32], width: usize, height: usize) {
     for (idx, chunk) in chunks.iter().enumerate() {
         let more = if idx + 1 < chunks.len() { 1 } else { 0 };
         if idx == 0 {
-            // First chunk: include image metadata
             write!(
                 out,
                 "\x1b_Ga=T,f=32,s={},v={},m={};{}\x1b\\",

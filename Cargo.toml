@@ -1,3 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/gctool", "crates/disasm", "crates/gekko", "crates/tinyemu", "crates/dol"]
+
+[profile.release]
+lto = "fat"
+
+[profile.dev]
+opt-level = 3
