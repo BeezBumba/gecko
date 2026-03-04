@@ -1,4 +1,7 @@
-use crate::cpu::condition::{BranchControl, ConditionField};
+use crate::cpu::{
+    condition::{BranchControl, ConditionField},
+    sr::Sr,
+};
 
 pub fn branch<const OP: u32>(
     ctx: &mut crate::gekko::Gekko,
@@ -172,6 +175,21 @@ pub fn spr<const OP: u32>(
     }
 }
 
+pub fn segment<const OP: u32>(
+    ctx: &mut crate::gekko::Gekko,
+    instr: crate::cpu::semantics::Instruction,
+) {
+    match OP {
+        crate::cpu::lut::OP_MTSR => {
+            ctx.cpu.sr[instr.sr() as usize] = Sr::from_raw(ctx.cpu.read_gpr(instr.rs()))
+        }
+        crate::cpu::lut::OP_MFSR => ctx
+            .cpu
+            .write_gpr(instr.rd(), ctx.cpu.sr[instr.sr() as usize].raw()),
+        _ => todo!("Segment Register instruction with OP = {OP:#x}"),
+    }
+}
+
 pub fn store_load<const OP: u32>(
     ctx: &mut crate::gekko::Gekko,
     instr: crate::cpu::semantics::Instruction,
@@ -235,6 +253,13 @@ pub fn compare<const OP: u32>(
     );
 }
 
+pub fn nop<const OP: u32>(
+    _ctx: &mut crate::gekko::Gekko,
+    _instr: crate::cpu::semantics::Instruction,
+) {
+    tracing::warn!("Executing instruction treated as NOP: OP = {OP:#x}");
+}
+
 #[rustfmt::skip] pub fn twi(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("twi") }
 #[rustfmt::skip] pub fn ps_cmpu0(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("ps_cmpu0") }
 #[rustfmt::skip] pub fn ps_cmpo0(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("ps_cmpo0") }
@@ -280,9 +305,7 @@ pub fn compare<const OP: u32>(
 #[rustfmt::skip] pub fn mcrf(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("mcrf") }
 #[rustfmt::skip] pub fn bclrx(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("bclrx") }
 #[rustfmt::skip] pub fn crnor(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("crnor") }
-#[rustfmt::skip] pub fn rfi(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("rfi") }
 #[rustfmt::skip] pub fn crandc(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("crandc") }
-#[rustfmt::skip] pub fn isync(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("isync") }
 #[rustfmt::skip] pub fn crxor(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("crxor") }
 #[rustfmt::skip] pub fn crnand(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("crnand") }
 #[rustfmt::skip] pub fn crand(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) { todo!("crand") }

@@ -15,8 +15,10 @@ fn main() {
         .group("rotate", ["rlwinmx"])
         .group("msr", ["mtmsr", "mfmsr", "rfi"])
         .group("spr", ["mtspr", "mfspr"])
+        .group("segment", ["mtsr", "mfsr"])
         .group("store_load", ["stw", "stwu", "sth", "sthu", "lwz", "lwzu"])
-        .group("compare", ["cmp", "cmpi"]);
+        .group("compare", ["cmp", "cmpi"])
+        .group("nop", ["isync", "sync"]); // instructions that we can treat as no-ops
 
     // Generate the instruction type with accessor methods
     builder

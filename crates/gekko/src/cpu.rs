@@ -1,8 +1,9 @@
-pub mod interpreter;
-pub mod semantics;
 pub mod condition;
-pub mod spr;
+pub mod interpreter;
 pub mod msr;
+pub mod semantics;
+pub mod spr;
+pub mod sr;
 
 use crate::cpu::condition::ConditionRegister;
 
@@ -16,8 +17,10 @@ pub struct Cpu {
     pub fprs: [f64; 32],
     pub pc: u32,
     pub cr: ConditionRegister,
+    pub fpscr: u32, // TODO: FP Status and Control Register
     pub spr: spr::Spr,
     pub msr: msr::Msr,
+    pub sr: [sr::Sr; 16], // Segment Registers
     // These are used during instruction execution to track the current
     // and next PC values. In essence, by writing to `next_pc`, instructions
     // can change the flow of execution (e.g. for branches and jumps).
@@ -36,6 +39,8 @@ impl Cpu {
             cr: ConditionRegister::new(),
             spr: spr::Spr::default(),
             msr: msr::Msr::default(),
+            fpscr: 0,
+            sr: [sr::Sr::default(); 16],
         }
     }
 
