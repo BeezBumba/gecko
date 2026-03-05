@@ -13,3 +13,18 @@ pub const HW_REG_SIZE: usize = 0x0080_0000; // 8 MB
 // Hardware block address ranges (physical)
 pub const VI_BASE: u32 = 0x0C00_2000;
 pub const VI_END: u32 = 0x0C00_27FF;
+
+pub const PI_BASE: u32 = 0x0C00_3000;
+pub const PI_END: u32 = 0x0C00_3FFF;
+
+pub const MI_BASE: u32 = 0x0C00_4000;
+pub const MI_END: u32 = 0x0C00_4FFF;
+
+pub const DSP_BASE: u32 = 0x0C00_5000;
+pub const DSP_END: u32 = 0x0C00_5FFF;
+
+pub const EXI_BASE: u32 = 0x0C00_6800;
+pub const EXI_END: u32 = 0x0C00_6BFF;
+
+pub const AI_BASE: u32 = 0x0C00_6C00;
+pub const AI_END: u32 = 0x0C00_6FFF;

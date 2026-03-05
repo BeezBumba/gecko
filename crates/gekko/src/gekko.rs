@@ -1,6 +1,11 @@
 use crate::{
+    ai::Ai,
     cpu::{self, Cpu, semantics::Instruction},
+    dsp::Dsp,
+    exi::Exi,
+    mi::Mi,
     mmio::Mmio,
+    pi::Pi,
     scheduler::Scheduler,
     vi::Vi,
 };
@@ -11,6 +16,11 @@ pub struct Gekko {
     pub scheduler: Scheduler,
     pub mmio: Mmio,
     pub vi: Vi,
+    pub pi: Pi,
+    pub mi: Mi,
+    pub dsp: Dsp,
+    pub exi: Exi,
+    pub ai: Ai,
 }
 
 impl Gekko {
@@ -48,6 +58,11 @@ impl Gekko {
             scheduler: Scheduler { cycles: 0 },
             mmio,
             vi: Vi::new(),
+            pi: Pi::new(),
+            mi: Mi::new(),
+            dsp: Dsp::new(),
+            exi: Exi::new(),
+            ai: Ai::new(),
         }
     }
 

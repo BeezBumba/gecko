@@ -52,6 +52,4 @@ pub fn mftb(ctx: &mut crate::gekko::Gekko, instr: crate::cpu::semantics::Instruc
     ctx.cpu.write_gpr(instr.rd(), val);
 }
 
-pub fn nop<const OP: u32>(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) {
-    tracing::warn!("Executing instruction treated as NOP: OP = {OP:#x}");
-}
+pub fn nop<const OP: u32>(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) {}
