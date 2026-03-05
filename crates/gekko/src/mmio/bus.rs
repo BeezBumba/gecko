@@ -82,7 +82,10 @@ impl Gekko {
             BusTarget::Pi       => self.pi.mmio_write_u8(offset, val),
             BusTarget::Mi       => self.mi.mmio_write_u8(offset, val),
             BusTarget::Dsp      => self.dsp.mmio_write_u8(offset, val),
-            BusTarget::Exi      => self.exi.mmio_write_u8(offset, val),
+            BusTarget::Exi      => { 
+                self.exi.mmio_write_u8(offset, val); 
+                self.exi.process_dma_transfers(&mut self.mmio);
+            }
             BusTarget::Ai       => self.ai.mmio_write_u8(offset, val),
             BusTarget::Fallback => self.mmio.phys_write_u8(offset, val),
         }
@@ -96,7 +99,10 @@ impl Gekko {
             BusTarget::Pi       => self.pi.mmio_write_u16(offset, val),
             BusTarget::Mi       => self.mi.mmio_write_u16(offset, val),
             BusTarget::Dsp      => self.dsp.mmio_write_u16(offset, val),
-            BusTarget::Exi      => self.exi.mmio_write_u16(offset, val),
+            BusTarget::Exi      => { 
+                self.exi.mmio_write_u16(offset, val); 
+                self.exi.process_dma_transfers(&mut self.mmio);
+            }
             BusTarget::Ai       => self.ai.mmio_write_u16(offset, val),
             BusTarget::Fallback => self.mmio.phys_write_u16(offset, val),
         }
@@ -110,7 +116,10 @@ impl Gekko {
             BusTarget::Pi       => self.pi.mmio_write_u32(offset, val),
             BusTarget::Mi       => self.mi.mmio_write_u32(offset, val),
             BusTarget::Dsp      => self.dsp.mmio_write_u32(offset, val),
-            BusTarget::Exi      => self.exi.mmio_write_u32(offset, val),
+            BusTarget::Exi      => { 
+                self.exi.mmio_write_u32(offset, val); 
+                self.exi.process_dma_transfers(&mut self.mmio);
+            }
             BusTarget::Ai       => self.ai.mmio_write_u32(offset, val),
             BusTarget::Fallback => self.mmio.phys_write_u32(offset, val),
         }

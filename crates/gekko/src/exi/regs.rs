@@ -1,11 +1,26 @@
 use super::Exi;
+use crate::mmio::traits::{MmioAccess, MmioRegister};
+
+/// Write-1-to-clear helper for EXI CSR registers
+/// Bits 1 (EXIINT), 3 (TCINT), 11 (EXTINT) are write-1-to-clear
+/// Bit 12 (EXT) is read-only (device presence)
+fn write_csr<T: MmioRegister + Copy>(current: &mut T, new: T) {
+    let cur_raw = (*current).to_raw();
+    let new_raw = new.to_raw();
+    const W1C_MASK: u32 = (1 << 1) | (1 << 3) | (1 << 11);
+    const RO_MASK: u32 = 1 << 12;
+    let w1c_bits = (cur_raw & W1C_MASK) & !(new_raw & W1C_MASK);
+    let ro_bits = cur_raw & RO_MASK;
+    let rw_bits = new_raw & !(W1C_MASK | RO_MASK);
+    *current = T::from_raw(w1c_bits | ro_bits | rw_bits);
+}
 
 // --- Channel 0 ---
 
 // 0xCC006800	4	R/W	EXI0CSR - EXI Channel 0 Status Register
 
 crate::mmio_register! {
-    Channel0Status: u32 @ 0xCC006800 => Exi.ch0_csr {
+    Channel0Status: u32 @ 0xCC006800 {
         #[bits(0, alias = "exiintmask")] pub exi_interrupt_mask: bool,
         #[bits(1, alias = "exiint")] pub exi_interrupt: bool,
         #[bits(2, alias = "tcintmask")] pub tc_interrupt_mask: bool,
@@ -16,6 +31,15 @@ crate::mmio_register! {
         #[bits(11, alias = "extint")] pub ext_interrupt: bool,
         #[bits(12, alias = "ext")] pub device_connected: bool,
         #[bits(13, alias = "romdis")] pub rom_descramble_disabled: bool,
+    }
+}
+
+impl MmioAccess<Exi> for Channel0Status {
+    fn read(exi: &Exi) -> Self {
+        exi.ch0_csr
+    }
+    fn write(self, exi: &mut Exi) {
+        write_csr(&mut exi.ch0_csr, self);
     }
 }
 
@@ -38,11 +62,24 @@ crate::mmio_register! {
 // 0xCC00680C	4	R/W	EXI0CR - EXI Channel 0 Control Register
 
 crate::mmio_register! {
-    Channel0Control: u32 @ 0xCC00680C => Exi.ch0_cr {
+    Channel0Control: u32 @ 0xCC00680C {
         #[bits(0, alias = "tstart")] pub transfer_start: bool,
         #[bits(1, alias = "dma")] pub dma_mode: bool,
         #[bits(2..=3, alias = "rw")] pub transfer_type: u8,
         #[bits(4..=5, alias = "tlen")] pub transfer_length: u8,
+    }
+}
+
+impl MmioAccess<Exi> for Channel0Control {
+    fn read(exi: &Exi) -> Self {
+        exi.ch0_cr
+    }
+    fn write(self, exi: &mut Exi) {
+        let was_started = exi.ch0_cr.transfer_start();
+        exi.ch0_cr = self;
+        if self.transfer_start() && !was_started && !self.dma_mode() {
+            exi.start_immediate_transfer(0);
+        }
     }
 }
 
@@ -59,7 +96,7 @@ crate::mmio_register! {
 // 0xCC006814	4	R/W	EXI1CSR - EXI Channel 1 Status Register
 
 crate::mmio_register! {
-    Channel1Status: u32 @ 0xCC006814 => Exi.ch1_csr {
+    Channel1Status: u32 @ 0xCC006814 {
         #[bits(0, alias = "exiintmask")] pub exi_interrupt_mask: bool,
         #[bits(1, alias = "exiint")] pub exi_interrupt: bool,
         #[bits(2, alias = "tcintmask")] pub tc_interrupt_mask: bool,
@@ -69,6 +106,15 @@ crate::mmio_register! {
         #[bits(10, alias = "extintmask")] pub ext_interrupt_mask: bool,
         #[bits(11, alias = "extint")] pub ext_interrupt: bool,
         #[bits(12, alias = "ext")] pub device_connected: bool,
+    }
+}
+
+impl MmioAccess<Exi> for Channel1Status {
+    fn read(exi: &Exi) -> Self {
+        exi.ch1_csr
+    }
+    fn write(self, exi: &mut Exi) {
+        write_csr(&mut exi.ch1_csr, self);
     }
 }
 
@@ -91,11 +137,24 @@ crate::mmio_register! {
 // 0xCC006820	4	R/W	EXI1CR - EXI Channel 1 Control Register
 
 crate::mmio_register! {
-    Channel1Control: u32 @ 0xCC006820 => Exi.ch1_cr {
+    Channel1Control: u32 @ 0xCC006820 {
         #[bits(0, alias = "tstart")] pub transfer_start: bool,
         #[bits(1, alias = "dma")] pub dma_mode: bool,
         #[bits(2..=3, alias = "rw")] pub transfer_type: u8,
         #[bits(4..=5, alias = "tlen")] pub transfer_length: u8,
+    }
+}
+
+impl MmioAccess<Exi> for Channel1Control {
+    fn read(exi: &Exi) -> Self {
+        exi.ch1_cr
+    }
+    fn write(self, exi: &mut Exi) {
+        let was_started = exi.ch1_cr.transfer_start();
+        exi.ch1_cr = self;
+        if self.transfer_start() && !was_started && !self.dma_mode() {
+            exi.start_immediate_transfer(1);
+        }
     }
 }
 
@@ -112,7 +171,7 @@ crate::mmio_register! {
 // 0xCC006828	4	R/W	EXI2CSR - EXI Channel 2 Status Register
 
 crate::mmio_register! {
-    Channel2Status: u32 @ 0xCC006828 => Exi.ch2_csr {
+    Channel2Status: u32 @ 0xCC006828 {
         #[bits(0, alias = "exiintmask")] pub exi_interrupt_mask: bool,
         #[bits(1, alias = "exiint")] pub exi_interrupt: bool,
         #[bits(2, alias = "tcintmask")] pub tc_interrupt_mask: bool,
@@ -122,6 +181,15 @@ crate::mmio_register! {
         #[bits(10, alias = "extintmask")] pub ext_interrupt_mask: bool,
         #[bits(11, alias = "extint")] pub ext_interrupt: bool,
         #[bits(12, alias = "ext")] pub device_connected: bool,
+    }
+}
+
+impl MmioAccess<Exi> for Channel2Status {
+    fn read(exi: &Exi) -> Self {
+        exi.ch2_csr
+    }
+    fn write(self, exi: &mut Exi) {
+        write_csr(&mut exi.ch2_csr, self);
     }
 }
 
@@ -144,11 +212,24 @@ crate::mmio_register! {
 // 0xCC006834	4	R/W	EXI2CR - EXI Channel 2 Control Register
 
 crate::mmio_register! {
-    Channel2Control: u32 @ 0xCC006834 => Exi.ch2_cr {
+    Channel2Control: u32 @ 0xCC006834 {
         #[bits(0, alias = "tstart")] pub transfer_start: bool,
         #[bits(1, alias = "dma")] pub dma_mode: bool,
         #[bits(2..=3, alias = "rw")] pub transfer_type: u8,
         #[bits(4..=5, alias = "tlen")] pub transfer_length: u8,
+    }
+}
+
+impl MmioAccess<Exi> for Channel2Control {
+    fn read(exi: &Exi) -> Self {
+        exi.ch2_cr
+    }
+    fn write(self, exi: &mut Exi) {
+        let was_started = exi.ch2_cr.transfer_start();
+        exi.ch2_cr = self;
+        if self.transfer_start() && !was_started && !self.dma_mode() {
+            exi.start_immediate_transfer(2);
+        }
     }
 }
 

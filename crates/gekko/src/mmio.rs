@@ -153,6 +153,11 @@ impl Mmio {
         &slice[offset..offset + len]
     }
 
+    pub fn phys_slice_mut(&mut self, addr: u32, len: usize) -> &mut [u8] {
+        let (slice, offset) = self.resolve_mut(addr);
+        &mut slice[offset..offset + len]
+    }
+
     /// Return a slice of virtual memory starting at `addr` with length `len`
     /// This is just a thin wrapper around `phys_slice` that applies virtual-to-physical translation
     pub fn virt_slice(&self, addr: u32, len: usize) -> &[u8] {

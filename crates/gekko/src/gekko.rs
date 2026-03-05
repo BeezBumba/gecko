@@ -52,7 +52,6 @@ impl Gekko {
             let addr = bss_start + i;
             mmio.virt_write_u8(addr, 0);
         }
-
         Gekko {
             cpu: Cpu::new(exe.entry_point()),
             scheduler: Scheduler { cycles: 0 },
@@ -61,7 +60,7 @@ impl Gekko {
             pi: Pi::new(),
             mi: Mi::new(),
             dsp: Dsp::new(),
-            exi: Exi::new(),
+            exi: Exi::dummy(),
             ai: Ai::new(),
         }
     }
