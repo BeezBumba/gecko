@@ -47,7 +47,7 @@ impl Exi {
             ch2_length: regs::Channel2DmaLength::from_raw(0),
             ch2_cr: regs::Channel2Control::from_raw(0),
             ch2_data: regs::Channel2Data::from_raw(0),
-            devices: [[None, None, None], [None, None, None], [None, None, None]],
+            devices: std::array::from_fn(|_| std::array::from_fn(|_| None)),
         }
     }
 

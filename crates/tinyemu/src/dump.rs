@@ -90,7 +90,7 @@ pub fn memory(mmio: &gekko::mmio::Mmio, addr: u32) {
     }
 }
 
-pub fn vi(vi: &gekko::vi::Vi) {
+pub fn vi(vi: &gekko::flipper::vi::Vi) {
     println!("Display Configuration: {:?}", vi.dcr);
     println!("Bottom Field Base: {:08X?}", vi.bfbl);
     println!("Top Field Base: {:08X?}", vi.tfbl);

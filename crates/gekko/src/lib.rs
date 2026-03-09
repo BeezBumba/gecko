@@ -1,10 +1,6 @@
-pub mod ai;
 pub mod cpu;
-pub mod dsp;
+pub mod flipper;
 pub mod exi;
 pub mod gekko;
-pub mod mi;
 pub mod mmio;
-pub mod pi;
 pub mod scheduler;
-pub mod vi;
