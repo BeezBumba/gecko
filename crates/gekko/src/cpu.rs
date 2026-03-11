@@ -73,7 +73,7 @@ impl Cpu {
         self.cr.set_cr0(
             condition::ConditionField::new()
                 .with_lt((val as i32) < 0)
-                .with_gt(val > 0)
+                .with_gt((val as i32) > 0)
                 .with_eq(val == 0)
                 .with_so(so),
         );
