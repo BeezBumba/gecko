@@ -30,7 +30,7 @@ pub enum InterruptFlag {
 impl Pi {
     pub fn new() -> Self {
         Pi {
-            intsr: regs::InterruptCause::from_raw(0),
+            intsr: regs::InterruptCause::default(),
             intmr: regs::InterruptMask::from_raw(0),
         }
     }

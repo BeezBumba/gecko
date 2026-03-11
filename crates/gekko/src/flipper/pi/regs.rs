@@ -62,8 +62,16 @@ impl crate::mmio::traits::MmioAccess<Pi> for InterruptCause {
 
     fn read_at(dev: &mut Pi, addr: u32, access_size: u32) -> u32 {
         let val = Self::read_sub(dev.intsr.to_raw(), addr, access_size);
-        dev.intsr = InterruptCause::from_raw(0); // auto-clear
+        // TODO: What should we reset??
+        dev.intsr = InterruptCause::default();
         val
+    }
+}
+
+impl Default for InterruptCause {
+    fn default() -> Self {
+        // RSWST needs to be set
+        Self::from_raw(0).with_rswst(true)
     }
 }
 
