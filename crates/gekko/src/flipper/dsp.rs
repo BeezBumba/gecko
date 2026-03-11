@@ -64,6 +64,13 @@ impl Dsp {
     /// - If ucode upload (falling-edge) was detected (CSR bit 11: 1->0), copy from
     ///   ARAM[0x0000] into IRAM, assert ucode status (CSR bit 10, auto-clears on next CSR
     ///   read), and write the mailbox values (TODO: HLE)
+    /// 
+    /// TODO: However, this entire thing might be bogus. Dolphin also isn't sure whether
+    /// There is a preliminary transfer to ARAM before transfering to IRAM. It might
+    /// actually just be hardcoded to upload ucode from main RAM directly on bit 11 reset...
+    /// We should be able to verify this on hardware by writing different instruction
+    /// sequences to ARAM and main RAM. These sequences should write a unique message to
+    /// the mailbox, so we can determine which one is actually being executed by the DSP.
     #[inline]
     pub fn process_pending_dma(&mut self, mmio: &mut Mmio) {
         // Handle ARAM DMA
