@@ -120,7 +120,11 @@ impl Vi {
     );
 
     pub fn xfb_addr(&self) -> u32 {
-        (self.tfbl.xfb_addr() << 9) | ((self.tfbl.page_offset() as u32) << 24)
+        if self.tfbl.page_offset() {
+            self.tfbl.xfb_addr() << 4
+        } else {
+            self.tfbr.xfb_addr() << 9
+        }
     }
 
     pub fn mmio_read_u8(&mut self, offset: u32) -> u8 {
