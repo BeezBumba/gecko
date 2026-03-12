@@ -121,9 +121,9 @@ impl Vi {
 
     pub fn xfb_addr(&self) -> u32 {
         if self.tfbl.page_offset() {
-            self.tfbl.xfb_addr() << 4
+            self.tfbl.xfb_addr() << 5
         } else {
-            self.tfbr.xfb_addr() << 9
+            self.tfbl.xfb_addr()
         }
     }
 

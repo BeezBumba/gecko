@@ -58,6 +58,12 @@ crate::mmio_register! {
     }
 }
 
+impl DisplayConfiguration {
+    pub fn interlaced(&self) -> bool {
+        !self.nin()
+    }
+}
+
 impl MmioAccess<Vi> for DisplayConfiguration {
     fn read(vi: &Vi) -> Self {
         vi.dcr
@@ -137,7 +143,7 @@ crate::mmio_register! {
 
 crate::mmio_register! {
     TopFieldBase: u32 @ 0xCC00201C => Vi.tfbl {
-        #[bits(9..=23, alias = "fbb")]
+        #[bits(0..=23, alias = "fbb")]
         pub xfb_addr: u32,
 
         #[bits(24..=27, alias = "xof")]
@@ -153,7 +159,7 @@ crate::mmio_register! {
 
 crate::mmio_register! {
     TopFieldBaseRight: u32 @ 0xCC002020 => Vi.tfbr {
-        #[bits(9..=23, alias = "fbb")] pub xfb_addr: u32,
+        #[bits(0..=23, alias = "fbb")] pub xfb_addr: u32,
     }
 }
 
@@ -161,7 +167,7 @@ crate::mmio_register! {
 
 crate::mmio_register! {
     BottomFieldBase: u32 @ 0xCC002024 => Vi.bfbl {
-        #[bits(9..=23, alias = "fbb")]
+        #[bits(0..=23, alias = "fbb")]
         pub xfb_addr: u32,
 
         #[bits(28)]
@@ -174,7 +180,7 @@ crate::mmio_register! {
 
 crate::mmio_register! {
     BottomFieldBaseRight: u32 @ 0xCC002028 => Vi.bfbr {
-        #[bits(9..=23, alias = "fbb")] pub xfb_addr: u32,
+        #[bits(0..=23, alias = "fbb")] pub xfb_addr: u32,
     }
 }
 
