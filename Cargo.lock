@@ -324,9 +324,9 @@ dependencies = [
 
 [[package]]
 name = "chipi"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f9cba4e5437c22ff9f898fb06bfa88c616cc908ea69b634c53497b2d5b50e8"
+checksum = "a7d2ab3ac8eccf8652db81b52914ee4822e03efb764d16e72791a46366071032"
 
 [[package]]
 name = "clap"

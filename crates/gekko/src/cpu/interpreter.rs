@@ -14,6 +14,6 @@ pub use compare::compare;
 pub use cr_ops::cr_ops;
 pub use fp_ops::fp_ops;
 pub use rotate::rotate;
-pub use store_load::{lwarx, store_load, store_load_fp, stwcx_dot};
+pub use store_load::{lwarx, store_load, store_load_fp, store_load_psq, stwcx_dot};
 pub use stubs::*;
 pub use system::{mftb, msr, nop, segment, spr};

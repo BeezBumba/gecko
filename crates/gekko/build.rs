@@ -63,6 +63,12 @@ fn main() {
                 "stfsx", "stfsux", "stfdx", "stfdux",
             ],
         )
+        .group(
+            "store_load_psq",
+            [
+                "psq_l", "psq_lu", "psq_st", "psq_stu", "psq_lx", "psq_lux", "psq_stx", "psq_stux",
+            ],
+        )
         .group("compare", ["cmp", "cmpi", "cmpli", "cmpl"])
         .group(
             "nop",

@@ -3,12 +3,12 @@ include!(concat!(env!("OUT_DIR"), "/gekko_instr.rs"));
 impl Instruction {
     #[inline]
     pub fn disp(&self) -> i32 {
-        self.d_15_0()
+        self.d_16_31()
     }
 
     #[inline]
-    pub fn d_psq(&self) -> i32 {
-        self.d_11_0()
+    pub fn disp_psq(&self) -> i32 {
+        self.d_20_31()
     }
 
     /// The SPR field in PowerPC instructions has a special encoding where
