@@ -249,6 +249,13 @@ pub fn store_load_fp<const OP: u32>(ctx: &mut crate::gekko::Gekko, instr: crate:
                 ctx.cpu.write_gpr(instr.ra(), addr);
             }
         }
+        crate::cpu::lut::OP_STFIWX => {
+            let addr = ctx
+                .cpu
+                .read_gpr_or_zero(instr.ra())
+                .wrapping_add(ctx.cpu.read_gpr(instr.rb()));
+            ctx.write_u32(addr, ctx.cpu.read_fpr(instr.rs()).to_bits() as u32);
+        }
         _ => todo!("FP Store/Load instruction with OP = {OP:#x}"),
     }
 }

@@ -60,7 +60,7 @@ fn main() {
             "store_load_fp",
             [
                 "lfd", "lfdu", "stfd", "stfdu", "lfs", "lfsu", "stfs", "stfsu", "lfsx", "lfsux", "lfdx", "lfdux",
-                "stfsx", "stfsux", "stfdx", "stfdux",
+                "stfsx", "stfsux", "stfdx", "stfdux", "stfiwx",
             ],
         )
         .group(
@@ -96,7 +96,41 @@ fn main() {
                 "mtfsfx", "mffsx", "mtfsb0x", "mtfsb1x", "mtfsfix", "mcrfs", "fmrx", "fnegx", "fabsx", "fnabsx",
                 "frspx", "fctiwx", "fctiwzx", "fcmpu", "fcmpo", "faddx", "fsubx", "fmulx", "fdivx", "fmaddx", "fmsubx",
                 "fnmaddx", "fnmsubx", "faddsx", "fsubsx", "fmulsx", "fdivsx", "fmaddsx", "fmsubsx", "fnmaddsx",
-                "fnmsubsx",
+                "fnmsubsx", "fsqrtsx", "fresx", "fsqrtx", "fselx", "frsqrtex",
+            ],
+        )
+        .group(
+            "ps_ops",
+            [
+                "ps_cmpu0",
+                "ps_cmpo0",
+                "ps_cmpu1",
+                "ps_cmpo1",
+                "ps_res",
+                "ps_rsqrte",
+                "ps_neg",
+                "ps_mr",
+                "ps_nabs",
+                "ps_abs",
+                "ps_merge00",
+                "ps_merge01",
+                "ps_merge10",
+                "ps_merge11",
+                "ps_sum0",
+                "ps_sum1",
+                "ps_muls0",
+                "ps_muls1",
+                "ps_madds0",
+                "ps_madds1",
+                "ps_div",
+                "ps_sub",
+                "ps_add",
+                "ps_sel",
+                "ps_mul",
+                "ps_msub",
+                "ps_madd",
+                "ps_nmsub",
+                "ps_nmadd",
             ],
         );
 

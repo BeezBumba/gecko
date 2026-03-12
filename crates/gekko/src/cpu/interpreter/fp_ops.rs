@@ -168,6 +168,16 @@ pub fn fp_ops<const OP: u32>(ctx: &mut crate::gekko::Gekko, instr: crate::cpu::s
             (-(ctx.cpu.read_fpr(instr.ra()) * ctx.cpu.read_fpr(instr.fc()) - ctx.cpu.read_fpr(instr.rb()))) as f32
                 as f64,
         ),
+        crate::cpu::lut::OP_FSQRTX => fp_write(ctx, &instr, ctx.cpu.read_fpr(instr.rb()).sqrt()),
+        crate::cpu::lut::OP_FSQRTSX => fp_write(ctx, &instr, (ctx.cpu.read_fpr(instr.rb()).sqrt()) as f32 as f64),
+        crate::cpu::lut::OP_FRESX => fp_write(ctx, &instr, (1.0f32 / ctx.cpu.read_fpr(instr.rb()) as f32) as f64),
+        crate::cpu::lut::OP_FRSQRTEX => fp_write(ctx, &instr, 1.0 / ctx.cpu.read_fpr(instr.rb()).sqrt()),
+        crate::cpu::lut::OP_FSELX => {
+            let fa = ctx.cpu.read_fpr(instr.ra());
+            let fb = ctx.cpu.read_fpr(instr.rb());
+            let fc = ctx.cpu.read_fpr(instr.fc());
+            fp_write(ctx, &instr, if fa >= 0.0 { fc } else { fb });
+        }
 
         _ => todo!("FP instruction with OP = {OP:#x}"),
     }

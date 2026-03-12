@@ -15,8 +15,8 @@ pub mod lut {
 
 pub struct Cpu {
     pub gprs: [u32; 32],
-    pub fprs: [f64; 32],  // PS0
-    pub ps1s: [f64; 32],  // PS1 (paired single slot 1)
+    pub fprs: [f64; 32], // PS0
+    pub ps1s: [f64; 32], // PS1 (paired single slot 1)
     pub pc: u32,
     pub cr: ConditionRegister,
     pub fpscr: u32, // TODO: FP Status and Control Register
