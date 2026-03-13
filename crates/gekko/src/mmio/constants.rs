@@ -31,4 +31,4 @@ pub const AI_END: u32 = 0x0C00_6FFF;
 
 // GX Write Gather Pipe
 pub const GX_FIFO_BASE: u32 = 0x0C00_8000;
-pub const GX_FIFO_END: u32 = 0x0C00_8003;
+pub const GX_FIFO_END: u32 = 0x0C00_801F;
