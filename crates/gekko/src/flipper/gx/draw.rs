@@ -1,3 +1,5 @@
+use chapa::BitEnum;
+
 #[derive(Debug)]
 pub enum Primitive {
     Quads,
@@ -33,6 +35,30 @@ impl Primitive {
 pub struct Vertex {
     pub position: [f32; 3],
     pub color0: [f32; 4],
+    pub tex0: Option<[f32; 2]>,
+}
+
+#[derive(BitEnum, Debug, PartialEq, Eq, Hash)]
+pub enum TextureFormat {
+    I4 = 0x0,
+    I8 = 0x1,
+    IA4 = 0x2,
+    IA8 = 0x3,
+    RGB565 = 0x4,
+    RGB5A3 = 0x5,
+    RGBA8 = 0x6,
+    CI4 = 0x8,
+    CI8 = 0x9,
+    CI14 = 0xA,
+    CMPR = 0xE,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TextureDescriptor {
+    pub ram_addr: usize,
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,
 }
 
 pub struct DrawCall {
@@ -70,4 +96,5 @@ pub struct DrawCommands {
     pub modelview: Matrix4,
     pub projection: Matrix4,
     pub commands: Vec<DrawCall>,
+    pub textures: [Option<TextureDescriptor>; 8],
 }

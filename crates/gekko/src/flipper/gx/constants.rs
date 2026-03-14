@@ -33,3 +33,21 @@ pub const XF_MODELVIEW_BASE: usize = 0x0000;
 pub const XF_MODELVIEW_END: usize = 0x000B;
 pub const XF_PROJECTION_BASE: usize = 0x1020;
 pub const XF_PROJECTION_END: usize = 0x1026;
+
+// BP texture register base addresses (maps 0-3: base, maps 4-7: base + 0x20)
+pub const BP_TX_SETMODE0_I0: usize = 0x80; // TX_SETMODE0 maps 0-3
+pub const BP_TX_SETMODE1_I0: usize = 0x84; // TX_SETMODE1 maps 0-3
+pub const BP_TX_SETIMAGE0_I0: usize = 0x88; // TX_SETIMAGE0 maps 0-3 (width/height/format)
+pub const BP_TX_SETIMAGE1_I0: usize = 0x8C; // TX_SETIMAGE1 maps 0-3
+pub const BP_TX_SETIMAGE2_I0: usize = 0x90; // TX_SETIMAGE2 maps 0-3
+pub const BP_TX_SETIMAGE3_I0: usize = 0x94; // TX_SETIMAGE3 maps 0-3 (IMAGE_BASE = addr >> 5)
+pub const BP_TX_SETMODE0_I4: usize = 0xA0; // TX_SETMODE0 maps 4-7
+pub const BP_TX_SETMODE1_I4: usize = 0xA4; // TX_SETMODE1 maps 4-7
+pub const BP_TX_SETIMAGE0_I4: usize = 0xA8; // TX_SETIMAGE0 maps 4-7
+pub const BP_TX_SETIMAGE1_I4: usize = 0xAC; // TX_SETIMAGE1 maps 4-7
+pub const BP_TX_SETIMAGE2_I4: usize = 0xB0; // TX_SETIMAGE2 maps 4-7
+pub const BP_TX_SETIMAGE3_I4: usize = 0xB4; // TX_SETIMAGE3 maps 4-7 (IMAGE_BASE = addr >> 5)
+
+// BP PE (Pixel Engine) registers
+pub const BP_PE_DONE: usize = 0x45;
+pub const BP_PE_DONE_FINISH_BIT: u32 = 0x02;

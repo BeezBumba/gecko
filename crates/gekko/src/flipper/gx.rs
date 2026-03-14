@@ -7,11 +7,13 @@ use super::pi::InterruptFlag;
 use crate::{
     flipper::gx::{
         constants::{
-            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_REG_SIZE, CP_REG_SIZE, VATA_REG, VCD_HI_REG,
-            VCD_LO_REG, XF_MEM_SIZE, XF_MODELVIEW_BASE, XF_MODELVIEW_END, XF_PROJECTION_BASE, XF_PROJECTION_END,
+            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_PE_DONE, BP_PE_DONE_FINISH_BIT, BP_REG_SIZE,
+            BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, CP_REG_SIZE, VATA_REG,
+            VCD_HI_REG, VCD_LO_REG, XF_MEM_SIZE, XF_MODELVIEW_BASE, XF_MODELVIEW_END, XF_PROJECTION_BASE,
+            XF_PROJECTION_END,
         },
         draw::DrawCommands,
-        regs::{VatA, VcdHi, VcdLo},
+        regs::{TxSetImage0, TxSetImage3, VatA, VcdHi, VcdLo},
     },
     gekko::Gekko,
     mmio::Mmio,
@@ -78,7 +80,8 @@ impl Gx {
             let clr0_base = self.cp_regs[ARRAY_BASE_REG + ARRAY_CLR0] as usize;
             let clr0_stride = self.cp_regs[ARRAY_STRIDE_REG + ARRAY_CLR0] as usize;
 
-            let tex0_size = match vcd_hi.tex0() {
+            let tex0_attr = vcd_hi.tex0();
+            let tex0_size = match tex0_attr {
                 regs::AttributeType::Direct => vat_a.tex0_data_size(),
                 regs::AttributeType::Index8 => 1,
                 regs::AttributeType::Index16 => 2,
@@ -104,8 +107,17 @@ impl Gx {
                 let clr0_size = vat_a.clr0_data_size();
                 let clr0_data = &mmio.ram[clr0_addr..clr0_addr + clr0_size];
 
-                // Skip tex0 bytes
-                cur.set_position(cur.position() + tex0_size as u64);
+                // Read tex0
+                let tex0 = if tex0_attr == regs::AttributeType::Direct && vat_a.tex0_cnt() == regs::TexCount::St {
+                    let mut s_buf = [0u8; 4];
+                    let mut t_buf = [0u8; 4];
+                    cur.read_exact(&mut s_buf).unwrap();
+                    cur.read_exact(&mut t_buf).unwrap();
+                    Some([f32::from_be_bytes(s_buf), f32::from_be_bytes(t_buf)])
+                } else {
+                    cur.set_position(cur.position() + tex0_size as u64);
+                    None
+                };
 
                 tracing::debug!(
                     vertex = i,
@@ -119,7 +131,7 @@ impl Gx {
                 let position = Self::decode_position(pos_data, &vat_a);
                 let color0 = Self::decode_color(clr0_data, &vat_a);
 
-                vertices.push(draw::Vertex { position, color0 });
+                vertices.push(draw::Vertex { position, color0, tex0 });
             }
 
             if let Some(primitive) = draw::Primitive::from_cmd(cmd) {
@@ -281,8 +293,49 @@ impl Gx {
             "BP register write"
         );
 
-        // PE finish: register 0x45, bit 1
-        if idx == 0x45 && (val & 0x02) != 0 {
+        // TX_SETIMAGE3 is written last for each texture slot, so we use it as
+        // the trigger to snapshot the full texture descriptor
+        let texture_slot = if idx >= BP_TX_SETIMAGE3_I0 && idx < BP_TX_SETIMAGE3_I0 + 4 {
+            Some(idx - BP_TX_SETIMAGE3_I0)
+        } else if idx >= BP_TX_SETIMAGE3_I4 && idx < BP_TX_SETIMAGE3_I4 + 4 {
+            Some(idx - BP_TX_SETIMAGE3_I4 + 4)
+        } else {
+            None
+        };
+
+        if let Some(slot) = texture_slot {
+            let image0_reg = if slot < 4 {
+                BP_TX_SETIMAGE0_I0 + slot
+            } else {
+                BP_TX_SETIMAGE0_I4 + (slot - 4)
+            };
+
+            let image0 = TxSetImage0::from_raw(self.bp_regs[image0_reg]);
+            let image3 = TxSetImage3::from_raw(val);
+
+            let width = image0.width();
+            let height = image0.height();
+            let ram_addr = image3.ram_addr();
+
+            tracing::debug!(
+                slot,
+                width,
+                height,
+                format = format!("{:?}", image0.format()),
+                ram_addr = format!("{ram_addr:#010X}"),
+                "texture descriptor updated"
+            );
+
+            self.draw_commands.textures[slot] = Some(draw::TextureDescriptor {
+                ram_addr,
+                width: width as u32,
+                height: height as u32,
+                format: image0.format(),
+            });
+        }
+
+        // PE finish
+        if idx == BP_PE_DONE && (val & BP_PE_DONE_FINISH_BIT) != 0 {
             self.raise_interrupt = true;
         }
     }

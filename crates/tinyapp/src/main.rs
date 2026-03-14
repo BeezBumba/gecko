@@ -128,8 +128,13 @@ impl State {
         });
 
         let (texture, bind_group) = create_xfb_texture(&device, &bind_group_layout, w, h);
-        let gx_renderer =
-            backend_wgpu::GxRenderer::new(&device, surface_format, surface_config.width, surface_config.height);
+        let gx_renderer = backend_wgpu::GxRenderer::new(
+            &device,
+            &queue,
+            surface_format,
+            surface_config.width,
+            surface_config.height,
+        );
 
         State {
             surface,
@@ -182,6 +187,7 @@ impl State {
             &self.device,
             &self.queue,
             &emulator.gx.draw_commands,
+            &emulator.mmio.ram,
             view,
             self.surface_config.width,
             self.surface_config.height,

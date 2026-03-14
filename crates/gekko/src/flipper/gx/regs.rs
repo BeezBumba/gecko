@@ -1,5 +1,7 @@
 use chapa::BitEnum;
 
+use crate::flipper::gx::draw::TextureFormat;
+
 #[derive(Debug, PartialEq, BitEnum)]
 pub enum TexCount {
     S,  // 1D coordinate
@@ -158,4 +160,31 @@ pub struct VcdLo {
 
     #[bits(13..=14)]
     pub color0: AttributeType,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct TxSetImage0 {
+    #[bits(0..=9)]
+    pub width: u16, // width - 1
+
+    #[bits(10..=19)]
+    pub height: u16, // height - 1
+
+    #[bits(20..=23)]
+    pub format: TextureFormat,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct TxSetImage3 {
+    #[bits(0..=23)]
+    pub image_base: u32,
+}
+
+impl TxSetImage3 {
+    /// Physical RAM address (image_base << 5)
+    pub fn ram_addr(&self) -> usize {
+        self.image_base() as usize * 32
+    }
 }

@@ -1,22 +1,39 @@
-use gekko::flipper::gx::draw::{DrawCall, DrawCommands, Primitive};
+mod texture;
+
+use gekko::flipper::gx::draw::{DrawCall, DrawCommands, Primitive, TextureFormat};
+use std::collections::HashMap;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuVertex {
     position: [f32; 3],
     color: [f32; 4],
+    tex0: [f32; 2],
+}
+
+impl From<&gekko::flipper::gx::draw::Vertex> for GpuVertex {
+    fn from(v: &gekko::flipper::gx::draw::Vertex) -> Self {
+        Self {
+            position: v.position,
+            color: v.color0,
+            tex0: v.tex0.unwrap_or([0.0, 0.0]),
+        }
+    }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
-    mvp: [[f32; 4]; 4],
+    mvp: [[f32; 4]; 4], // 64 bytes
+    has_texture: u32,   // 4 bytes
+    _padding: [u8; 28], // 28 bytes
 }
 
 const SHADER: &str = include_str!("gx.wgsl");
 
 pub struct GxRenderer {
     pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     vertex_buffer: wgpu::Buffer,
@@ -25,10 +42,21 @@ pub struct GxRenderer {
     depth_view: wgpu::TextureView,
     depth_width: u32,
     depth_height: u32,
+    sampler: wgpu::Sampler,
+    /// Cache: (ram_addr, width, height, format) -> (wgpu Texture, TextureView)
+    texture_cache: HashMap<(usize, u32, u32, TextureFormat), (wgpu::Texture, wgpu::TextureView)>,
+    /// Fallback 1x1 white texture view used when no texture is bound
+    fallback_view: wgpu::TextureView,
 }
 
 impl GxRenderer {
-    pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat, width: u32, height: u32) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gx_shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -36,16 +64,34 @@ impl GxRenderer {
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -67,6 +113,11 @@ impl GxRenderer {
                     format: wgpu::VertexFormat::Float32x4,
                     offset: 12,
                     shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 28,
+                    shader_location: 2,
                 },
             ],
         };
@@ -115,13 +166,63 @@ impl GxRenderer {
             mapped_at_creation: false,
         });
 
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("gx_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gx_fallback_tex"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        // White pixel
+        queue.write_texture(
+            fallback_texture.as_image_copy(),
+            &[255u8, 255, 255, 255],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let fallback_view = fallback_texture.create_view(&Default::default());
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&fallback_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
         });
 
         let initial_capacity = 1024;
@@ -138,6 +239,7 @@ impl GxRenderer {
 
         GxRenderer {
             pipeline,
+            bind_group_layout,
             bind_group,
             uniform_buffer,
             vertex_buffer,
@@ -146,6 +248,9 @@ impl GxRenderer {
             depth_view,
             depth_width,
             depth_height,
+            sampler,
+            texture_cache: HashMap::new(),
+            fallback_view,
         }
     }
 
@@ -171,6 +276,7 @@ impl GxRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         commands: &DrawCommands,
+        ram: &[u8],
         target: &wgpu::TextureView,
         target_width: u32,
         target_height: u32,
@@ -178,7 +284,47 @@ impl GxRenderer {
         self.ensure_depth_texture(device, target_width, target_height);
 
         let mvp = commands.projection * commands.modelview;
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&Uniforms { mvp: mvp.0 }));
+        let has_texture = commands.textures[0].is_some() as u32;
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&Uniforms {
+                mvp: mvp.0,
+                has_texture,
+                _padding: [0; 28],
+            }),
+        );
+
+        // Upload texture slot 0 if present, using cache to avoid redundant uploads
+        let tex_view = if let Some(desc) = &commands.textures[0] {
+            let key = (desc.ram_addr, desc.width, desc.height, desc.format);
+            if !self.texture_cache.contains_key(&key) {
+                let (tex, view) = texture::upload_texture(device, queue, ram, desc);
+                self.texture_cache.insert(key, (tex, view));
+            }
+            &self.texture_cache[&key].1
+        } else {
+            &self.fallback_view
+        };
+
+        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(tex_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
 
         let vertices = triangulate(&commands.commands);
         if vertices.is_empty() {
@@ -250,50 +396,26 @@ fn create_depth_texture(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture
     let view = tex.create_view(&Default::default());
     (tex, view)
 }
-
 fn triangulate(draw_calls: &[DrawCall]) -> Vec<GpuVertex> {
     let mut out = Vec::new();
     for dc in draw_calls {
         match dc.primitive {
             Primitive::Triangles => {
                 for v in &dc.vertices {
-                    out.push(GpuVertex {
-                        position: v.position,
-                        color: v.color0,
-                    });
+                    out.push(v.into());
                 }
             }
             Primitive::Quads => {
                 for quad in dc.vertices.chunks(4) {
                     if quad.len() < 4 {
-                        println!("quad with less than 4 vertices");
                         continue;
                     }
-
-                    out.push(GpuVertex {
-                        position: quad[0].position,
-                        color: quad[0].color0,
-                    });
-                    out.push(GpuVertex {
-                        position: quad[1].position,
-                        color: quad[1].color0,
-                    });
-                    out.push(GpuVertex {
-                        position: quad[2].position,
-                        color: quad[2].color0,
-                    });
-                    out.push(GpuVertex {
-                        position: quad[0].position,
-                        color: quad[0].color0,
-                    });
-                    out.push(GpuVertex {
-                        position: quad[2].position,
-                        color: quad[2].color0,
-                    });
-                    out.push(GpuVertex {
-                        position: quad[3].position,
-                        color: quad[3].color0,
-                    });
+                    out.push((&quad[0]).into());
+                    out.push((&quad[1]).into());
+                    out.push((&quad[2]).into());
+                    out.push((&quad[0]).into());
+                    out.push((&quad[2]).into());
+                    out.push((&quad[3]).into());
                 }
             }
             _ => unimplemented!("triangulation for {:?}", dc.primitive),
