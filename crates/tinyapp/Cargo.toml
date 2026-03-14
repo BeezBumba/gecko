@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 gekko = { path = "../gekko" }
 image = { path = "../image" }
-wgpu = "24"
+wgpu = "28.0.0"
 winit = "0.30"
 pollster = "0.4"
