@@ -20,7 +20,7 @@ egui-winit = { git = "https://github.com/ioncodes/egui.git" }
 
 [profile.release]
 lto = "fat"
-debug = true
+#debug = true
 
 [profile.dev]
 opt-level = 3

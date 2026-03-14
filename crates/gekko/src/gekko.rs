@@ -22,10 +22,11 @@ pub struct Gekko {
     pub dsp: Dsp,
     pub exi: Exi,
     pub gx: Gx,
+    idle_skip: bool,
 }
 
 impl Gekko {
-    pub fn new(exe: &impl Executable) -> Self {
+    pub fn new(exe: &impl Executable, idle_skip: bool) -> Self {
         let mut mmio = Mmio::new();
         let data = exe.data();
 
@@ -64,6 +65,7 @@ impl Gekko {
             dsp: Dsp::new(),
             exi: Exi::dummy(),
             gx: Gx::new(),
+            idle_skip,
         }
     }
 
@@ -93,6 +95,14 @@ impl Gekko {
         let instr = Instruction(self.mmio.virt_read_u32(self.cpu.cia));
         cpu::lut::dispatch(self, instr);
         self.scheduler.cycles += 1;
+
+        // Idle skip: if the instruction branches to itself, fast-forward to the next event
+        // TODO: SUPER EXPERIMENTAL, trying stuff out cause of hazel and vxpm
+        if self.idle_skip && self.cpu.nia == self.cpu.cia {
+            if let Some(deadline) = self.scheduler.next_event_deadline() {
+                self.scheduler.cycles = deadline;
+            }
+        }
 
         self.cpu.pc = self.cpu.nia;
     }

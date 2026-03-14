@@ -1,5 +1,5 @@
-use chapa::BitEnum;
 use super::regs::{AlphaCompare, BlendMode, ZMode};
+use chapa::BitEnum;
 
 #[derive(Debug)]
 pub enum Primitive {

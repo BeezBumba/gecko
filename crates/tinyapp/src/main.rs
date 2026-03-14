@@ -38,7 +38,7 @@ struct State {
 }
 
 impl State {
-    fn new(window: Arc<Window>, emulator: &Gekko) -> Self {
+    fn new(window: Arc<Window>, emulator: &Gekko, present_mode: wgpu::PresentMode) -> Self {
         let (w, h) = emulator.frame_size();
         let (w, h) = (w as u32, h as u32);
 
@@ -73,7 +73,7 @@ impl State {
             format: surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Immediate,
+            present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -230,7 +230,7 @@ impl State {
                 .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
                 .frame(frame)
                 .show(&ctx, |ui| {
-                    ui.label(egui::RichText::new(format!("{fps:.1} FPS  {native_pct:.1}% native")).monospace());
+                    ui.label(egui::RichText::new(format!("{fps:.1} FPS  {native_pct:.1}%")).monospace());
                     Plot::new("fps_plot")
                         .height(60.0)
                         .width(180.0)
@@ -425,6 +425,7 @@ struct App {
     emulator: Gekko,
     window: Option<Arc<Window>>,
     state: Option<State>,
+    present_mode: wgpu::PresentMode,
 }
 
 impl ApplicationHandler for App {
@@ -434,7 +435,8 @@ impl ApplicationHandler for App {
                 .create_window(Window::default_attributes().with_title("Gekko"))
                 .unwrap(),
         );
-        let state = State::new(window.clone(), &self.emulator);
+
+        let state = State::new(window.clone(), &self.emulator, self.present_mode);
         window.request_redraw();
         self.window = Some(window);
         self.state = Some(state);
@@ -471,15 +473,23 @@ fn main() {
         std::process::exit(1);
     }
 
+    let present_mode = std::env::args()
+        .any(|arg| arg == "--immediate")
+        .then(|| wgpu::PresentMode::Immediate)
+        .unwrap_or(wgpu::PresentMode::Fifo);
+    let idle_skip = std::env::args()
+        .any(|arg| arg == "--idle-skip");
+
     let rom_data = std::fs::read(&args[1]).expect("failed to read ROM");
     let dol = Dol::parse(rom_data);
-    let emulator = Gekko::new(&dol);
+    let emulator = Gekko::new(&dol, idle_skip);
 
     let event_loop = EventLoop::new().unwrap();
     let mut app = App {
         emulator,
         window: None,
         state: None,
+        present_mode,
     };
     event_loop.run_app(&mut app).unwrap();
 }

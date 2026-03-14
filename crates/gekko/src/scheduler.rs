@@ -34,4 +34,8 @@ impl Scheduler {
             None
         }
     }
+
+    pub fn next_event_deadline(&self) -> Option<u64> {
+        self.events.peek().map(|Reverse((d, _))| *d)
+    }
 }

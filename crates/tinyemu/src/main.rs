@@ -48,7 +48,7 @@ fn main() {
 
     let rom_data = std::fs::read(&args.rom).expect("failed to read ROM");
     let dol = image::Dol::parse(rom_data);
-    let mut gekko = gekko::gekko::Gekko::new(&dol);
+    let mut gekko = gekko::gekko::Gekko::new(&dol, false);
 
     let symbols = args.elf.as_ref().map(|path| {
         let elf_data = std::fs::read(path).expect("failed to read ELF file");
