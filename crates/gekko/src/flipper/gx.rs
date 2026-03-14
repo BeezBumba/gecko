@@ -15,8 +15,8 @@ use crate::{
         },
         draw::DrawCommands,
         regs::{
-            AlphaCompare, BlendMode, GenMode, TevColorEnv, TevRegType, TevRegisterH, TevRegisterL, TxSetImage0,
-            TxSetImage3, VatA, VcdHi, VcdLo, ZMode,
+            AlphaCompare, BlendMode, GenMode, TevAlphaEnv, TevColorEnv, TevRegType, TevRegisterH, TevRegisterL,
+            TxSetImage0, TxSetImage3, VatA, VcdHi, VcdLo, ZMode,
         },
     },
     gekko::Gekko,
@@ -367,11 +367,6 @@ impl Gx {
             });
         }
 
-        // PE finish
-        if idx == BP_PE_DONE && (val & BP_PE_DONE_FINISH_BIT) != 0 {
-            self.raise_interrupt = true;
-        }
-
         // Forward PE render state to draw commands
         match idx {
             BP_PE_ZMODE => self.draw_commands.bp_zmode = ZMode::from_raw(val),
@@ -385,9 +380,35 @@ impl Gx {
         if idx >= BP_TEV_COLOR_ENV_0 && idx < BP_TEV_COLOR_ENV_0 + 32 {
             let stage = (idx - BP_TEV_COLOR_ENV_0) / 2;
             if idx % 2 == 0 {
-                self.draw_commands.tev_color_env[stage] = TevColorEnv::from_raw(val);
+                let env = TevColorEnv::from_raw(val);
+                tracing::debug!(
+                    stage,
+                    a = format!("{:?}", env.a()),
+                    b = format!("{:?}", env.b()),
+                    c = format!("{:?}", env.c()),
+                    d = format!("{:?}", env.d()),
+                    bias = format!("{:?}", env.bias()),
+                    sub = env.sub(),
+                    scale = format!("{:?}", env.scale()),
+                    dest = format!("{:?}", env.dest()),
+                    "TEV color env"
+                );
+                self.draw_commands.tev_color_env[stage] = env;
             } else {
-                self.draw_commands.tev_alpha_env[stage] = val;
+                let env = TevAlphaEnv::from_raw(val);
+                tracing::debug!(
+                    stage,
+                    a = format!("{:?}", env.a()),
+                    b = format!("{:?}", env.b()),
+                    c = format!("{:?}", env.c()),
+                    d = format!("{:?}", env.d()),
+                    bias = format!("{:?}", env.bias()),
+                    sub = env.sub(),
+                    scale = format!("{:?}", env.scale()),
+                    dest = format!("{:?}", env.dest()),
+                    "TEV alpha env"
+                );
+                self.draw_commands.tev_alpha_env[stage] = env;
             }
         }
 
@@ -401,12 +422,26 @@ impl Gx {
             let reg_idx = (idx - BP_TEV_REGISTERL_0) / 2;
             if idx % 2 == 0 {
                 let reg = TevRegisterL::from_raw(val);
+                tracing::debug!(
+                    reg_idx,
+                    r = reg.r(),
+                    a = reg.a(),
+                    reg_type = format!("{:?}", reg.reg_type()),
+                    "TEV register lo"
+                );
                 match reg.reg_type() {
                     TevRegType::Color => self.draw_commands.tev_color_regs_lo[reg_idx] = reg,
                     TevRegType::Constant => self.draw_commands.tev_const_regs_lo[reg_idx] = reg,
                 }
             } else {
                 let reg = TevRegisterH::from_raw(val);
+                tracing::debug!(
+                    reg_idx,
+                    g = reg.g(),
+                    b = reg.b(),
+                    reg_type = format!("{:?}", reg.reg_type()),
+                    "TEV register hi"
+                );
                 match reg.reg_type() {
                     TevRegType::Color => self.draw_commands.tev_color_regs_hi[reg_idx] = reg,
                     TevRegType::Constant => self.draw_commands.tev_const_regs_hi[reg_idx] = reg,
@@ -417,7 +452,14 @@ impl Gx {
         // GEN_MODE, extract num TEV stages
         if idx == BP_GEN_MODE {
             let gen_mode = GenMode::from_raw(val);
-            self.draw_commands.num_tev_stages = gen_mode.num_tev_stages() + 1;
+            let stages = gen_mode.num_tev_stages() + 1;
+            tracing::debug!(num_tev_stages = stages, "GEN_MODE");
+            self.draw_commands.num_tev_stages = stages;
+        }
+
+        // PE finish
+        if idx == BP_PE_DONE && (val & BP_PE_DONE_FINISH_BIT) != 0 {
+            self.raise_interrupt = true;
         }
     }
 

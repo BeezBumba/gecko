@@ -1,4 +1,4 @@
-use super::regs::{AlphaCompare, BlendMode, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
+use super::regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
 use chapa::BitEnum;
 
 #[derive(Debug)]
@@ -102,7 +102,7 @@ pub struct DrawCommands {
 
     // TEV state
     pub tev_color_env: [TevColorEnv; 16],
-    pub tev_alpha_env: [u32; 16],
+    pub tev_alpha_env: [TevAlphaEnv; 16],
 
     // RGBA for each TEV register
     pub tev_color_regs_lo: [TevRegisterL; 4],

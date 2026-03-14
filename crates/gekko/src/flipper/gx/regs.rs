@@ -314,18 +314,18 @@ impl TxSetImage3 {
 // TEV color combiner input select (SELA-SELD)
 #[derive(Debug, PartialEq, BitEnum)]
 pub enum TevColorIn {
-    CPrev = 0x0,
-    APrev = 0x1,
-    C0 = 0x2,
-    A0 = 0x3,
-    C1 = 0x4,
-    A1 = 0x5,
-    C2 = 0x6,
-    A2 = 0x7,
-    TexC = 0x8,
-    TexA = 0x9,
-    RasC = 0xA,
-    RasA = 0xB,
+    PrevColor = 0x0,
+    PrevAlpha = 0x1,
+    Reg0Color = 0x2,
+    Reg0Alpha = 0x3,
+    Reg1Color = 0x4,
+    Reg1Alpha = 0x5,
+    Reg2Color = 0x6,
+    Reg2Alpha = 0x7,
+    TexColor = 0x8,
+    TexAlpha = 0x9,
+    RasColor = 0xA,
+    RasAlpha = 0xB,
     One = 0xC,
     Half = 0xD,
     Konst = 0xE,
@@ -371,6 +371,51 @@ pub struct TevColorEnv {
 
     #[bits(12..=15)]
     pub a: TevColorIn,
+
+    #[bits(16..=17)]
+    pub bias: TevBias,
+
+    #[bits(18)]
+    pub sub: bool,
+
+    #[bits(19)]
+    pub clamp: bool,
+
+    #[bits(20..=21)]
+    pub scale: TevScale,
+
+    #[bits(22..=23)]
+    pub dest: TevRegId,
+}
+
+// TEV alpha combiner input select (SELA-SELD)
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TevAlphaIn {
+    PrevAlpha = 0,
+    Reg0Alpha = 1,
+    Reg1Alpha = 2,
+    Reg2Alpha = 3,
+    TexAlpha = 4,
+    RasAlpha = 5,
+    Konst = 6,
+    Zero = 7,
+}
+
+// BP 0xC1+stage*2 TEV
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TevAlphaEnv {
+    #[bits(4..=6)]
+    pub d: TevAlphaIn,
+
+    #[bits(7..=9)]
+    pub c: TevAlphaIn,
+
+    #[bits(10..=12)]
+    pub b: TevAlphaIn,
+
+    #[bits(13..=15)]
+    pub a: TevAlphaIn,
 
     #[bits(16..=17)]
     pub bias: TevBias,
