@@ -128,7 +128,12 @@ impl State {
         });
 
         let (texture, bind_group) = create_xfb_texture(&device, &bind_group_layout, w, h);
-        let gx_renderer = backend_wgpu::GxRenderer::new(&device, surface_format, w, h);
+        let gx_renderer = backend_wgpu::GxRenderer::new(
+            &device,
+            surface_format,
+            surface_config.width,
+            surface_config.height,
+        );
 
         State {
             surface,
@@ -177,8 +182,14 @@ impl State {
     }
 
     fn render_gx(&mut self, emulator: &mut Gekko, view: &wgpu::TextureView) {
-        self.gx_renderer
-            .render(&self.device, &self.queue, &emulator.gx.draw_commands, view);
+        self.gx_renderer.render(
+            &self.device,
+            &self.queue,
+            &emulator.gx.draw_commands,
+            view,
+            self.surface_config.width,
+            self.surface_config.height,
+        );
         emulator.gx.draw_commands.commands.clear();
     }
 

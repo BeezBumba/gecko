@@ -23,6 +23,8 @@ pub struct GxRenderer {
     vertex_capacity: usize,
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
+    depth_width: u32,
+    depth_height: u32,
 }
 
 impl GxRenderer {
@@ -130,7 +132,9 @@ impl GxRenderer {
             mapped_at_creation: false,
         });
 
-        let (depth_texture, depth_view) = create_depth_texture(device, width, height);
+        let depth_width = width.max(1);
+        let depth_height = height.max(1);
+        let (depth_texture, depth_view) = create_depth_texture(device, depth_width, depth_height);
 
         GxRenderer {
             pipeline,
@@ -140,13 +144,26 @@ impl GxRenderer {
             vertex_capacity: initial_capacity,
             depth_texture,
             depth_view,
+            depth_width,
+            depth_height,
         }
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        self.ensure_depth_texture(device, width, height);
+    }
+
+    fn ensure_depth_texture(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if (width, height) == (self.depth_width, self.depth_height) {
+            return;
+        }
         let (tex, view) = create_depth_texture(device, width, height);
         self.depth_texture = tex;
         self.depth_view = view;
+        self.depth_width = width;
+        self.depth_height = height;
     }
 
     pub fn render(
@@ -155,7 +172,11 @@ impl GxRenderer {
         queue: &wgpu::Queue,
         commands: &DrawCommands,
         target: &wgpu::TextureView,
+        target_width: u32,
+        target_height: u32,
     ) {
+        self.ensure_depth_texture(device, target_width, target_height);
+
         let mvp = commands.projection * commands.modelview;
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&Uniforms { mvp: mvp.0 }));
 
