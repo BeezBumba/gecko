@@ -1,5 +1,4 @@
 use crate::flipper::gx::{Gx, constants::{DRAW_TRIANGLES_CMD, VCD_LO_REG}, regs::VcdLo};
-
 use super::constants::{BP_CMD, CP_CMD, XF_CMD};
 
 impl Gx {

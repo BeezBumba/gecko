@@ -1,4 +1,5 @@
 pub mod constants;
+pub mod draw;
 pub mod fifo;
 pub mod regs;
 
@@ -6,9 +7,10 @@ use super::pi::InterruptFlag;
 use crate::{
     flipper::gx::{
         constants::{
-            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_REG_SIZE, CP_REG_SIZE,
-            VATA_REG, VCD_LO_REG, XF_MEM_SIZE,
+            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_REG_SIZE, CP_REG_SIZE, VATA_REG, VCD_LO_REG,
+            XF_MEM_SIZE,
         },
+        draw::DrawCall,
         regs::{VatA, VcdLo},
     },
     gekko::Gekko,
@@ -18,6 +20,7 @@ use fifo::FifoCmd;
 
 pub struct Gx {
     pub raise_interrupt: bool,
+    pub draw_commands: Vec<DrawCall>,
     bp_regs: Vec<u32>,
     cp_regs: Vec<u32>,
     xf_mem: Vec<u32>,
@@ -32,6 +35,7 @@ impl Gx {
             cp_regs: vec![0; CP_REG_SIZE],
             xf_mem: vec![0; XF_MEM_SIZE],
             fifo: Vec::with_capacity(256),
+            draw_commands: Vec::new(),
         }
     }
 
@@ -75,6 +79,8 @@ impl Gx {
             let vertex_stride = vcd_lo.position().size() + vcd_lo.color0().size();
             let vertex_count = data.len() / vertex_stride;
 
+            let mut vertices: Vec<draw::Vertex> = Vec::with_capacity(vertex_count);
+
             for i in 0..vertex_count {
                 let offset = i * vertex_stride;
                 let mut cursor = offset;
@@ -100,6 +106,112 @@ impl Gx {
                     clr0_data = format!("{:02X?}", clr0_data),
                     "Vertex"
                 );
+
+                let position = Self::decode_position(pos_data, &vat_a);
+                let color0 = Self::decode_color(clr0_data, &vat_a);
+
+                vertices.push(draw::Vertex { position, color0 });
+            }
+
+            if let Some(primitive) = draw::Primitive::from_cmd(cmd) {
+                tracing::debug!(
+                    primitive = format!("{:?}", primitive),
+                    vertices = format!("{:?}", vertices),
+                    "draw call created"
+                );
+                self.draw_commands.push(draw::DrawCall { primitive, vertices });
+            }
+        }
+    }
+
+    fn decode_position(data: &[u8], vat: &VatA) -> [f32; 3] {
+        let num = vat.pos_cnt().components();
+        let fmt = vat.pos_fmt();
+        let divisor = (1u32 << vat.pos_shift()) as f32;
+        let mut result = [0.0f32; 3];
+        let mut off = 0;
+
+        for i in 0..num {
+            result[i] = match fmt {
+                regs::ComponentFormat::U8 => {
+                    let v = data[off] as f32 / divisor;
+                    off += 1;
+                    v
+                }
+                regs::ComponentFormat::S8 => {
+                    let v = data[off] as i8 as f32 / divisor;
+                    off += 1;
+                    v
+                }
+                regs::ComponentFormat::U16 => {
+                    let v = u16::from_be_bytes([data[off], data[off + 1]]) as f32 / divisor;
+                    off += 2;
+                    v
+                }
+                regs::ComponentFormat::S16 => {
+                    let v = i16::from_be_bytes([data[off], data[off + 1]]) as f32 / divisor;
+                    off += 2;
+                    v
+                }
+                regs::ComponentFormat::F32 => {
+                    let v = f32::from_bits(u32::from_be_bytes([
+                        data[off],
+                        data[off + 1],
+                        data[off + 2],
+                        data[off + 3],
+                    ]));
+                    off += 4;
+                    v
+                }
+            };
+        }
+        result
+    }
+
+    fn decode_color(data: &[u8], vat: &VatA) -> [f32; 4] {
+        let has_alpha = vat.clr0_cnt() == regs::ColorCount::Rgba;
+        match vat.clr0_fmt() {
+            regs::ColorFormat::Rgb565 => {
+                let raw = u16::from_be_bytes([data[0], data[1]]);
+                let r = ((raw >> 11) & 0x1F) as f32 / 31.0;
+                let g = ((raw >> 5) & 0x3F) as f32 / 63.0;
+                let b = (raw & 0x1F) as f32 / 31.0;
+                [r, g, b, 1.0]
+            }
+            regs::ColorFormat::Rgb8 => [
+                data[0] as f32 / 255.0,
+                data[1] as f32 / 255.0,
+                data[2] as f32 / 255.0,
+                1.0,
+            ],
+            regs::ColorFormat::Rgbx8 => [
+                data[0] as f32 / 255.0,
+                data[1] as f32 / 255.0,
+                data[2] as f32 / 255.0,
+                1.0,
+            ],
+            regs::ColorFormat::Rgba4 => {
+                let raw = u16::from_be_bytes([data[0], data[1]]);
+                let r = ((raw >> 12) & 0xF) as f32 / 15.0;
+                let g = ((raw >> 8) & 0xF) as f32 / 15.0;
+                let b = ((raw >> 4) & 0xF) as f32 / 15.0;
+                let a = (raw & 0xF) as f32 / 15.0;
+                [r, g, b, a]
+            }
+            regs::ColorFormat::Rgba6 => {
+                let raw = u32::from_be_bytes([0, data[0], data[1], data[2]]);
+                let r = ((raw >> 18) & 0x3F) as f32 / 63.0;
+                let g = ((raw >> 12) & 0x3F) as f32 / 63.0;
+                let b = ((raw >> 6) & 0x3F) as f32 / 63.0;
+                let a = (raw & 0x3F) as f32 / 63.0;
+                [r, g, b, a]
+            }
+            regs::ColorFormat::Rgba8 => {
+                let r = data[0] as f32 / 255.0;
+                let g = data[1] as f32 / 255.0;
+                let b = data[2] as f32 / 255.0;
+                let a = if has_alpha { data[3] as f32 / 255.0 } else { 1.0 };
+                [r, g, b, a]
             }
         }
     }
