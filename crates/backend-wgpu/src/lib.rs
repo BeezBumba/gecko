@@ -1,7 +1,7 @@
 mod texture;
 
 use gekko::flipper::gx::draw::{DrawCall, DrawCommands, Primitive, TextureFormat};
-use gekko::flipper::gx::regs::{BlendFactor, CompareFunc};
+use gekko::flipper::gx::regs::{BlendFactor, CompareFunc, TevRegisterH, TevRegisterL};
 use std::collections::HashMap;
 
 #[repr(C)]
@@ -25,14 +25,60 @@ impl From<&gekko::flipper::gx::draw::Vertex> for GpuVertex {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
-    mvp: [[f32; 4]; 4],
-    tev_color_source: u32, // 0 = vertex color, 1 = texture
-    alpha_ref0: f32,
-    alpha_ref1: f32,
-    alpha_comp0: u32, // CompareFunc as u32
-    alpha_comp1: u32,
-    alpha_op: u32, // AlphaOp as u32
-    _padding: [u32; 2],
+    mvp: [[f32; 4]; 4],            // 64B
+    tev_color_regs: [[f32; 4]; 4], // 64B — TEVPREV, TEVREG0-2 as float RGBA
+    tev_color_env: [u32; 16],      // 64B — raw bitfields per stage
+    tev_alpha_env: [u32; 16],      // 64B — raw bitfields per stage
+    tev_stage_orders: [u32; 16],   // 64B — pre-unpacked per-stage order
+    num_tev_stages: u32,           // 4B
+    alpha_ref0: f32,               // 4B
+    alpha_ref1: f32,               // 4B
+    alpha_comp0: u32,              // 4B
+    alpha_comp1: u32,              // 4B
+    alpha_op: u32,                 // 4B
+    _padding: [u32; 2],            // 8B — pad to 16-byte alignment
+}
+
+/// Sign-extend an 11-bit value stored in a u16 to f32, normalized by /255.
+fn s11_to_f32(val: u16) -> f32 {
+    let signed = if val & 0x400 != 0 {
+        val as i32 - 0x800
+    } else {
+        val as i32
+    };
+    signed as f32 / 255.0
+}
+
+fn decode_tev_color_regs(lo: &[TevRegisterL; 4], hi: &[TevRegisterH; 4]) -> [[f32; 4]; 4] {
+    let mut out = [[0.0f32; 4]; 4];
+    for i in 0..4 {
+        out[i] = [
+            s11_to_f32(lo[i].r()),
+            s11_to_f32(hi[i].g()),
+            s11_to_f32(hi[i].b()),
+            s11_to_f32(lo[i].a()),
+        ];
+    }
+    out
+}
+
+fn unpack_tev_orders(orders: &[u32; 8]) -> [u32; 16] {
+    let mut out = [0u32; 16];
+    for stage in 0..16u32 {
+        let reg_idx = (stage / 2) as usize;
+        if reg_idx < 8 {
+            let raw = orders[reg_idx];
+            if stage % 2 == 0 {
+                out[stage as usize] = raw & 0x3FF; // low 10 bits
+            } else {
+                out[stage as usize] = ((raw >> 12) & 0x7)
+                    | (((raw >> 15) & 0x7) << 3)
+                    | (((raw >> 18) & 0x1) << 6)
+                    | (((raw >> 19) & 0x7) << 7);
+            }
+        }
+    }
+    out
 }
 
 const SHADER: &str = include_str!("gx.wgsl");
@@ -389,7 +435,11 @@ impl GxRenderer {
         }
 
         let alpha_cmp = commands.bp_alpha_compare;
-        let tev_color_source = commands.textures[0].is_some() as u32;
+        let tev_color_regs = decode_tev_color_regs(&commands.tev_color_regs_lo, &commands.tev_color_regs_hi);
+        let tev_color_env = commands.tev_color_env.map(|e| e.raw());
+        let tev_alpha_env = commands.tev_alpha_env.map(|e| e.raw());
+        let tev_stage_orders = unpack_tev_orders(&commands.tev_orders);
+        let num_tev_stages = commands.num_tev_stages as u32;
 
         // Get or create the pipeline for current blend/z state
         let pipeline_key = PipelineKey::from_draw_commands(commands);
@@ -444,7 +494,11 @@ impl GxRenderer {
                 0,
                 bytemuck::bytes_of(&Uniforms {
                     mvp: mvp.0,
-                    tev_color_source,
+                    tev_color_regs,
+                    tev_color_env,
+                    tev_alpha_env,
+                    tev_stage_orders,
+                    num_tev_stages,
                     alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
                     alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
                     alpha_comp0: alpha_cmp.comp0() as u32,
