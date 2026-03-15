@@ -338,6 +338,45 @@ impl TxSetImage3 {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, BitEnum)]
+pub enum WrapMode {
+    Clamp = 0,
+    Repeat = 1,
+    Mirror = 2,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, BitEnum)]
+pub enum MagFilter {
+    Nearest = 0,
+    Linear = 1,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, BitEnum)]
+pub enum MinFilter {
+    Nearest = 0,
+    NearestMipmapNearest = 1,
+    NearestMipmapLinear = 2,
+    Linear = 4,
+    LinearMipmapNearest = 5,
+    LinearMipmapLinear = 6,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct TxSetMode0 {
+    #[bits(0..=1)]
+    pub wrap_s: WrapMode,
+
+    #[bits(2..=3)]
+    pub wrap_t: WrapMode,
+
+    #[bits(4..=4)]
+    pub mag_filter: MagFilter,
+
+    #[bits(5..=7)]
+    pub min_filter: MinFilter,
+}
+
 // TEV color combiner input select (SELA-SELD)
 #[derive(Debug, PartialEq, BitEnum)]
 pub enum TevColorIn {

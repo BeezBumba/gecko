@@ -1,7 +1,8 @@
+mod helpers;
 mod texture;
 
 use gekko::flipper::gx::draw::{DrawCall, DrawCommands, Primitive, TextureFormat};
-use gekko::flipper::gx::regs::{BlendFactor, CompareFunc, TevRegisterH, TevRegisterL};
+use gekko::flipper::gx::regs::{BlendFactor, CompareFunc, MagFilter, MinFilter, WrapMode};
 use std::collections::HashMap;
 
 #[repr(C)]
@@ -39,48 +40,6 @@ struct Uniforms {
     _padding: [u32; 2],            // 8B — pad to 16-byte alignment
 }
 
-/// Sign-extend an 11-bit value stored in a u16 to f32, normalized by /255.
-fn s11_to_f32(val: u16) -> f32 {
-    let signed = if val & 0x400 != 0 {
-        val as i32 - 0x800
-    } else {
-        val as i32
-    };
-    signed as f32 / 255.0
-}
-
-fn decode_tev_color_regs(lo: &[TevRegisterL; 4], hi: &[TevRegisterH; 4]) -> [[f32; 4]; 4] {
-    let mut out = [[0.0f32; 4]; 4];
-    for i in 0..4 {
-        out[i] = [
-            s11_to_f32(lo[i].r()),
-            s11_to_f32(hi[i].g()),
-            s11_to_f32(hi[i].b()),
-            s11_to_f32(lo[i].a()),
-        ];
-    }
-    out
-}
-
-fn unpack_tev_orders(orders: &[u32; 8]) -> [u32; 16] {
-    let mut out = [0u32; 16];
-    for stage in 0..16u32 {
-        let reg_idx = (stage / 2) as usize;
-        if reg_idx < 8 {
-            let raw = orders[reg_idx];
-            if stage % 2 == 0 {
-                out[stage as usize] = raw & 0x3FF; // low 10 bits
-            } else {
-                out[stage as usize] = ((raw >> 12) & 0x7)
-                    | (((raw >> 15) & 0x7) << 3)
-                    | (((raw >> 18) & 0x1) << 6)
-                    | (((raw >> 19) & 0x7) << 7);
-            }
-        }
-    }
-    out
-}
-
 const SHADER: &str = include_str!("gx.wgsl");
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
@@ -110,32 +69,6 @@ impl PipelineKey {
     }
 }
 
-fn map_blend_factor(f: BlendFactor) -> wgpu::BlendFactor {
-    match f {
-        BlendFactor::Zero => wgpu::BlendFactor::Zero,
-        BlendFactor::One => wgpu::BlendFactor::One,
-        BlendFactor::SrcClr => wgpu::BlendFactor::Src,
-        BlendFactor::InvSrcClr => wgpu::BlendFactor::OneMinusSrc,
-        BlendFactor::SrcAlpha => wgpu::BlendFactor::SrcAlpha,
-        BlendFactor::InvSrcAlpha => wgpu::BlendFactor::OneMinusSrcAlpha,
-        BlendFactor::DstAlpha => wgpu::BlendFactor::DstAlpha,
-        BlendFactor::InvDstAlpha => wgpu::BlendFactor::OneMinusDstAlpha,
-    }
-}
-
-fn map_compare_func(f: CompareFunc) -> wgpu::CompareFunction {
-    match f {
-        CompareFunc::Never => wgpu::CompareFunction::Never,
-        CompareFunc::Less => wgpu::CompareFunction::Less,
-        CompareFunc::Equal => wgpu::CompareFunction::Equal,
-        CompareFunc::LessEqual => wgpu::CompareFunction::LessEqual,
-        CompareFunc::Greater => wgpu::CompareFunction::Greater,
-        CompareFunc::NotEqual => wgpu::CompareFunction::NotEqual,
-        CompareFunc::GreaterEqual => wgpu::CompareFunction::GreaterEqual,
-        CompareFunc::Always => wgpu::CompareFunction::Always,
-    }
-}
-
 pub struct GxRenderer {
     pipeline_cache: HashMap<PipelineKey, wgpu::RenderPipeline>,
     shader: wgpu::ShaderModule,
@@ -150,7 +83,8 @@ pub struct GxRenderer {
     depth_view: wgpu::TextureView,
     depth_width: u32,
     depth_height: u32,
-    sampler: wgpu::Sampler,
+    /// Cache: (wrap_s, wrap_t, mag_filter, min_filter) -> wgpu Sampler
+    sampler_cache: HashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,
     /// Cache: (ram_addr, width, height, format) -> (wgpu Texture, TextureView)
     texture_cache: HashMap<(usize, u32, u32, TextureFormat), (wgpu::Texture, wgpu::TextureView)>,
     /// Fallback 1x1 white texture view used when no texture is bound
@@ -300,7 +234,10 @@ impl GxRenderer {
             depth_view,
             depth_width,
             depth_height,
-            sampler,
+            sampler_cache: HashMap::from([(
+                (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear),
+                sampler,
+            )]),
             texture_cache: HashMap::new(),
             fallback_view,
         }
@@ -354,13 +291,13 @@ impl GxRenderer {
             };
             Some(wgpu::BlendState {
                 color: wgpu::BlendComponent {
-                    src_factor: map_blend_factor(key.src_factor),
-                    dst_factor: map_blend_factor(key.dst_factor),
+                    src_factor: helpers::map_blend_factor(key.src_factor),
+                    dst_factor: helpers::map_blend_factor(key.dst_factor),
                     operation,
                 },
                 alpha: wgpu::BlendComponent {
-                    src_factor: map_blend_factor(key.src_factor),
-                    dst_factor: map_blend_factor(key.dst_factor),
+                    src_factor: helpers::map_blend_factor(key.src_factor),
+                    dst_factor: helpers::map_blend_factor(key.dst_factor),
                     operation,
                 },
             })
@@ -372,7 +309,7 @@ impl GxRenderer {
             Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24Plus,
                 depth_write_enabled: key.z_write,
-                depth_compare: map_compare_func(key.z_func),
+                depth_compare: helpers::map_compare_func(key.z_func),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             })
@@ -435,10 +372,10 @@ impl GxRenderer {
         }
 
         let alpha_cmp = commands.bp_alpha_compare;
-        let tev_color_regs = decode_tev_color_regs(&commands.tev_color_regs_lo, &commands.tev_color_regs_hi);
+        let tev_color_regs = helpers::decode_tev_color_regs(&commands.tev_color_regs_lo, &commands.tev_color_regs_hi);
         let tev_color_env = commands.tev_color_env.map(|e| e.raw());
         let tev_alpha_env = commands.tev_alpha_env.map(|e| e.raw());
-        let tev_stage_orders = unpack_tev_orders(&commands.tev_orders);
+        let tev_stage_orders = helpers::unpack_tev_orders(&commands.tev_orders);
         let num_tev_stages = commands.num_tev_stages as u32;
 
         // Get or create the pipeline for current blend/z state
@@ -449,12 +386,34 @@ impl GxRenderer {
         }
 
         // Upload texture slot 0 if present, using cache to avoid redundant uploads
-        let tex_view = if let Some(desc) = &commands.textures[0] {
+        let sampler_key = if let Some(desc) = &commands.textures[0] {
             let key = (desc.ram_addr, desc.width, desc.height, desc.format);
             if !self.texture_cache.contains_key(&key) {
                 let (tex, view) = texture::upload_texture(device, queue, ram, desc);
                 self.texture_cache.insert(key, (tex, view));
             }
+            (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter)
+        } else {
+            (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear)
+        };
+
+        // Get or create sampler for these modes
+        if !self.sampler_cache.contains_key(&sampler_key) {
+            let s = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("gx_sampler"),
+                address_mode_u: helpers::map_wrap_mode(sampler_key.0),
+                address_mode_v: helpers::map_wrap_mode(sampler_key.1),
+                mag_filter: helpers::map_mag_filter(sampler_key.2),
+                min_filter: helpers::map_min_filter(sampler_key.3),
+                ..Default::default()
+            });
+            self.sampler_cache.insert(sampler_key, s);
+        }
+        let sampler = &self.sampler_cache[&sampler_key];
+
+        let tex_view = if commands.textures[0].is_some() {
+            let desc = commands.textures[0].as_ref().unwrap();
+            let key = (desc.ram_addr, desc.width, desc.height, desc.format);
             &self.texture_cache[&key].1
         } else {
             &self.fallback_view
@@ -474,7 +433,7 @@ impl GxRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
             ],
         });

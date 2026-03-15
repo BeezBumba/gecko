@@ -1,4 +1,7 @@
-use super::regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
+use super::regs::{
+    AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, WrapMode,
+    ZMode,
+};
 use chapa::BitEnum;
 
 #[derive(Debug)]
@@ -60,6 +63,10 @@ pub struct TextureDescriptor {
     pub width: u32,
     pub height: u32,
     pub format: TextureFormat,
+    pub wrap_s: WrapMode,
+    pub wrap_t: WrapMode,
+    pub mag_filter: MagFilter,
+    pub min_filter: MinFilter,
 }
 
 pub struct DrawCall {

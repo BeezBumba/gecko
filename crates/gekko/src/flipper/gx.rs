@@ -11,15 +11,15 @@ use crate::{
             ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_NRM, ARRAY_POS, ARRAY_STRIDE_REG, BP_GEN_MODE, BP_PE_ALPHA_COMPARE,
             BP_PE_CMODE0, BP_PE_DONE, BP_PE_DONE_FINISH_BIT, BP_PE_ZMODE, BP_RAS1_TREF_COUNT, BP_RAS1_TREF0,
             BP_REG_SIZE, BP_TEV_COLOR_ENV_0, BP_TEV_REGISTERL_0, BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4,
-            BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, CP_REG_SIZE, VATA_REG, VCD_HI_REG, VCD_LO_REG, XF_AMBIENT_COLOR0,
-            XF_CHAN_CTRL0, XF_LIGHT_A0, XF_LIGHT_BASE, XF_LIGHT_COLOR, XF_LIGHT_K0, XF_LIGHT_NX, XF_LIGHT_PX,
-            XF_LIGHT_STRIDE, XF_MATERIAL_COLOR0, XF_MATRIX_INDEX_A, XF_MEM_SIZE, XF_NRM_MTX_BASE, XF_POS_MTX_STRIDE,
-            XF_PROJECTION_BASE, XF_PROJECTION_END,
+            BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, BP_TX_SETMODE0_I0, BP_TX_SETMODE0_I4, CP_REG_SIZE, VATA_REG,
+            VCD_HI_REG, VCD_LO_REG, XF_AMBIENT_COLOR0, XF_CHAN_CTRL0, XF_LIGHT_A0, XF_LIGHT_BASE, XF_LIGHT_COLOR,
+            XF_LIGHT_K0, XF_LIGHT_NX, XF_LIGHT_PX, XF_LIGHT_STRIDE, XF_MATERIAL_COLOR0, XF_MATRIX_INDEX_A, XF_MEM_SIZE,
+            XF_NRM_MTX_BASE, XF_POS_MTX_STRIDE, XF_PROJECTION_BASE, XF_PROJECTION_END,
         },
         draw::DrawCommands,
         regs::{
             AlphaCompare, AttnFn, BlendMode, ChanCtrl, GenMode, MatrixIndex0, TevAlphaEnv, TevColorEnv, TevRegType,
-            TevRegisterH, TevRegisterL, TxSetImage0, TxSetImage3, VatA, VcdHi, VcdLo, ZMode,
+            TevRegisterH, TevRegisterL, TxSetImage0, TxSetImage3, TxSetMode0, VatA, VcdHi, VcdLo, ZMode,
         },
     },
     gekko::Gekko,
@@ -554,6 +554,13 @@ impl Gx {
             let image0 = TxSetImage0::from_raw(self.bp_regs[image0_reg]);
             let image3 = TxSetImage3::from_raw(val);
 
+            let mode0_reg = if slot < 4 {
+                BP_TX_SETMODE0_I0 + slot
+            } else {
+                BP_TX_SETMODE0_I4 + (slot - 4)
+            };
+            let mode0 = TxSetMode0::from_raw(self.bp_regs[mode0_reg]);
+
             let width = image0.width();
             let height = image0.height();
             let ram_addr = image3.ram_addr();
@@ -564,6 +571,8 @@ impl Gx {
                 height,
                 format = format!("{:?}", image0.format()),
                 ram_addr = format!("{ram_addr:#010X}"),
+                wrap_s = format!("{:?}", mode0.wrap_s()),
+                wrap_t = format!("{:?}", mode0.wrap_t()),
                 "texture descriptor updated"
             );
 
@@ -572,6 +581,10 @@ impl Gx {
                 width: width as u32,
                 height: height as u32,
                 format: image0.format(),
+                wrap_s: mode0.wrap_s(),
+                wrap_t: mode0.wrap_t(),
+                mag_filter: mode0.mag_filter(),
+                min_filter: mode0.min_filter(),
             });
         }
 
