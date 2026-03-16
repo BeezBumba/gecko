@@ -361,6 +361,47 @@ pub enum MinFilter {
     LinearMipmapLinear = 6,
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, BitEnum)]
+pub enum RasterChannel {
+    Color0 = 0,
+    Color1 = 1,
+    Alpha0 = 2,
+    Alpha1 = 3,
+    Color0A0 = 4,
+    Color1A1 = 5,
+    ColorZero = 6,
+    Bump = 7,
+}
+
+// BP 0x28-0x2F RAS1_TREF0-7
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TevOrder {
+    #[bits(0..=2)]
+    pub texmap0: u8,
+
+    #[bits(3..=5)]
+    pub texcoord0: u8,
+
+    #[bits(6)]
+    pub tex_enable0: bool,
+
+    #[bits(7..=9)]
+    pub channel0: RasterChannel,
+
+    #[bits(12..=14)]
+    pub texmap1: u8,
+
+    #[bits(15..=17)]
+    pub texcoord1: u8,
+
+    #[bits(18)]
+    pub tex_enable1: bool,
+
+    #[bits(19..=21)]
+    pub channel1: RasterChannel,
+}
+
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy)]
 pub struct TxSetMode0 {
@@ -398,6 +439,29 @@ pub enum TevColorIn {
     Zero = 0xF,
 }
 
+impl std::fmt::Display for TevColorIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::PrevColor => "Previous Color",
+            Self::PrevAlpha => "Previous Alpha",
+            Self::Reg0Color => "Reg0 Color",
+            Self::Reg0Alpha => "Reg0 Alpha",
+            Self::Reg1Color => "Reg1 Color",
+            Self::Reg1Alpha => "Reg1 Alpha",
+            Self::Reg2Color => "Reg2 Color",
+            Self::Reg2Alpha => "Reg2 Alpha",
+            Self::TexColor => "Texture Color",
+            Self::TexAlpha => "Texture Alpha",
+            Self::RasColor => "Vertex Color",
+            Self::RasAlpha => "Vertex Alpha",
+            Self::One => "1",
+            Self::Half => "0.5",
+            Self::Konst => "Constant",
+            Self::Zero => "0",
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, BitEnum)]
 pub enum TevBias {
     Zero = 0,
@@ -419,6 +483,17 @@ pub enum TevRegId {
     TevReg0 = 1,
     TevReg1 = 2,
     TevReg2 = 3,
+}
+
+impl std::fmt::Display for TevRegId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::TevPrev => "Previous",
+            Self::TevReg0 => "Reg0",
+            Self::TevReg1 => "Reg1",
+            Self::TevReg2 => "Reg2",
+        })
+    }
 }
 
 // BP 0xC0+stage*2 TEV
@@ -465,6 +540,21 @@ pub enum TevAlphaIn {
     RasAlpha = 5,
     Konst = 6,
     Zero = 7,
+}
+
+impl std::fmt::Display for TevAlphaIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::PrevAlpha => "Previous Alpha",
+            Self::Reg0Alpha => "Reg0 Alpha",
+            Self::Reg1Alpha => "Reg1 Alpha",
+            Self::Reg2Alpha => "Reg2 Alpha",
+            Self::TexAlpha => "Texture Alpha",
+            Self::RasAlpha => "Vertex Alpha",
+            Self::Konst => "Constant",
+            Self::Zero => "0",
+        })
+    }
 }
 
 // BP 0xC1+stage*2 TEV

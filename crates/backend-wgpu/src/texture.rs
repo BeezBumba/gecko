@@ -1,15 +1,10 @@
 use gekko::flipper::gx::draw::{TextureDescriptor, TextureFormat};
 
-pub fn upload_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    ram: &[u8],
-    desc: &TextureDescriptor,
-) -> (wgpu::Texture, wgpu::TextureView) {
+pub fn decode_to_rgba(ram: &[u8], desc: &TextureDescriptor) -> Vec<u8> {
     let w = desc.width as usize;
     let h = desc.height as usize;
-    let mut rgba = vec![0u8; w * h * 4];
 
+    let mut rgba = vec![0u8; w * h * 4];
     match desc.format {
         TextureFormat::I4 => decode_i4(ram, desc, &mut rgba, w, h),
         TextureFormat::I8 => decode_i8(ram, desc, &mut rgba, w, h),
@@ -19,9 +14,19 @@ pub fn upload_texture(
         TextureFormat::RGB5A3 => decode_rgb5a3(ram, desc, &mut rgba, w, h),
         TextureFormat::RGBA8 => decode_rgba8(ram, desc, &mut rgba, w, h),
         TextureFormat::CMPR => decode_cmpr(ram, desc, &mut rgba, w, h),
-        _ => eprintln!("unsupported GX texture format: {:?}", desc.format),
+        _ => panic!("Unsupported texture format: {:?}", desc.format),
     }
 
+    rgba
+}
+
+pub fn upload_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    ram: &[u8],
+    desc: &TextureDescriptor,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let rgba = decode_to_rgba(ram, desc);
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("gx_tex"),
         size: wgpu::Extent3d {

@@ -1,6 +1,6 @@
 use super::regs::{
-    AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, WrapMode,
-    ZMode,
+    AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevOrder, TevRegisterH, TevRegisterL,
+    WrapMode, ZMode,
 };
 use chapa::BitEnum;
 
@@ -115,7 +115,7 @@ pub struct DrawCommands {
     pub tev_color_regs_hi: [TevRegisterH; 4],
     pub tev_const_regs_lo: [TevRegisterL; 4],
     pub tev_const_regs_hi: [TevRegisterH; 4],
-    pub tev_orders: [u32; 8],
+    pub tev_orders: [TevOrder; 8],
     pub num_tev_stages: u8,
 
     // BP state

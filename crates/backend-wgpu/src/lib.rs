@@ -1,5 +1,5 @@
 mod helpers;
-mod texture;
+pub mod texture;
 
 use gekko::flipper::gx::draw::{DrawCall, DrawCommands, Primitive, TextureFormat};
 use gekko::flipper::gx::regs::{BlendFactor, CompareFunc, MagFilter, MinFilter, WrapMode};
@@ -112,7 +112,10 @@ impl GxRenderer {
     ) -> Self {
         let frame_uniform_size = std::mem::size_of::<FrameUniforms>() as u64;
         let draw_uniform_size = std::mem::size_of::<DrawUniforms>() as u64;
-        let draw_uniform_stride = align_up(draw_uniform_size, device.limits().min_uniform_buffer_offset_alignment as u64);
+        let draw_uniform_stride = align_up(
+            draw_uniform_size,
+            device.limits().min_uniform_buffer_offset_alignment as u64,
+        );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gx_shader"),

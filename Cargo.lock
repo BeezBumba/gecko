@@ -629,6 +629,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
+name = "debugger"
+version = "0.1.0"
+dependencies = [
+ "backend-wgpu",
+ "bytemuck",
+ "disasm",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "egui_material_icons",
+ "gekko",
+ "image 0.1.0",
+ "pollster",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "disasm"
 version = "0.1.0"
 dependencies = [
@@ -753,6 +771,15 @@ dependencies = [
  "web-time",
  "webbrowser",
  "winit",
+]
+
+[[package]]
+name = "egui_material_icons"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ff7d3715b5ee29fe75afd19420756b3e0a970149b62712af1b3204a68e2012b"
+dependencies = [
+ "egui",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@ members = [
     "crates/image",
     "crates/tinyapp",
     "crates/backend-wgpu",
+    "crates/debugger",
 ]
 
 [patch.crates-io]

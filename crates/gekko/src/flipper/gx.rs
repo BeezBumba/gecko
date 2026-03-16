@@ -647,7 +647,7 @@ impl Gx {
 
         // TEV rasterizer order registers (RAS1_TREF0-7, 0x28-0x2F)
         if idx >= BP_RAS1_TREF0 && idx < BP_RAS1_TREF0 + BP_RAS1_TREF_COUNT {
-            self.draw_commands.tev_orders[idx - BP_RAS1_TREF0] = val;
+            self.draw_commands.tev_orders[idx - BP_RAS1_TREF0] = regs::TevOrder::from_raw(val);
         }
 
         // TEV color registers (0xE0-0xE7): pairs of lo/hi writes
