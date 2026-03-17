@@ -34,6 +34,10 @@ struct Args {
     /// Suppress all stdout output (tracing is unaffected)
     #[arg(long)]
     quiet: bool,
+
+    /// Skip idle loops to speed up emulation
+    #[arg(long)]
+    idle_skip: bool,
 }
 
 fn parse_hex_addr(s: &str) -> Result<u32, String> {
@@ -54,10 +58,10 @@ fn main() {
     let mut gekko = if let Some(rom_path) = &args.rom {
         let rom_data = std::fs::read(rom_path).expect("failed to read ROM");
         let dol = image::Dol::parse(rom_data);
-        gekko::gekko::Gekko::with_image(&dol, false)
+        gekko::gekko::Gekko::with_image(&dol, args.idle_skip)
     } else if let Some(ipl_path) = &args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
-        gekko::gekko::Gekko::with_ipl(&ipl_data, false)
+        gekko::gekko::Gekko::with_ipl(&ipl_data, args.idle_skip)
     } else {
         panic!("Either --rom or --ipl must be provided");
     };

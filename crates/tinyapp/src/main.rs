@@ -468,10 +468,6 @@ impl ApplicationHandler for App {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("usage: {} <path/to/game.dol>", args[0]);
-        std::process::exit(1);
-    }
 
     let present_mode = std::env::args()
         .any(|arg| arg == "--immediate")
@@ -479,9 +475,21 @@ fn main() {
         .unwrap_or(wgpu::PresentMode::Fifo);
     let idle_skip = std::env::args().any(|arg| arg == "--idle-skip");
 
-    let rom_data = std::fs::read(&args[1]).expect("failed to read ROM");
-    let dol = Dol::parse(rom_data);
-    let emulator = Gekko::with_image(&dol, idle_skip);
+    let ipl_path = args.iter().position(|a| a == "--ipl").map(|i| &args[i + 1]);
+    let rom_path = args.iter().position(|a| a == "--rom").map(|i| &args[i + 1])
+        .or_else(|| args.get(1).filter(|a| !a.starts_with("--")));
+
+    let emulator = if let Some(ipl) = ipl_path {
+        let ipl_data = std::fs::read(ipl).expect("failed to read IPL");
+        Gekko::with_ipl(&ipl_data, idle_skip)
+    } else if let Some(rom) = rom_path {
+        let rom_data = std::fs::read(rom).expect("failed to read ROM");
+        let dol = Dol::parse(rom_data);
+        Gekko::with_image(&dol, idle_skip)
+    } else {
+        eprintln!("usage: {} <path/to/game.dol> | --ipl <path> | --rom <path> [--immediate] [--idle-skip]", args[0]);
+        std::process::exit(1);
+    };
 
     let event_loop = EventLoop::new().unwrap();
     let mut app = App {

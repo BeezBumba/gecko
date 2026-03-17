@@ -9,6 +9,7 @@ use crate::{
     },
     mmio::Mmio,
     scheduler::{CYCLES_PER_VSYNC, EventKind, Scheduler},
+    idle::IdleDetector,
 };
 use image::Executable;
 
@@ -22,7 +23,7 @@ pub struct Gekko {
     pub dsp: Dsp,
     pub exi: Exi,
     pub gx: Gx,
-    idle_skip: bool,
+    idle: IdleDetector,
 }
 
 impl Gekko {
@@ -37,7 +38,7 @@ impl Gekko {
             dsp: Dsp::new(),
             exi: Exi::dummy(),
             gx: Gx::new(),
-            idle_skip,
+            idle: IdleDetector::new(idle_skip),
         }
     }
 
@@ -133,9 +134,7 @@ impl Gekko {
         cpu::lut::dispatch(self, instr);
         self.scheduler.cycles += 1;
 
-        // Idle skip: if the instruction branches to itself, fast-forward to the next event
-        // TODO: SUPER EXPERIMENTAL, trying stuff out cause of hazel and vxpm
-        if self.idle_skip && self.cpu.nia == self.cpu.cia {
+        if self.idle.check(self.cpu.cia, self.cpu.nia) {
             if let Some(deadline) = self.scheduler.next_event_deadline() {
                 self.scheduler.cycles = deadline;
             }
