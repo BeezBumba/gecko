@@ -1,4 +1,5 @@
 pub trait ExiDevice {
+    fn on_select(&mut self) {}
     fn transfer_byte(&mut self, byte: &mut u8);
 
     fn dma_read(&mut self, buf: &mut [u8]) {

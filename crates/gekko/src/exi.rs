@@ -1,5 +1,6 @@
 pub mod device;
 pub mod regs;
+pub mod macronix;
 
 use crate::exi::regs::TransferType;
 use crate::mmio::Mmio;
@@ -27,6 +28,7 @@ pub struct Exi {
     pub ch2_data: regs::Channel2Data,
     // Devices: [channel][device_slot], 3 channels x 3 slots
     devices: [[Option<Box<dyn device::ExiDevice>>; 3]; 3],
+    prev_cs: [u8; 3],
 }
 
 impl Exi {
@@ -48,6 +50,7 @@ impl Exi {
             ch2_cr: regs::Channel2Control::from_raw(0),
             ch2_data: regs::Channel2Data::from_raw(0),
             devices: std::array::from_fn(|_| std::array::from_fn(|_| None)),
+            prev_cs: [0; 3],
         }
     }
 
@@ -182,6 +185,28 @@ impl Exi {
         }
 
         Some((chip_select, transfer_type, address << 5, length << 5))
+    }
+
+    pub fn process_cs_changes(&mut self) {
+        let current = [
+            self.ch0_csr.chip_select(),
+            self.ch1_csr.chip_select(),
+            self.ch2_csr.chip_select(),
+        ];
+
+        for channel in 0..3 {
+            let prev = self.prev_cs[channel];
+            let curr = current[channel];
+            if curr != prev && curr != 0 {
+                if let Some(slot) = Self::cs_to_slot(curr)
+                    && let Some(device) = &mut self.devices[channel][slot]
+                {
+                    device.on_select();
+                }
+            }
+        }
+
+        self.prev_cs = current;
     }
 
     pub fn process_dma_transfers(&mut self, mmio: &mut Mmio) {

@@ -1,6 +1,6 @@
 use crate::{
     cpu::{self, Cpu, IPL_RESET_VECTOR, semantics::Instruction},
-    exi::Exi,
+    exi::{Exi, macronix::ExiMacronix},
     flipper::{dsp::Dsp, gx::Gx, pe::Pe, pi::Pi, vi::Vi},
     idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector},
     mmio::Mmio,
@@ -81,20 +81,15 @@ impl Gekko {
         // |-----|--------|-------|------|-----|
         // Entry point: 0x81300000
         // BSS: 0x00000000 - 0x00000000 (size: 0x00000000)
+        // => BS2 DOL, does not apply to the actual IPL here!!
 
-        let dol = image::Dol::parse(ipl.to_vec());
         let mut gekko = Gekko::new(IPL_RESET_VECTOR, idle_skip);
-        let data = dol.data();
-
-        for section in dol.text_sections().iter().chain(dol.data_sections()) {
-            for i in 0..section.size {
-                let addr = section.vaddr + i;
-                let value = data[(section.offset + i) as usize];
-                gekko.mmio.virt_write_u8(addr, value);
-            }
-        }
-
         gekko.mmio.ipl = ipl.to_vec();
+        gekko.exi.attach_device(
+            ExiMacronix::CHANNEL,
+            ExiMacronix::DEVICE,
+            Box::new(ExiMacronix::new(ipl.to_vec())),
+        );
         gekko
     }
 

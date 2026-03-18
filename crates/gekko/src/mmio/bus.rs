@@ -131,6 +131,7 @@ impl Gekko {
             }
             BusTarget::Exi      => {
                 self.exi.mmio_write_u8(offset, val);
+                self.exi.process_cs_changes();
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
@@ -170,6 +171,7 @@ impl Gekko {
             }
             BusTarget::Exi      => {
                 self.exi.mmio_write_u16(offset, val);
+                self.exi.process_cs_changes();
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
@@ -210,6 +212,7 @@ impl Gekko {
             }
             BusTarget::Exi      => {
                 self.exi.mmio_write_u32(offset, val);
+                self.exi.process_cs_changes();
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
