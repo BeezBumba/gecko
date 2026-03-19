@@ -3,7 +3,7 @@ use egui_material_icons::icons;
 
 use crate::debugger::EmulatorState;
 
-pub fn show_controls(ctx: &Context, open: &mut bool, state: &mut EmulatorState) {
+pub fn show_controls(ctx: &Context, open: &mut bool, state: &mut EmulatorState, run_until_addr_input: &mut String) {
     egui::Window::new("Controls")
         .open(open)
         .resizable(false)
@@ -56,18 +56,16 @@ pub fn show_controls(ctx: &Context, open: &mut bool, state: &mut EmulatorState) 
             ui.separator();
 
             ui.horizontal(|ui| {
-                let mut run_until_addr_input = "";
-                let resp = ui.add_enabled(
-                    is_paused,
-                    egui::TextEdit::singleline(&mut run_until_addr_input)
-                        .hint_text("address")
-                        .desired_width(80.0)
-                        .font(egui::TextStyle::Monospace),
-                );
-                let go = ui
-                    .add_enabled(is_paused, egui::Button::new(format!("{} Run", icons::ICON_PLAY_ARROW)))
-                    .clicked();
-                if go || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                egui::TextEdit::singleline(run_until_addr_input)
+                    .hint_text("address")
+                    .desired_width(80.0)
+                    .font(egui::TextStyle::Monospace)
+                    .show(ui);
+
+                if ui
+                    .add(egui::Button::new(format!("{} Run", icons::ICON_PLAY_ARROW)))
+                    .clicked()
+                {
                     let s = run_until_addr_input.trim().trim_start_matches("0x");
                     if let Ok(addr) = u32::from_str_radix(s, 16) {
                         *state = EmulatorState::RunUntilAddress(addr);

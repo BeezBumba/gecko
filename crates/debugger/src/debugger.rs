@@ -17,6 +17,7 @@ pub struct DebuggerUi {
     pub show_controls: bool,
     pub memory_base: u32,
     pub memory_addr_input: String,
+    pub run_until_addr_input: String,
 }
 
 impl Default for DebuggerUi {
@@ -31,6 +32,7 @@ impl Default for DebuggerUi {
             show_irqs: false,
             memory_base: 0x8000_0000,
             memory_addr_input: "80000000".to_string(),
+            run_until_addr_input: String::new(),
         }
     }
 }

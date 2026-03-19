@@ -272,7 +272,12 @@ impl RenderState {
                 windows::cpu::show_cpu(&ctx, &mut debugger_ui.show_cpu, cpu, mmio);
             }
             if debugger_ui.show_controls {
-                windows::controls::show_controls(&ctx, &mut debugger_ui.show_controls, &mut debugger_ui.emulator_state);
+                windows::controls::show_controls(
+                    &ctx,
+                    &mut debugger_ui.show_controls,
+                    &mut debugger_ui.emulator_state,
+                    &mut debugger_ui.run_until_addr_input,
+                );
             }
             if debugger_ui.show_gx_state {
                 windows::gx::show_gx(&ctx, &mut debugger_ui.show_gx_state, gx, mmio);
