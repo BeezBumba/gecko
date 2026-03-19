@@ -11,6 +11,7 @@ const PI_FIFO_WPTR_OFFSET: u32 = 0x14;
 pub struct Pi {
     pub intsr: regs::InterruptCause,
     pub intmr: regs::InterruptMask,
+    pub reset_code: regs::ResetCode,
     /// CPU FIFO base address in physical memory
     pub fifo_base: u32,
     /// CPU FIFO end address in physical memory
@@ -45,6 +46,7 @@ impl Pi {
         Pi {
             intsr: regs::InterruptCause::default(),
             intmr: regs::InterruptMask::from_raw(0),
+            reset_code: regs::ResetCode::from_raw(0),
             fifo_base: 0,
             fifo_end: 0,
             fifo_wptr: 0,
@@ -71,7 +73,12 @@ impl Pi {
         (self.intsr.raw() & self.intmr.raw()) != 0
     }
 
-    crate::impl_mmio_dispatch!(regs::InterruptCause, regs::InterruptMask,);
+    crate::impl_mmio_dispatch!(
+        regs::InterruptCause,
+        regs::InterruptMask,
+        regs::ResetCode,
+        regs::FlipperRev,
+    );
 
     pub fn mmio_read_u8(&mut self, offset: u32) -> u8 {
         self.read_raw(PI_BASE + offset, 1).unwrap_or_else(|| {

@@ -9,6 +9,11 @@ use crate::{
 };
 
 pub struct Pe {
+    pub zconf: regs::ZConfig,
+    pub alphaconf: regs::AlphaConfig,
+    pub dst_alphaconf: regs::DstAlphaConfig,
+    pub alphamode: regs::AlphaMode,
+    pub alpharead: regs::AlphaRead,
     pub sr: regs::InterruptStatus,
     pub token: regs::Token,
 }
@@ -16,6 +21,11 @@ pub struct Pe {
 impl Pe {
     pub fn new() -> Self {
         Self {
+            zconf: regs::ZConfig::from_raw(0),
+            alphaconf: regs::AlphaConfig::from_raw(0),
+            dst_alphaconf: regs::DstAlphaConfig::from_raw(0),
+            alphamode: regs::AlphaMode::from_raw(0),
+            alpharead: regs::AlphaRead::from_raw(0),
             sr: regs::InterruptStatus::from_raw(0),
             token: regs::Token::from_raw(0),
         }
@@ -38,7 +48,15 @@ impl Pe {
         self.sr = self.sr.with_pe_token(true);
     }
 
-    crate::impl_mmio_dispatch!(regs::InterruptStatus, regs::Token,);
+    crate::impl_mmio_dispatch!(
+        regs::ZConfig,
+        regs::AlphaConfig,
+        regs::DstAlphaConfig,
+        regs::AlphaMode,
+        regs::AlphaRead,
+        regs::InterruptStatus,
+        regs::Token,
+    );
 
     pub fn mmio_read_u8(&mut self, offset: u32) -> u8 {
         self.read_raw(PE_BASE + offset, 1).unwrap_or_else(|| {

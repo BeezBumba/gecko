@@ -1,7 +1,7 @@
 use crate::{
     cpu::{self, Cpu, IPL_RESET_VECTOR, semantics::Instruction},
     exi::{Exi, macronix::ExiMacronix},
-    flipper::{dsp::Dsp, gx::Gx, pe::Pe, pi::Pi, vi::Vi},
+    flipper::{ai::Ai, cp::Cp, di::Di, dsp::Dsp, gx::Gx, mi::Mi, pe::Pe, pi::Pi, si::Si, vi::Vi},
     idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector},
     mmio::Mmio,
     scheduler::{CYCLES_PER_VSYNC, EventKind, Scheduler},
@@ -19,6 +19,11 @@ pub struct Gekko {
     pub dsp: Dsp,
     pub exi: Exi,
     pub gx: Gx,
+    pub cp: Cp,
+    pub di: Di,
+    pub si: Si,
+    pub ai: Ai,
+    pub mi: Mi,
     idle: IdleDetector,
 }
 
@@ -35,6 +40,11 @@ impl Gekko {
             dsp: Dsp::new(),
             exi: Exi::dummy(),
             gx: Gx::new(),
+            cp: Cp::new(),
+            di: Di::new(),
+            si: Si::new(),
+            ai: Ai::new(),
+            mi: Mi::new(),
             idle: IdleDetector::new(idle_skip),
         }
     }

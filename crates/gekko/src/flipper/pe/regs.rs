@@ -3,6 +3,38 @@ use crate::{
     mmio::traits::{MmioAccess, MmioRegister},
 };
 
+// 0xCC001000	2	R/W	Z Configuration
+
+crate::mmio_register! {
+    ZConfig: u16 @ 0xCC001000 => Pe.zconf {}
+}
+
+// 0xCC001002	2	R/W	Alpha Configuration
+
+crate::mmio_register! {
+    AlphaConfig: u16 @ 0xCC001002 => Pe.alphaconf {}
+}
+
+// 0xCC001004	2	R/W	Destination Alpha
+
+crate::mmio_register! {
+    DstAlphaConfig: u16 @ 0xCC001004 => Pe.dst_alphaconf {}
+}
+
+// 0xCC001006	2	R/W	Alpha Compare Mode
+
+crate::mmio_register! {
+    AlphaMode: u16 @ 0xCC001006 => Pe.alphamode {}
+}
+
+// 0xCC001008	2	R/W	Alpha Read Mode
+
+crate::mmio_register! {
+    AlphaRead: u16 @ 0xCC001008 => Pe.alpharead {}
+}
+
+// 0xCC00100A	2	R/W	Interrupt Status
+
 crate::mmio_register! {
     InterruptStatus: u16 @ 0xCC00100A {
         #[bits(0)]

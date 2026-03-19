@@ -19,8 +19,12 @@ pub struct Dsp {
 
     // I/O Registers
     pub csr: regs::ControlStatus,
+    pub mailbox_to_dsp_hi: regs::MailboxToDspHi,
+    pub mailbox_to_dsp_lo: regs::MailboxToDspLo,
     pub mailbox_to_cpu_hi: regs::MailboxToCpuHi,
     pub mailbox_to_cpu_lo: regs::MailboxToCpuLo,
+    pub aram_info: regs::AramInfo,
+    pub aram_refresh: regs::AramRefresh,
     pub aram_dma_mmio_addr: regs::AramDmaMmioAddr,
     pub aram_dma_aram_addr: regs::AramDmaAramAddr,
     pub aram_dma_control: regs::AramDmaControl,
@@ -47,8 +51,12 @@ impl Dsp {
             ifx,
             aram,
             csr: regs::ControlStatus::default(),
+            mailbox_to_dsp_hi: regs::MailboxToDspHi::from_raw(0),
+            mailbox_to_dsp_lo: regs::MailboxToDspLo::from_raw(0),
             mailbox_to_cpu_hi: regs::MailboxToCpuHi::from_raw(0),
             mailbox_to_cpu_lo: regs::MailboxToCpuLo::from_raw(0),
+            aram_info: regs::AramInfo::from_raw(0),
+            aram_refresh: regs::AramRefresh::from_raw(0),
             aram_dma_mmio_addr: regs::AramDmaMmioAddr::from_raw(0),
             aram_dma_aram_addr: regs::AramDmaAramAddr::from_raw(0),
             aram_dma_control: regs::AramDmaControl::from_raw(0),
@@ -69,7 +77,7 @@ impl Dsp {
         if self.pending_aram_dma {
             self.pending_aram_dma = false;
 
-            let mmio_addr = self.aram_dma_mmio_addr.raw() as usize;
+            let mmio_addr = (self.aram_dma_mmio_addr.raw() & 0x3FFFFFFF) as usize;
             let aram_addr = self.aram_dma_aram_addr.raw() as usize;
             let count = self.aram_dma_control.count() as usize * 4;
 
@@ -91,7 +99,7 @@ impl Dsp {
                 "ARAM DMA complete"
             );
 
-            // TODO: Cause actual interrupt?
+            // Assert ARAM DMA complete interrupt in CSR
             self.csr = self.csr.with_ar_interrupt(true);
         }
 
@@ -118,8 +126,12 @@ impl Dsp {
 
     crate::impl_mmio_dispatch!(
         regs::ControlStatus,
+        regs::MailboxToDspHi,
+        regs::MailboxToDspLo,
         regs::MailboxToCpuHi,
         regs::MailboxToCpuLo,
+        regs::AramInfo,
+        regs::AramRefresh,
         regs::AramDmaMmioAddr,
         regs::AramDmaAramAddr,
         regs::AramDmaControl,
@@ -161,6 +173,22 @@ impl Dsp {
     pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
         if !self.write_raw(DSP_BASE + offset, 4, val) {
             tracing::error!(offset = format!("{offset:08X}"), "unhandled DSP write_u32");
+        }
+    }
+
+    pub fn interrupt_active(&self) -> bool {
+        (self.csr.ai_interrupt() && self.csr.ai_interrupt_mask())
+            || (self.csr.ar_interrupt() && self.csr.ar_interrupt_mask())
+            || (self.csr.dsp_interrupt() && self.csr.dsp_interrupt_mask())
+    }
+}
+
+impl crate::gekko::Gekko {
+    pub fn check_dsp_interrupts(&mut self) {
+        if self.dsp.interrupt_active() {
+            self.pi.assert_interrupt(crate::flipper::pi::InterruptFlag::Dsp);
+        } else {
+            self.pi.clear_interrupt(crate::flipper::pi::InterruptFlag::Dsp);
         }
     }
 }

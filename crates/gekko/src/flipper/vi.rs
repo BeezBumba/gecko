@@ -45,6 +45,7 @@ pub struct Vi {
     pub fct6: regs::FilterCoefficient6,
     pub viclk: regs::ViClockSelect,
     pub visel: regs::ViDtvStatus,
+    pub unknown_70: regs::ViUnknown70,
     pub border_hbe: regs::BorderHbe,
     pub border_hbs: regs::BorderHbs,
 
@@ -88,6 +89,7 @@ impl Vi {
             fct6: regs::FilterCoefficient6::from_raw(0),
             viclk: regs::ViClockSelect::from_raw(0),
             visel: regs::ViDtvStatus::from_raw(0),
+            unknown_70: regs::ViUnknown70::from_raw(0),
             border_hbe: regs::BorderHbe::from_raw(0),
             border_hbs: regs::BorderHbs::from_raw(0),
             half_line_count: 0,
@@ -128,6 +130,7 @@ impl Vi {
         regs::FilterCoefficient6,
         regs::ViClockSelect,
         regs::ViDtvStatus,
+        regs::ViUnknown70,
         regs::BorderHbe,
         regs::BorderHbs,
     );

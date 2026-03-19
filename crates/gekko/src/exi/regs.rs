@@ -3,6 +3,28 @@ use chapa::BitEnum;
 use super::Exi;
 use crate::mmio::traits::{MmioAccess, MmioRegister};
 
+pub trait ChannelStatus {
+    fn exi_interrupt(&self) -> bool;
+    fn exi_interrupt_mask(&self) -> bool;
+    fn tc_interrupt(&self) -> bool;
+    fn tc_interrupt_mask(&self) -> bool;
+    fn ext_interrupt(&self) -> bool;
+    fn ext_interrupt_mask(&self) -> bool;
+}
+
+macro_rules! impl_channel_status {
+    ($($ty:ty),*) => {
+        $(impl ChannelStatus for $ty {
+            fn exi_interrupt(&self) -> bool { Self::exi_interrupt(self) }
+            fn exi_interrupt_mask(&self) -> bool { Self::exi_interrupt_mask(self) }
+            fn tc_interrupt(&self) -> bool { Self::tc_interrupt(self) }
+            fn tc_interrupt_mask(&self) -> bool { Self::tc_interrupt_mask(self) }
+            fn ext_interrupt(&self) -> bool { Self::ext_interrupt(self) }
+            fn ext_interrupt_mask(&self) -> bool { Self::ext_interrupt_mask(self) }
+        })*
+    };
+}
+
 /// Write-1-to-clear helper for EXI CSR registers
 /// Bits 1 (EXIINT), 3 (TCINT), 11 (EXTINT) are write-1-to-clear
 /// Bit 12 (EXT) is read-only (device presence)
@@ -210,6 +232,8 @@ impl MmioAccess<Exi> for Channel2Status {
         write_csr(&mut exi.ch2_csr, self);
     }
 }
+
+impl_channel_status!(Channel0Status, Channel1Status, Channel2Status);
 
 // 0xCC00682C	4	R/W	EXI2MAR - EXI Channel 2 DMA Start Address
 

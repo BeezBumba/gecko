@@ -11,6 +11,9 @@ pub const HW_REG_END: u32 = 0x0C7F_FFFF;
 pub const HW_REG_SIZE: usize = 0x0080_0000; // 8 MB
 
 // Hardware block address ranges (physical)
+pub const CP_BASE: u32 = 0x0C00_0000;
+pub const CP_END: u32 = 0x0C00_0FFF;
+
 pub const PE_BASE: u32 = 0x0C00_1000;
 pub const PE_END: u32 = 0x0C00_10FF;
 
@@ -25,6 +28,12 @@ pub const MI_END: u32 = 0x0C00_4FFF;
 
 pub const DSP_BASE: u32 = 0x0C00_5000;
 pub const DSP_END: u32 = 0x0C00_5FFF;
+
+pub const DI_BASE: u32 = 0x0C00_6000;
+pub const DI_END: u32 = 0x0C00_63FF;
+
+pub const SI_BASE: u32 = 0x0C00_6400;
+pub const SI_END: u32 = 0x0C00_67FF;
 
 pub const EXI_BASE: u32 = 0x0C00_6800;
 pub const EXI_END: u32 = 0x0C00_6BFF;

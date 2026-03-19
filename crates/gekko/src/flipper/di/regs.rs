@@ -1,0 +1,94 @@
+use super::Di;
+use crate::mmio::traits::MmioAccess;
+
+// 0xCC006000  4  R/W  DISR - DI Status Register
+
+crate::mmio_register! {
+    DiStatusRegister: u32 @ 0xCC006000 {
+        #[bits(0)]
+        pub brk: bool,
+
+        #[bits(1)]
+        pub device_error_mask: bool,
+
+        #[bits(2)]
+        pub device_error: bool,
+
+        #[bits(3)]
+        pub transfer_complete_mask: bool,
+
+        #[bits(4)]
+        pub transfer_complete: bool,
+
+        #[bits(5)]
+        pub break_complete_mask: bool,
+
+        #[bits(6)]
+        pub break_complete: bool,
+    }
+}
+
+impl MmioAccess<Di> for DiStatusRegister {
+    fn read(di: &Di) -> Self {
+        di.status
+    }
+
+    fn write(self, di: &mut Di) {
+        let mut sr = di.status;
+
+        if self.break_complete() {
+            sr = sr.with_break_complete(false);
+        }
+        if self.device_error() {
+            sr = sr.with_device_error(false);
+        }
+        if self.transfer_complete() {
+            sr = sr.with_transfer_complete(false);
+        }
+
+        // TODO: 0 has no effect?
+        if self.brk() {
+            sr = sr.with_brk(true);
+        }
+
+        sr = sr
+            .with_break_complete_mask(self.break_complete_mask())
+            .with_device_error_mask(self.device_error_mask())
+            .with_transfer_complete_mask(self.transfer_complete_mask());
+
+        di.status = sr;
+    }
+}
+
+// 0xCC006004  4  R/W  DICVR - DI Cover Register
+
+crate::mmio_register! {
+    DiCoverRegister: u32 @ 0xCC006004 {
+        #[bits(0)]
+        pub cover_status: bool,
+
+        #[bits(1)]
+        pub cover_interrupt_mask: bool,
+
+        #[bits(2)]
+        pub cover_interrupt: bool,
+    }
+}
+
+impl MmioAccess<Di> for DiCoverRegister {
+    fn read(di: &Di) -> Self {
+        di.cover
+    }
+
+    fn write(self, di: &mut Di) {
+        let mut cvr = di.cover;
+
+        if self.cover_interrupt() {
+            cvr = cvr.with_cover_interrupt(false);
+        }
+
+        cvr = cvr.with_cover_interrupt_mask(self.cover_interrupt_mask());
+
+        di.cover = cvr;
+    }
+}

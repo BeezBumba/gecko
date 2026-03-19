@@ -92,6 +92,36 @@ impl Default for ControlStatus {
     }
 }
 
+// 0xCC005000 2 [W] CPU-to-DSP Mailbox High
+// TODO: Since we don't emulate the DSP processor, always read busy as 0
+
+crate::mmio_register! {
+    MailboxToDspHi: u16 @ 0xCC005000 {
+        #[bits(0..=14)]
+        pub data: u16,
+
+        #[bits(15)]
+        pub busy: bool,
+    }
+}
+
+impl MmioAccess<Dsp> for MailboxToDspHi {
+    fn read(dsp: &Dsp) -> Self {
+        // TODO: instantly consume it for now
+        dsp.mailbox_to_dsp_hi.with_busy(false)
+    }
+
+    fn write(self, dsp: &mut Dsp) {
+        dsp.mailbox_to_dsp_hi = self;
+    }
+}
+
+// 0xCC005002 2 [W] CPU-to-DSP Mailbox Low
+
+crate::mmio_register! {
+    MailboxToDspLo: u16 @ 0xCC005002 => Dsp.mailbox_to_dsp_lo {}
+}
+
 // 0xCC005004 2 [R] DSP-to-CPU Mailbox High
 
 crate::mmio_register! {
@@ -102,6 +132,18 @@ crate::mmio_register! {
 
 crate::mmio_register! {
     MailboxToCpuLo: u16 @ 0xCC005006 => Dsp.mailbox_to_cpu_lo {}
+}
+
+// 0xCC005012 2 [R/W] AR_INFO - ARAM Info/Size
+
+crate::mmio_register! {
+    AramInfo: u16 @ 0xCC005012 => Dsp.aram_info {}
+}
+
+// 0xCC00501A 2 [R/W] AR_REFRESH - ARAM Refresh
+
+crate::mmio_register! {
+    AramRefresh: u16 @ 0xCC00501A => Dsp.aram_refresh {}
 }
 
 // 0xCC005020 4 [R/W] ARAM DMA MMIO Address

@@ -118,3 +118,39 @@ crate::mmio_register! {
         pub highspeed_port: bool,
     }
 }
+
+// 0xCC003024  4  r/w  Console Reset Code
+
+crate::mmio_register! {
+    ResetCode: u32 @ 0xCC003024 {}
+}
+
+impl crate::mmio::traits::MmioAccess<Pi> for ResetCode {
+    fn read(_pi: &Pi) -> Self {
+        Self::from_raw(0)
+    }
+
+    fn write(self, _pi: &mut Pi) {
+        tracing::warn!("resetting console???");
+    }
+}
+
+// 0xCC00302C  4  r    PI_FLIPPER_REV - Flipper Chip Revision
+
+crate::mmio_register! {
+    FlipperRev: u32 @ 0xCC00302C {
+        #[bits(28..=31)]
+        pub revision: u8,
+    }
+}
+
+impl crate::mmio::traits::MmioAccess<super::Pi> for FlipperRev {
+    fn read(_pi: &super::Pi) -> Self {
+        // FLIPPER_REV_C from Dolphin
+        Self::from_raw(0x2465_00B1)
+    }
+
+    fn write(self, _pi: &mut super::Pi) {
+        tracing::warn!("writing to FlipperRev???");
+    }
+}

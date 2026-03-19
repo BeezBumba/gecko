@@ -3,18 +3,24 @@ use crate::{
     mmio::{
         Mmio,
         constants::{
-            DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE, GX_FIFO_END, IPL_BASE, IPL_END, PE_BASE, PE_END,
-            PI_BASE, PI_END, VI_BASE, VI_END,
+            AI_BASE, AI_END, CP_BASE, CP_END, DI_BASE, DI_END, DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE,
+            GX_FIFO_END, IPL_BASE, IPL_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END, SI_BASE, SI_END,
+            VI_BASE, VI_END,
         },
     },
 };
 
 enum BusTarget {
+    Cp,
     Vi,
     Pe,
     Pi,
+    Mi,
     Dsp,
+    Di,
+    Si,
     Exi,
+    Ai,
     Gx,
     Ipl,
     Fallback,
@@ -23,11 +29,16 @@ enum BusTarget {
 #[rustfmt::skip]
 fn route(phys: u32) -> (BusTarget, u32) {
     match phys {
-        VI_BASE..=VI_END            => (BusTarget::Vi,  phys - VI_BASE),
+        CP_BASE..=CP_END            => (BusTarget::Cp,  phys - CP_BASE),
         PE_BASE..=PE_END            => (BusTarget::Pe,  phys - PE_BASE),
+        VI_BASE..=VI_END            => (BusTarget::Vi,  phys - VI_BASE),
         PI_BASE..=PI_END            => (BusTarget::Pi,  phys - PI_BASE),
+        MI_BASE..=MI_END            => (BusTarget::Mi,  phys - MI_BASE),
         DSP_BASE..=DSP_END          => (BusTarget::Dsp, phys - DSP_BASE),
+        DI_BASE..=DI_END            => (BusTarget::Di,  phys - DI_BASE),
+        SI_BASE..=SI_END            => (BusTarget::Si,  phys - SI_BASE),
         EXI_BASE..=EXI_END          => (BusTarget::Exi, phys - EXI_BASE),
+        AI_BASE..=AI_END            => (BusTarget::Ai,  phys - AI_BASE),
         IPL_BASE..=IPL_END          => (BusTarget::Ipl, phys),
         GX_FIFO_BASE..=GX_FIFO_END  => (BusTarget::Gx,  phys - GX_FIFO_BASE),
         _                           => (BusTarget::Fallback, phys),
@@ -39,6 +50,7 @@ impl Gekko {
     pub fn read_u8(&mut self, addr: u32) -> u8 {
         let (target, offset) = route(Mmio::virt_to_phys(addr));
         match target {
+            BusTarget::Cp       => self.cp.mmio_read_u8(offset),
             BusTarget::Vi       => {
                 if offset == 0x2E {
                     return (self.vi.dph_value(self.scheduler.cycles) >> 8) as u8;
@@ -50,8 +62,17 @@ impl Gekko {
             }
             BusTarget::Pe       => self.pe.mmio_read_u8(offset),
             BusTarget::Pi       => self.pi.mmio_read_u8(offset),
+            BusTarget::Mi       => self.mi.mmio_read_u8(offset),
             BusTarget::Dsp      => self.dsp.mmio_read_u8(offset),
+            BusTarget::Di       => self.di.mmio_read_u8(offset),
+            BusTarget::Si       => self.si.mmio_read_u8(offset),
             BusTarget::Exi      => self.exi.mmio_read_u8(offset),
+            BusTarget::Ai       => {
+                if offset == 0x08 {
+                    return self.ai.sample_count(self.scheduler.cycles) as u8;
+                }
+                self.ai.mmio_read_u8(offset)
+            }
             BusTarget::Gx       => {
                 tracing::error!(addr = format!("{:08X}", addr), "Invalid GX FIFO read");
                 0
@@ -65,6 +86,7 @@ impl Gekko {
     pub fn read_u16(&mut self, addr: u32) -> u16 {
         let (target, offset) = route(Mmio::virt_to_phys(addr));
         match target {
+            BusTarget::Cp       => self.cp.mmio_read_u16(offset),
             BusTarget::Vi       => {
                 if offset == 0x2E {
                     return self.vi.dph_value(self.scheduler.cycles);
@@ -73,8 +95,17 @@ impl Gekko {
             }
             BusTarget::Pe       => self.pe.mmio_read_u16(offset),
             BusTarget::Pi       => self.pi.mmio_read_u16(offset),
+            BusTarget::Mi       => self.mi.mmio_read_u16(offset),
             BusTarget::Dsp      => self.dsp.mmio_read_u16(offset),
+            BusTarget::Di       => self.di.mmio_read_u16(offset),
+            BusTarget::Si       => self.si.mmio_read_u16(offset),
             BusTarget::Exi      => self.exi.mmio_read_u16(offset),
+            BusTarget::Ai       => {
+                if offset == 0x08 || offset == 0x0A {
+                    return self.ai.sample_count(self.scheduler.cycles) as u16;
+                }
+                self.ai.mmio_read_u16(offset)
+            }
             BusTarget::Gx       => {
                 tracing::error!(addr = format!("{:08X}", addr), "Invalid GX FIFO read");
                 0
@@ -88,6 +119,7 @@ impl Gekko {
     pub fn read_u32(&mut self, addr: u32) -> u32 {
         let (target, offset) = route(Mmio::virt_to_phys(addr));
         match target {
+            BusTarget::Cp       => self.cp.mmio_read_u32(offset),
             BusTarget::Vi       => {
                 if offset == 0x2C {
                     let dpv = self.vi.mmio_read_u16(0x2C) as u32;
@@ -98,8 +130,17 @@ impl Gekko {
             }
             BusTarget::Pe       => self.pe.mmio_read_u32(offset),
             BusTarget::Pi       => self.pi.mmio_read_u32(offset),
+            BusTarget::Mi       => self.mi.mmio_read_u32(offset),
             BusTarget::Dsp      => self.dsp.mmio_read_u32(offset),
+            BusTarget::Di       => self.di.mmio_read_u32(offset),
+            BusTarget::Si       => self.si.mmio_read_u32(offset),
             BusTarget::Exi      => self.exi.mmio_read_u32(offset),
+            BusTarget::Ai       => {
+                if offset == 0x08 {
+                    return self.ai.sample_count(self.scheduler.cycles);
+                }
+                self.ai.mmio_read_u32(offset)
+            }
             BusTarget::Gx       => {
                 tracing::error!(addr = format!("{:08X}", addr), "Invalid GX FIFO read");
                 0
@@ -113,6 +154,10 @@ impl Gekko {
     pub fn write_u8(&mut self, addr: u32, val: u8) {
         let (target, offset) = route(Mmio::virt_to_phys(addr));
         match target {
+            BusTarget::Cp       => {
+                self.cp.mmio_write_u8(offset, val);
+                self.check_cp_interrupts();
+            }
             BusTarget::Vi       => {
                 self.vi.mmio_write_u8(offset, val);
                 self.maybe_schedule_vi_half_line();
@@ -125,14 +170,30 @@ impl Gekko {
                 self.check_pe_interrupts();
             }
             BusTarget::Pi       => self.pi.mmio_write_u8(offset, val),
+            BusTarget::Mi       => self.mi.mmio_write_u8(offset, val),
             BusTarget::Dsp      => {
                 self.dsp.mmio_write_u8(offset, val);
                 self.dsp.process_pending_dma(&mut self.mmio);
+                self.check_dsp_interrupts();
+            }
+            BusTarget::Di       => {
+                self.di.mmio_write_u8(offset, val);
+                self.check_di_interrupts();
+            }
+            BusTarget::Si       => {
+                self.si.mmio_write_u8(offset, val);
+                self.check_si_interrupts();
             }
             BusTarget::Exi      => {
                 self.exi.mmio_write_u8(offset, val);
                 self.exi.process_cs_changes();
                 self.exi.process_dma_transfers(&mut self.mmio);
+                self.check_exi_interrupts();
+            }
+            BusTarget::Ai       => {
+                self.ai.mmio_write_u8(offset, val);
+                self.check_sample_counter_reset();
+                self.check_ai_interrupts();
             }
             BusTarget::Gx       => {
                 if self.pi.is_fifo_redirected() {
@@ -153,6 +214,10 @@ impl Gekko {
     pub fn write_u16(&mut self, addr: u32, val: u16) {
         let (target, offset) = route(Mmio::virt_to_phys(addr));
         match target {
+            BusTarget::Cp       => {
+                self.cp.mmio_write_u16(offset, val);
+                self.check_cp_interrupts();
+            }
             BusTarget::Vi       => {
                 self.vi.mmio_write_u16(offset, val);
                 self.maybe_schedule_vi_half_line();
@@ -165,14 +230,30 @@ impl Gekko {
                 self.check_pe_interrupts();
             }
             BusTarget::Pi       => self.pi.mmio_write_u16(offset, val),
+            BusTarget::Mi       => self.mi.mmio_write_u16(offset, val),
             BusTarget::Dsp      => {
                 self.dsp.mmio_write_u16(offset, val);
                 self.dsp.process_pending_dma(&mut self.mmio);
+                self.check_dsp_interrupts();
+            }
+            BusTarget::Di       => {
+                self.di.mmio_write_u16(offset, val);
+                self.check_di_interrupts();
+            }
+            BusTarget::Si       => {
+                self.si.mmio_write_u16(offset, val);
+                self.check_si_interrupts();
             }
             BusTarget::Exi      => {
                 self.exi.mmio_write_u16(offset, val);
                 self.exi.process_cs_changes();
                 self.exi.process_dma_transfers(&mut self.mmio);
+                self.check_exi_interrupts();
+            }
+            BusTarget::Ai       => {
+                self.ai.mmio_write_u16(offset, val);
+                self.check_sample_counter_reset();
+                self.check_ai_interrupts();
             }
             BusTarget::Gx       => {
                 if self.pi.is_fifo_redirected() {
@@ -194,6 +275,10 @@ impl Gekko {
     pub fn write_u32(&mut self, addr: u32, val: u32) {
         let (target, offset) = route(Mmio::virt_to_phys(addr));
         match target {
+            BusTarget::Cp       => {
+                self.cp.mmio_write_u32(offset, val);
+                self.check_cp_interrupts();
+            }
             BusTarget::Vi       => {
                 self.vi.mmio_write_u32(offset, val);
                 self.maybe_schedule_vi_half_line();
@@ -206,14 +291,30 @@ impl Gekko {
                 self.check_pe_interrupts();
             }
             BusTarget::Pi       => self.pi.mmio_write_u32(offset, val),
+            BusTarget::Mi       => self.mi.mmio_write_u32(offset, val),
             BusTarget::Dsp      => {
                 self.dsp.mmio_write_u32(offset, val);
                 self.dsp.process_pending_dma(&mut self.mmio);
+                self.check_dsp_interrupts();
+            }
+            BusTarget::Di       => {
+                self.di.mmio_write_u32(offset, val);
+                self.check_di_interrupts();
+            }
+            BusTarget::Si       => {
+                self.si.mmio_write_u32(offset, val);
+                self.check_si_interrupts();
             }
             BusTarget::Exi      => {
                 self.exi.mmio_write_u32(offset, val);
                 self.exi.process_cs_changes();
                 self.exi.process_dma_transfers(&mut self.mmio);
+                self.check_exi_interrupts();
+            }
+            BusTarget::Ai       => {
+                self.ai.mmio_write_u32(offset, val);
+                self.check_sample_counter_reset();
+                self.check_ai_interrupts();
             }
             BusTarget::Gx       => {
                 if self.pi.is_fifo_redirected() {

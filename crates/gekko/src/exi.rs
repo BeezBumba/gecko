@@ -1,6 +1,6 @@
 pub mod device;
-pub mod regs;
 pub mod macronix;
+pub mod regs;
 
 use crate::exi::regs::TransferType;
 use crate::mmio::Mmio;
@@ -339,6 +339,28 @@ impl Exi {
     pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
         if !self.write_raw(EXI_BASE + offset, 4, val) {
             tracing::error!(offset = format!("{offset:08X}"), "unhandled EXI write_u32");
+        }
+    }
+
+    pub fn interrupt_active(&self) -> bool {
+        Self::channel_interrupt_active(&self.ch0_csr)
+            || Self::channel_interrupt_active(&self.ch1_csr)
+            || Self::channel_interrupt_active(&self.ch2_csr)
+    }
+
+    fn channel_interrupt_active(csr: &impl regs::ChannelStatus) -> bool {
+        (csr.exi_interrupt() && csr.exi_interrupt_mask())
+            || (csr.tc_interrupt() && csr.tc_interrupt_mask())
+            || (csr.ext_interrupt() && csr.ext_interrupt_mask())
+    }
+}
+
+impl crate::gekko::Gekko {
+    pub fn check_exi_interrupts(&mut self) {
+        if self.exi.interrupt_active() {
+            self.pi.assert_interrupt(crate::flipper::pi::InterruptFlag::Exi);
+        } else {
+            self.pi.clear_interrupt(crate::flipper::pi::InterruptFlag::Exi);
         }
     }
 }

@@ -201,6 +201,7 @@ crate::mmio_register! {
 }
 
 // 0xCC002030	4	R/W	DI0 - Display Interrupt 0
+// THESE ARE NOT RESET ON WRITE 1!!
 
 crate::mmio_register! {
     DisplayInterrupt0: u32 @ 0xCC002030 => Vi.di0 {
@@ -369,6 +370,12 @@ crate::mmio_register! {
     ViDtvStatus: u16 @ 0xCC00206E => Vi.visel {
         #[bits(2, alias = "visel")] pub dtv_status: bool,
     }
+}
+
+// 0xCC002070	2	R/W	God knows what this is, log for now
+
+crate::mmio_register! {
+    ViUnknown70: u16 @ 0xCC002070 => Vi.unknown_70 {}
 }
 
 // 0xCC002072	2	R/W	BorderHBE - Border HBE
