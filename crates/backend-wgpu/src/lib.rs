@@ -18,7 +18,7 @@ impl From<&gekko::flipper::gx::draw::Vertex> for GpuVertex {
         Self {
             position: v.position,
             color: v.color0,
-            tex0: v.tex0.unwrap_or([0.0, 0.0]),
+            tex0: v.texcoords[0].unwrap_or([0.0, 0.0]),
         }
     }
 }
@@ -27,6 +27,7 @@ impl From<&gekko::flipper::gx::draw::Vertex> for GpuVertex {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct FrameUniforms {
     tev_color_regs: [[f32; 4]; 4],
+    tev_konst_colors: [[f32; 4]; 16],
     tev_color_env: [u32; 16],
     tev_alpha_env: [u32; 16],
     num_tev_stages: u32,
@@ -58,9 +59,9 @@ struct PipelineKey {
 }
 
 impl PipelineKey {
-    fn from_draw_commands(commands: &DrawCommands) -> Self {
-        let blend = commands.bp_blend_mode;
-        let zmode = commands.bp_zmode;
+    fn from_draw_call(dc: &DrawCall) -> Self {
+        let blend = dc.bp_blend_mode;
+        let zmode = dc.bp_zmode;
         PipelineKey {
             blend_enable: blend.blend_enable(),
             src_factor: blend.src_factor(),
@@ -79,6 +80,7 @@ pub struct GxRenderer {
     pipeline_layout: wgpu::PipelineLayout,
     surface_format: wgpu::TextureFormat,
     bind_group_layout: wgpu::BindGroupLayout,
+    #[allow(dead_code)]
     bind_group: wgpu::BindGroup,
     frame_uniform_buffer: wgpu::Buffer,
     draw_uniform_buffer: wgpu::Buffer,
@@ -424,59 +426,59 @@ impl GxRenderer {
             return;
         }
 
-        let alpha_cmp = commands.bp_alpha_compare;
-        let frame_uniform = FrameUniforms {
-            tev_color_regs: helpers::decode_tev_color_regs(&commands.tev_color_regs_lo, &commands.tev_color_regs_hi),
-            tev_color_env: commands.tev_color_env.map(|e| e.raw()),
-            tev_alpha_env: commands.tev_alpha_env.map(|e| e.raw()),
-            num_tev_stages: commands.num_tev_stages as u32,
-            alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
-            alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
-            alpha_comp0: alpha_cmp.comp0() as u32,
-            alpha_comp1: alpha_cmp.comp1() as u32,
-            alpha_op: alpha_cmp.op() as u32,
-            _padding: [0; 2],
-        };
-
-        // Get or create the pipeline for current blend/z state
-        let pipeline_key = PipelineKey::from_draw_commands(commands);
-        if !self.pipeline_cache.contains_key(&pipeline_key) {
-            let pipeline = self.create_pipeline(device, &pipeline_key);
-            self.pipeline_cache.insert(pipeline_key, pipeline);
+        // Ensure all referenced textures are uploaded and pipelines/samplers created
+        for dc in &commands.commands {
+            for desc in dc.textures.iter().flatten() {
+                let key = (desc.ram_addr, desc.width, desc.height, desc.format);
+                if !self.texture_cache.contains_key(&key) {
+                    let (tex, view) = texture::upload_texture(device, queue, ram, desc);
+                    self.texture_cache.insert(key, (tex, view));
+                }
+                let sampler_key = (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
+                if !self.sampler_cache.contains_key(&sampler_key) {
+                    let s = device.create_sampler(&wgpu::SamplerDescriptor {
+                        label: Some("gx_sampler"),
+                        address_mode_u: helpers::map_wrap_mode(sampler_key.0),
+                        address_mode_v: helpers::map_wrap_mode(sampler_key.1),
+                        mag_filter: helpers::map_mag_filter(sampler_key.2),
+                        min_filter: helpers::map_min_filter(sampler_key.3),
+                        ..Default::default()
+                    });
+                    self.sampler_cache.insert(sampler_key, s);
+                }
+            }
+            let pipeline_key = PipelineKey::from_draw_call(dc);
+            if !self.pipeline_cache.contains_key(&pipeline_key) {
+                let pipeline = self.create_pipeline(device, &pipeline_key);
+                self.pipeline_cache.insert(pipeline_key, pipeline);
+            }
         }
 
-        // Upload texture slot 0 if present, using cache to avoid redundant uploads
-        let sampler_key = if let Some(desc) = &commands.textures[0] {
-            let key = (desc.ram_addr, desc.width, desc.height, desc.format);
-            if !self.texture_cache.contains_key(&key) {
-                let (tex, view) = texture::upload_texture(device, queue, ram, desc);
-                self.texture_cache.insert(key, (tex, view));
-            }
-            (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter)
-        } else {
-            (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear)
-        };
-
-        // Get or create sampler for these modes
-        if !self.sampler_cache.contains_key(&sampler_key) {
+        // Ensure fallback sampler exists
+        let fallback_sampler_key = (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear);
+        if !self.sampler_cache.contains_key(&fallback_sampler_key) {
             let s = device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("gx_sampler"),
-                address_mode_u: helpers::map_wrap_mode(sampler_key.0),
-                address_mode_v: helpers::map_wrap_mode(sampler_key.1),
-                mag_filter: helpers::map_mag_filter(sampler_key.2),
-                min_filter: helpers::map_min_filter(sampler_key.3),
+                label: Some("gx_sampler_fallback"),
                 ..Default::default()
             });
-            self.sampler_cache.insert(sampler_key, s);
+            self.sampler_cache.insert(fallback_sampler_key, s);
         }
+
         self.scratch_vertices.clear();
         self.scratch_draws.clear();
         self.scratch_uniform_bytes.clear();
 
-        let stride = self.draw_uniform_stride as usize;
+        let draw_stride = self.draw_uniform_stride as usize;
         let draw_size = std::mem::size_of::<DrawUniforms>();
+        let frame_stride = align_up(
+            std::mem::size_of::<FrameUniforms>() as u64,
+            device.limits().min_uniform_buffer_offset_alignment as u64,
+        ) as usize;
+        let frame_size = std::mem::size_of::<FrameUniforms>();
+        let mut frame_uniform_bytes: Vec<u8> = Vec::new();
+        let mut draw_call_indices: Vec<usize> = Vec::new();
 
-        for dc in &commands.commands {
+        for (dc_idx, dc) in commands.commands.iter().enumerate() {
             let prev_len = self.scratch_vertices.len();
             triangulate_into(dc, &mut self.scratch_vertices);
             let added = self.scratch_vertices.len() - prev_len;
@@ -486,17 +488,40 @@ impl GxRenderer {
 
             let mvp = commands.projection * dc.modelview;
             let draw_uniform = DrawUniforms { mvp: mvp.0 };
-            let start = self.scratch_draws.len() * stride;
-            self.scratch_uniform_bytes.resize(start + stride, 0);
-            self.scratch_uniform_bytes[start..start + draw_size].copy_from_slice(bytemuck::bytes_of(&draw_uniform));
+            let start = self.scratch_draws.len() * draw_stride;
+            self.scratch_uniform_bytes.resize(start + draw_stride, 0);
+            self.scratch_uniform_bytes[start..start + draw_size]
+                .copy_from_slice(bytemuck::bytes_of(&draw_uniform));
+
+            let alpha_cmp = dc.bp_alpha_compare;
+            let frame_uniform = FrameUniforms {
+                tev_color_regs: dc.tev_color_regs,
+                tev_konst_colors: dc.tev_konst_colors,
+                tev_color_env: dc.tev_color_env.map(|e| e.raw()),
+                tev_alpha_env: dc.tev_alpha_env.map(|e| e.raw()),
+                num_tev_stages: dc.num_tev_stages as u32,
+                alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
+                alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
+                alpha_comp0: alpha_cmp.comp0() as u32,
+                alpha_comp1: alpha_cmp.comp1() as u32,
+                alpha_op: alpha_cmp.op() as u32,
+                _padding: [0; 2],
+            };
+            let fstart = self.scratch_draws.len() * frame_stride;
+            frame_uniform_bytes.resize(fstart + frame_stride, 0);
+            frame_uniform_bytes[fstart..fstart + frame_size]
+                .copy_from_slice(bytemuck::bytes_of(&frame_uniform));
+
             self.scratch_draws.push((prev_len as u32, added as u32));
+            draw_call_indices.push(dc_idx);
         }
 
         if self.scratch_draws.is_empty() {
             return;
         }
 
-        self.ensure_draw_capacity(device, self.scratch_draws.len());
+        let num_draws = self.scratch_draws.len();
+        self.ensure_draw_capacity(device, num_draws);
 
         if self.scratch_vertices.len() > self.vertex_capacity {
             self.vertex_capacity = self.scratch_vertices.len().next_power_of_two();
@@ -508,51 +533,23 @@ impl GxRenderer {
             });
         }
 
-        let sampler = &self.sampler_cache[&sampler_key];
-        let tex_view = if commands.textures[0].is_some() {
-            let desc = commands.textures[0].as_ref().unwrap();
-            let key = (desc.ram_addr, desc.width, desc.height, desc.format);
-            &self.texture_cache[&key].1
-        } else {
-            &self.fallback_view
-        };
+        let needed_frame_size = (num_draws * frame_stride) as u64;
+        if needed_frame_size > self.frame_uniform_buffer.size() {
+            self.frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gx_frame_uniforms"),
+                size: needed_frame_size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
 
-        queue.write_buffer(&self.frame_uniform_buffer, 0, bytemuck::bytes_of(&frame_uniform));
+        queue.write_buffer(&self.frame_uniform_buffer, 0, &frame_uniform_bytes);
         queue.write_buffer(&self.draw_uniform_buffer, 0, &self.scratch_uniform_bytes);
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.scratch_vertices));
-
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.frame_uniform_buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(std::mem::size_of::<FrameUniforms>() as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.draw_uniform_buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(std::mem::size_of::<DrawUniforms>() as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(tex_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
-
-        let pipeline = &self.pipeline_cache[&pipeline_key];
+        queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.scratch_vertices),
+        );
 
         let mut encoder = device.create_command_encoder(&Default::default());
         {
@@ -579,12 +576,68 @@ impl GxRenderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            rpass.set_pipeline(pipeline);
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
-            for (index, (first_vertex, vertex_count)) in self.scratch_draws.iter().copied().enumerate() {
+            for (index, (first_vertex, vertex_count)) in
+                self.scratch_draws.iter().copied().enumerate()
+            {
+                let dc = &commands.commands[draw_call_indices[index]];
+                let pipeline_key = PipelineKey::from_draw_call(dc);
+                let pipeline = &self.pipeline_cache[&pipeline_key];
+                rpass.set_pipeline(pipeline);
+
+                let (tex_view, sampler) = if let Some(desc) = &dc.textures[0] {
+                    let tex_key = (desc.ram_addr, desc.width, desc.height, desc.format);
+                    let sampler_key =
+                        (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
+                    (
+                        &self.texture_cache[&tex_key].1,
+                        &self.sampler_cache[&sampler_key],
+                    )
+                } else {
+                    (&self.fallback_view, &self.sampler_cache[&fallback_sampler_key])
+                };
+
+                let frame_offset =
+                    (index as u64 * frame_stride as u64) as wgpu::BufferAddress;
                 let draw_offset = (index as u64 * self.draw_uniform_stride) as u32;
-                rpass.set_bind_group(0, &self.bind_group, &[draw_offset]);
+
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &self.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &self.frame_uniform_buffer,
+                                offset: frame_offset,
+                                size: wgpu::BufferSize::new(
+                                    std::mem::size_of::<FrameUniforms>() as u64,
+                                ),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &self.draw_uniform_buffer,
+                                offset: 0,
+                                size: wgpu::BufferSize::new(
+                                    std::mem::size_of::<DrawUniforms>() as u64,
+                                ),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(tex_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                    ],
+                });
+
+                rpass.set_bind_group(0, &bind_group, &[draw_offset]);
                 rpass.draw(first_vertex..first_vertex + vertex_count, 0..1);
             }
         }

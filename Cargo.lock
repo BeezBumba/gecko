@@ -2708,6 +2708,7 @@ dependencies = [
  "gekko",
  "image 0.1.0",
  "pollster",
+ "tracing-subscriber",
  "wgpu",
  "winit",
 ]

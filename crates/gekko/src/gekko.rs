@@ -1,7 +1,7 @@
 use crate::{
     cpu::{self, Cpu, IPL_RESET_VECTOR, semantics::Instruction},
     exi::{Exi, macronix::ExiMacronix},
-    flipper::{ai::Ai, cp::Cp, di::Di, dsp::Dsp, gx::Gx, mi::Mi, pe::Pe, pi::Pi, si::Si, vi::Vi},
+    flipper::{ai::Ai, cp::Cp, di::Di, dsp::Dsp, gx::Gx, mi::Mi, pe::Pe, pi::Pi, si::{Si, pad}, vi::Vi},
     idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector},
     mmio::Mmio,
     scheduler::{CYCLES_PER_VSYNC, EventKind, Scheduler},
@@ -130,6 +130,11 @@ impl Gekko {
             return;
         }
 
+        // TODO: hack IPL state machine
+        if self.cpu.pc == 0x81301284 {
+            self.cpu.pc += 4;
+        }
+
         // Fetch and execute next instruction
         self.cpu.cia = self.cpu.pc;
         self.cpu.nia = self.cpu.cia.wrapping_add(4);
@@ -160,6 +165,9 @@ impl Gekko {
 
     pub fn run_until_vsync(&mut self) {
         self.vsync_pending = false;
+        // Update SI controller input at the start of each frame
+        self.si.update_polling();
+        self.check_si_interrupts();
         while !self.vsync_pending {
             self.step();
         }
@@ -179,5 +187,13 @@ impl Gekko {
     pub fn frame_size(&self) -> (usize, usize) {
         let fmt = self.vi.dcr.video_format();
         (fmt.columns(), fmt.lines())
+    }
+
+    pub fn add_primary_controller(&mut self, input: pad::PadStatus) {
+        self.si.pad_state[0] = input;
+    }
+
+    pub fn primary_controller_mut(&mut self) -> &mut pad::PadStatus {
+        &mut self.si.pad_state[0]
     }
 }

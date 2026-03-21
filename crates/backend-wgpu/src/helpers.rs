@@ -1,4 +1,4 @@
-use gekko::flipper::gx::regs::{BlendFactor, CompareFunc, MagFilter, MinFilter, TevRegisterH, TevRegisterL, WrapMode};
+use gekko::flipper::gx::regs::{BlendFactor, CompareFunc, MagFilter, MinFilter, WrapMode};
 
 pub fn map_wrap_mode(wrap: WrapMode) -> wgpu::AddressMode {
     match wrap {
@@ -48,26 +48,4 @@ pub fn map_compare_func(f: CompareFunc) -> wgpu::CompareFunction {
         CompareFunc::GreaterEqual => wgpu::CompareFunction::GreaterEqual,
         CompareFunc::Always => wgpu::CompareFunction::Always,
     }
-}
-
-pub fn s11_to_f32(val: u16) -> f32 {
-    let signed = if val & 0x400 != 0 {
-        val as i32 - 0x800
-    } else {
-        val as i32
-    };
-    signed as f32 / 255.0
-}
-
-pub fn decode_tev_color_regs(lo: &[TevRegisterL; 4], hi: &[TevRegisterH; 4]) -> [[f32; 4]; 4] {
-    let mut out = [[0.0f32; 4]; 4];
-    for i in 0..4 {
-        out[i] = [
-            s11_to_f32(lo[i].r()),
-            s11_to_f32(hi[i].g()),
-            s11_to_f32(hi[i].b()),
-            s11_to_f32(lo[i].a()),
-        ];
-    }
-    out
 }

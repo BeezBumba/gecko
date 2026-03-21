@@ -261,6 +261,12 @@ pub struct VatA {
     #[bits(14..=16)]
     pub clr0_fmt: ColorFormat,
 
+    #[bits(17)]
+    pub clr1_cnt: ColorCount,
+
+    #[bits(18..=20)]
+    pub clr1_fmt: ColorFormat,
+
     #[bits(21)]
     pub tex0_cnt: TexCount,
 
@@ -269,6 +275,12 @@ pub struct VatA {
 
     #[bits(25..=29)]
     pub tex0_shift: u8,
+
+    #[bits(30)]
+    pub byte_dequant: bool,
+
+    #[bits(31)]
+    pub nrm_index3: bool,
 }
 
 impl VatA {
@@ -280,12 +292,135 @@ impl VatA {
         self.nrm_cnt().components() * self.nrm_fmt().size()
     }
 
+    /// Number of bytes the normal attribute occupies in the FIFO stream.
+    pub fn nrm_stream_size(&self, attr: AttributeType) -> usize {
+        match attr {
+            AttributeType::None => 0,
+            AttributeType::Direct => self.nrm_data_size(),
+            AttributeType::Index8 => {
+                if self.nrm_index3() && self.nrm_cnt() == NrmCount::Nbt { 3 } else { 1 }
+            }
+            AttributeType::Index16 => {
+                if self.nrm_index3() && self.nrm_cnt() == NrmCount::Nbt { 6 } else { 2 }
+            }
+        }
+    }
+
     pub fn clr0_data_size(&self) -> usize {
         self.clr0_fmt().data_size(self.clr0_cnt())
     }
 
+    pub fn clr1_data_size(&self) -> usize {
+        self.clr1_fmt().data_size(self.clr1_cnt())
+    }
+
     pub fn tex0_data_size(&self) -> usize {
         self.tex0_cnt().components() * self.tex0_fmt().size()
+    }
+}
+
+// CP 0x80-0x87 (one per vertex format)
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct VatB {
+    #[bits(0)]
+    pub tex1_cnt: TexCount,
+
+    #[bits(1..=3)]
+    pub tex1_fmt: ComponentFormat,
+
+    #[bits(4..=8)]
+    pub tex1_shift: u8,
+
+    #[bits(9)]
+    pub tex2_cnt: TexCount,
+
+    #[bits(10..=12)]
+    pub tex2_fmt: ComponentFormat,
+
+    #[bits(13..=17)]
+    pub tex2_shift: u8,
+
+    #[bits(18)]
+    pub tex3_cnt: TexCount,
+
+    #[bits(19..=21)]
+    pub tex3_fmt: ComponentFormat,
+
+    #[bits(22..=26)]
+    pub tex3_shift: u8,
+
+    #[bits(27)]
+    pub tex4_cnt: TexCount,
+
+    #[bits(28..=30)]
+    pub tex4_fmt: ComponentFormat,
+}
+
+impl VatB {
+    pub fn tex1_data_size(&self) -> usize {
+        self.tex1_cnt().components() * self.tex1_fmt().size()
+    }
+
+    pub fn tex2_data_size(&self) -> usize {
+        self.tex2_cnt().components() * self.tex2_fmt().size()
+    }
+
+    pub fn tex3_data_size(&self) -> usize {
+        self.tex3_cnt().components() * self.tex3_fmt().size()
+    }
+
+    pub fn tex4_data_size(&self) -> usize {
+        self.tex4_cnt().components() * self.tex4_fmt().size()
+    }
+}
+
+// CP 0x90-0x97 (one per vertex format)
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct VatC {
+    #[bits(0..=4)]
+    pub tex4_shift: u8,
+
+    #[bits(5)]
+    pub tex5_cnt: TexCount,
+
+    #[bits(6..=8)]
+    pub tex5_fmt: ComponentFormat,
+
+    #[bits(9..=13)]
+    pub tex5_shift: u8,
+
+    #[bits(14)]
+    pub tex6_cnt: TexCount,
+
+    #[bits(15..=17)]
+    pub tex6_fmt: ComponentFormat,
+
+    #[bits(18..=22)]
+    pub tex6_shift: u8,
+
+    #[bits(23)]
+    pub tex7_cnt: TexCount,
+
+    #[bits(24..=26)]
+    pub tex7_fmt: ComponentFormat,
+
+    #[bits(27..=31)]
+    pub tex7_shift: u8,
+}
+
+impl VatC {
+    pub fn tex5_data_size(&self) -> usize {
+        self.tex5_cnt().components() * self.tex5_fmt().size()
+    }
+
+    pub fn tex6_data_size(&self) -> usize {
+        self.tex6_cnt().components() * self.tex6_fmt().size()
+    }
+
+    pub fn tex7_data_size(&self) -> usize {
+        self.tex7_cnt().components() * self.tex7_fmt().size()
     }
 }
 
@@ -295,20 +430,86 @@ impl VatA {
 pub struct VcdHi {
     #[bits(0..=1)]
     pub tex0: AttributeType,
+
+    #[bits(2..=3)]
+    pub tex1: AttributeType,
+
+    #[bits(4..=5)]
+    pub tex2: AttributeType,
+
+    #[bits(6..=7)]
+    pub tex3: AttributeType,
+
+    #[bits(8..=9)]
+    pub tex4: AttributeType,
+
+    #[bits(10..=11)]
+    pub tex5: AttributeType,
+
+    #[bits(12..=13)]
+    pub tex6: AttributeType,
+
+    #[bits(14..=15)]
+    pub tex7: AttributeType,
 }
 
-// CP 0x50
+// CP 0x50-0x57
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy)]
 pub struct VcdLo {
-    #[bits(9..=10)]
+    #[bits(0, alias = "pmidx")]
+    pub pos_nrm_mtx_idx: bool,
+
+    #[bits(1, alias = "t0midx")]
+    pub tex0_mtx_idx: bool,
+
+    #[bits(2, alias = "t1midx")]
+    pub tex1_mtx_idx: bool,
+
+    #[bits(3, alias = "t2midx")]
+    pub tex2_mtx_idx: bool,
+
+    #[bits(4, alias = "t3midx")]
+    pub tex3_mtx_idx: bool,
+
+    #[bits(5, alias = "t4midx")]
+    pub tex4_mtx_idx: bool,
+
+    #[bits(6, alias = "t5midx")]
+    pub tex5_mtx_idx: bool,
+
+    #[bits(7, alias = "t6midx")]
+    pub tex6_mtx_idx: bool,
+
+    #[bits(8, alias = "t7midx")]
+    pub tex7_mtx_idx: bool,
+
+    #[bits(9..=10, alias = "pos")]
     pub position: AttributeType,
 
-    #[bits(11..=12)]
+    #[bits(11..=12, alias = "nrm")]
     pub normal: AttributeType,
 
-    #[bits(13..=14)]
+    #[bits(13..=14, alias = "col0")]
     pub color0: AttributeType,
+
+    #[bits(15..=16, alias = "col1")]
+    pub color1: AttributeType,
+}
+
+impl VcdLo {
+    /// Number of matrix index bytes in the vertex stream.
+    pub fn mtx_idx_count(&self) -> usize {
+        self.pos_nrm_mtx_idx() as usize
+            + self.tex0_mtx_idx() as usize
+            + self.tex1_mtx_idx() as usize
+            + self.tex2_mtx_idx() as usize
+            + self.tex3_mtx_idx() as usize
+            + self.tex4_mtx_idx() as usize
+            + self.tex5_mtx_idx() as usize
+            + self.tex6_mtx_idx() as usize
+            + self.tex7_mtx_idx() as usize
+    }
 }
 
 #[chapa::bitfield(u32, order = lsb0)]
@@ -640,7 +841,57 @@ pub struct MatrixIndex0 {
     pub pos_mtx_idx: u8,
 
     #[bits(6..=11)]
-    pub nrm_mtx_idx: u8,
+    pub tex0_mtx_idx: u8,
+
+    #[bits(12..=17)]
+    pub tex1_mtx_idx: u8,
+
+    #[bits(18..=23)]
+    pub tex2_mtx_idx: u8,
+
+    #[bits(24..=29)]
+    pub tex3_mtx_idx: u8,
+}
+
+impl MatrixIndex0 {
+    pub fn tex_mtx_idx(&self, n: usize) -> u8 {
+        match n {
+            0 => self.tex0_mtx_idx(),
+            1 => self.tex1_mtx_idx(),
+            2 => self.tex2_mtx_idx(),
+            3 => self.tex3_mtx_idx(),
+            _ => 0,
+        }
+    }
+}
+
+// XF 0x1019 Matrix Index B (tex4-7 matrix indices)
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MatrixIndex1 {
+    #[bits(0..=5)]
+    pub tex4_mtx_idx: u8,
+
+    #[bits(6..=11)]
+    pub tex5_mtx_idx: u8,
+
+    #[bits(12..=17)]
+    pub tex6_mtx_idx: u8,
+
+    #[bits(18..=23)]
+    pub tex7_mtx_idx: u8,
+}
+
+impl MatrixIndex1 {
+    pub fn tex_mtx_idx(&self, n: usize) -> u8 {
+        match n {
+            4 => self.tex4_mtx_idx(),
+            5 => self.tex5_mtx_idx(),
+            6 => self.tex6_mtx_idx(),
+            7 => self.tex7_mtx_idx(),
+            _ => 0,
+        }
+    }
 }
 
 // Diffuse lighting function
@@ -702,4 +953,75 @@ impl ChanCtrl {
             AttnFn::Spec
         }
     }
+}
+
+// XF 0x1040-0x1047: Texture coordinate generation parameters
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TexGenProjection {
+    St,  // 2x4 matrix (s, t output)
+    Stq, // 3x4 matrix (s, t, q output)
+}
+
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TexGenInputForm {
+    Ab11, // (a, b, 1.0, 1.0)
+    Abc1, // (a, b, c, 1.0)
+}
+
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TexGenType {
+    Regular = 0,
+    EmbossMap = 1,
+    Color0 = 2,
+    Color1 = 3,
+}
+
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TexGenSrc {
+    Pos = 0,
+    Nrm = 1,
+    Color = 2,
+    BinNrm = 3,
+    Tangent = 4,
+    Tex0 = 5,
+    Tex1 = 6,
+    Tex2 = 7,
+    Tex3 = 8,
+    Tex4 = 9,
+    Tex5 = 10,
+    Tex6 = 11,
+    Tex7 = 12,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct TexGenReg {
+    #[bits(1)]
+    pub projection: TexGenProjection,
+
+    #[bits(2, alias = "input_form")]
+    pub texgen_input_form: TexGenInputForm,
+
+    #[bits(4..=6)]
+    pub texgen_type: TexGenType,
+
+    #[bits(7..=11)]
+    pub source_row: TexGenSrc,
+
+    #[bits(12..=14)]
+    pub emboss_source: u8,
+
+    #[bits(15..=17)]
+    pub emboss_light: u8,
+}
+
+// XF 0x1050-0x1057: Dual texture transform (post-transform)
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct DualTexGenReg {
+    #[bits(0..=5)]
+    pub post_mtx_idx: u8,
+
+    #[bits(6)]
+    pub normalize: bool,
 }

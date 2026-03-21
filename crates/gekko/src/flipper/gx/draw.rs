@@ -1,6 +1,5 @@
 use super::regs::{
-    AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevOrder, TevRegisterH, TevRegisterL,
-    WrapMode, ZMode,
+    AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, WrapMode, ZMode,
 };
 use chapa::BitEnum;
 
@@ -39,7 +38,7 @@ impl Primitive {
 pub struct Vertex {
     pub position: [f32; 3],
     pub color0: [f32; 4],
-    pub tex0: Option<[f32; 2]>,
+    pub texcoords: [Option<[f32; 2]>; 8],
 }
 
 #[derive(BitEnum, Debug, PartialEq, Eq, Hash)]
@@ -73,6 +72,21 @@ pub struct DrawCall {
     pub primitive: Primitive,
     pub vertices: Vec<Vertex>,
     pub modelview: Matrix4,
+
+    // Textures bound at draw time
+    pub textures: [Option<TextureDescriptor>; 8],
+
+    // TEV state snapshot
+    pub tev_color_env: [TevColorEnv; 16],
+    pub tev_alpha_env: [TevAlphaEnv; 16],
+    pub tev_color_regs: [[f32; 4]; 4],
+    pub tev_konst_colors: [[f32; 4]; 16],
+    pub num_tev_stages: u8,
+
+    // BP state snapshot
+    pub bp_zmode: ZMode,
+    pub bp_blend_mode: BlendMode,
+    pub bp_alpha_compare: AlphaCompare,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -104,22 +118,4 @@ impl std::ops::Mul for Matrix4 {
 pub struct DrawCommands {
     pub projection: Matrix4,
     pub commands: Vec<DrawCall>,
-    pub textures: [Option<TextureDescriptor>; 8],
-
-    // TEV state
-    pub tev_color_env: [TevColorEnv; 16],
-    pub tev_alpha_env: [TevAlphaEnv; 16],
-
-    // RGBA for each TEV register
-    pub tev_color_regs_lo: [TevRegisterL; 4],
-    pub tev_color_regs_hi: [TevRegisterH; 4],
-    pub tev_const_regs_lo: [TevRegisterL; 4],
-    pub tev_const_regs_hi: [TevRegisterH; 4],
-    pub tev_orders: [TevOrder; 8],
-    pub num_tev_stages: u8,
-
-    // BP state
-    pub bp_zmode: ZMode,
-    pub bp_blend_mode: BlendMode,
-    pub bp_alpha_compare: AlphaCompare,
 }

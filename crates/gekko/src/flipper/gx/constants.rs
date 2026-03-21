@@ -23,6 +23,8 @@ pub const XF_MEM_SIZE: usize = 0x1058;
 pub const VCD_LO_REG: usize = 0x50;
 pub const VCD_HI_REG: usize = 0x60;
 pub const VATA_REG: usize = 0x70;
+pub const VATB_REG: usize = 0x80;
+pub const VATC_REG: usize = 0x90;
 pub const ARRAY_BASE_REG: usize = 0xA0;
 pub const ARRAY_STRIDE_REG: usize = 0xB0;
 
@@ -30,6 +32,7 @@ pub const ARRAY_POS: usize = 0;
 pub const ARRAY_NRM: usize = 1;
 pub const ARRAY_CLR0: usize = 2;
 pub const ARRAY_CLR1: usize = 3;
+pub const ARRAY_TEX0: usize = 4;
 
 // XF memory addresses
 pub const XF_MODELVIEW_BASE: usize = 0x0000;
@@ -37,6 +40,7 @@ pub const XF_MODELVIEW_END: usize = 0x000B;
 pub const XF_PROJECTION_BASE: usize = 0x1020;
 pub const XF_PROJECTION_END: usize = 0x1026;
 pub const XF_MATRIX_INDEX_A: usize = 0x1018;
+pub const XF_MATRIX_INDEX_B: usize = 0x1019;
 pub const XF_POS_MTX_STRIDE: usize = 4;
 
 // XF normal matrix (3x3)
@@ -62,7 +66,18 @@ pub const XF_LIGHT_NZ: usize = 15;
 // XF channel configuration
 pub const XF_AMBIENT_COLOR0: usize = 0x100A;
 pub const XF_MATERIAL_COLOR0: usize = 0x100C;
-pub const XF_CHAN_CTRL0: usize = 0x100E;
+pub const XF_COLOR_CTRL0: usize = 0x100E; // COLOR0 channel control
+pub const XF_COLOR_CTRL1: usize = 0x100F; // COLOR1 channel control
+pub const XF_ALPHA_CTRL0: usize = 0x1010; // ALPHA0 channel control
+pub const XF_ALPHA_CTRL1: usize = 0x1011; // ALPHA1 channel control
+
+// XF texture coordinate generation
+pub const XF_TEXGEN_BASE: usize = 0x1040; // 0x1040-0x1047
+pub const XF_DUALTEX_BASE: usize = 0x1050; // 0x1050-0x1057
+pub const XF_NUM_TEXGENS: usize = 0x103F;
+pub const XF_DUAL_TEX_ENABLE: usize = 0x1012; // TODO: only bit 0 used?
+pub const XF_TEX_MTX_BASE: usize = 0x0078; // texture transform matrices (each 2x4 or 3x4)
+pub const XF_POST_MTX_BASE: usize = 0x0500; // post-transform matrices (3x4, stride 4x3)
 
 // BP texture register base addresses (maps 0-3: base, maps 4-7: base + 0x20)
 pub const BP_TX_SETMODE0_I0: usize = 0x80; // TX_SETMODE0 maps 0-3
@@ -94,3 +109,6 @@ pub const BP_TEV_ALPHA_ENV_0: usize = 0xC1; // stage N alpha = 0xC1 + N*2
 // lo = 0xE0 + N*2 (R,A), hi = 0xE1 + N*2 (G,B)
 pub const BP_TEV_REGISTERL_0: usize = 0xE0;
 pub const BP_TEV_REGISTERH_0: usize = 0xE1;
+
+// BP TEV KSEL (Konst Selection) registers
+pub const BP_TEV_KSEL_0: usize = 0xF6; // 0xF6-0xFD, 8 registers covering 16 stages

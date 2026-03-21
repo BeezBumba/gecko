@@ -83,7 +83,6 @@ impl MmioAccess<Si> for SiComcsr {
         if self.tc_interrupt() {
             csr = csr.with_tc_interrupt(false);
         }
-
         if self.rdst_interrupt() {
             csr = csr.with_rdst_interrupt(false);
         }
@@ -97,27 +96,96 @@ impl MmioAccess<Si> for SiComcsr {
             .with_in_length(self.in_length())
             .with_out_length(self.out_length())
             .with_channel_enable(self.channel_enable())
-            .with_channel_number(self.channel_number())
-            .with_tstart(self.tstart());
+            .with_channel_number(self.channel_number());
 
         si.comcsr = csr;
+
+        // Process SI buffer transfer when TSTART is written
+        if self.tstart() {
+            si.run_si_buffer();
+        }
     }
 }
 
 // 0xCC006438  4  R/W  SISR - SI Status Register
-
 crate::mmio_register! {
-    SiStatusRegister: u32 @ 0xCC006438 => Si.status {}
+    SiStatusRegister: u32 @ 0xCC006438 {
+        // Channel 3
+        #[bits(0)]  pub unrun3: bool,
+        #[bits(1)]  pub ovrun3: bool,
+        #[bits(2)]  pub coll3: bool,
+        #[bits(3)]  pub norep3: bool,
+        #[bits(4)]  pub wrst3: bool,
+        #[bits(5)]  pub rdst3: bool,
+
+        // Channel 2
+        #[bits(8)]  pub unrun2: bool,
+        #[bits(9)]  pub ovrun2: bool,
+        #[bits(10)] pub coll2: bool,
+        #[bits(11)] pub norep2: bool,
+        #[bits(12)] pub wrst2: bool,
+        #[bits(13)] pub rdst2: bool,
+
+        // Channel 1
+        #[bits(16)] pub unrun1: bool,
+        #[bits(17)] pub ovrun1: bool,
+        #[bits(18)] pub coll1: bool,
+        #[bits(19)] pub norep1: bool,
+        #[bits(20)] pub wrst1: bool,
+        #[bits(21)] pub rdst1: bool,
+
+        // Channel 0
+        #[bits(24)] pub unrun0: bool,
+        #[bits(25)] pub ovrun0: bool,
+        #[bits(26)] pub coll0: bool,
+        #[bits(27)] pub norep0: bool,
+        #[bits(28)] pub wrst0: bool,
+        #[bits(29)] pub rdst0: bool,
+
+        #[bits(31)] pub wr: bool,
+    }
 }
 
-// 0xCC00643C  4  R/W  SI Channel 0 Input Buffer High
+impl MmioAccess<Si> for SiStatusRegister {
+    fn read(si: &Si) -> Self {
+        si.status
+    }
 
-crate::mmio_register! {
-    SiChannel0InBufHi: u32 @ 0xCC00643C => Si.ch0_in_buf_hi {}
-}
+    fn write(self, si: &mut Si) {
+        let mut status = si.status;
 
-// 0xCC006480  4  R/W  SI I/O Buffer
+        if self.norep0() { status = status.with_norep0(false); }
+        if self.coll0() { status = status.with_coll0(false); }
+        if self.ovrun0() { status = status.with_ovrun0(false); }
+        if self.unrun0() { status = status.with_unrun0(false); }
 
-crate::mmio_register! {
-    SiIoBuf: u32 @ 0xCC006480 => Si.io_buf {}
+        if self.norep1() { status = status.with_norep1(false); }
+        if self.coll1() { status = status.with_coll1(false); }
+        if self.ovrun1() { status = status.with_ovrun1(false); }
+        if self.unrun1() { status = status.with_unrun1(false); }
+
+        if self.norep2() { status = status.with_norep2(false); }
+        if self.coll2() { status = status.with_coll2(false); }
+        if self.ovrun2() { status = status.with_ovrun2(false); }
+        if self.unrun2() { status = status.with_unrun2(false); }
+
+        if self.norep3() { status = status.with_norep3(false); }
+        if self.coll3() { status = status.with_coll3(false); }
+        if self.ovrun3() { status = status.with_ovrun3(false); }
+        if self.unrun3() { status = status.with_unrun3(false); }
+
+        if self.wr() {
+            si.status = status;
+            si.send_channel_commands();
+            status = si.status;
+            status = status
+                .with_wr(false)
+                .with_wrst0(false)
+                .with_wrst1(false)
+                .with_wrst2(false)
+                .with_wrst3(false);
+        }
+
+        si.status = status;
+    }
 }

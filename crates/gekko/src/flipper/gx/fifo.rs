@@ -1,8 +1,8 @@
 use super::constants::{BP_CMD, CALL_DL_CMD, CP_CMD, INV_VTX_CACHE_CMD, NOP_CMD, XF_CMD};
 use crate::flipper::gx::{
     Gx,
-    constants::{DRAW_COMMANDS_END, DRAW_COMMANDS_START, VATA_REG, VCD_HI_REG, VCD_LO_REG},
-    regs::{AttributeType, VatA, VcdHi, VcdLo},
+    constants::{DRAW_COMMANDS_END, DRAW_COMMANDS_START, VATA_REG, VATB_REG, VATC_REG, VCD_HI_REG, VCD_LO_REG},
+    regs::{AttributeType, VatA, VatB, VatC, VcdHi, VcdLo},
 };
 use std::io::{Cursor, Read};
 
@@ -128,39 +128,35 @@ impl Gx {
     }
 
     fn vertex_stride(&self, vertex_format_index: usize) -> usize {
-        let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG + vertex_format_index]);
-        let vcd_hi = VcdHi::from_raw(self.cp_regs[VCD_HI_REG + vertex_format_index]);
+        // VCD is global state (single register), VAT is per-format
+        let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG]);
+        let vcd_hi = VcdHi::from_raw(self.cp_regs[VCD_HI_REG]);
         let vat_a = VatA::from_raw(self.cp_regs[VATA_REG + vertex_format_index]);
+        let vat_b = VatB::from_raw(self.cp_regs[VATB_REG + vertex_format_index]);
+        let vat_c = VatC::from_raw(self.cp_regs[VATC_REG + vertex_format_index]);
 
-        let tex0_size = match vcd_hi.tex0() {
-            AttributeType::Direct => vat_a.tex0_data_size(),
-            AttributeType::Index8 => 1,
-            AttributeType::Index16 => 2,
-            AttributeType::None => 0,
+        let attr_size = |attr: AttributeType, direct_size: usize| -> usize {
+            match attr {
+                AttributeType::Direct => direct_size,
+                AttributeType::Index8 => 1,
+                AttributeType::Index16 => 2,
+                AttributeType::None => 0,
+            }
         };
 
-        let pos_size = match vcd_lo.position() {
-            AttributeType::Direct => vat_a.pos_data_size(),
-            AttributeType::Index8 => 1,
-            AttributeType::Index16 => 2,
-            AttributeType::None => 0,
-        };
-
-        let nrm_size = match vcd_lo.normal() {
-            AttributeType::Direct => vat_a.nrm_data_size(),
-            AttributeType::Index8 => 1,
-            AttributeType::Index16 => 2,
-            AttributeType::None => 0,
-        };
-
-        let clr0_size = match vcd_lo.color0() {
-            AttributeType::Direct => vat_a.clr0_data_size(),
-            AttributeType::Index8 => 1,
-            AttributeType::Index16 => 2,
-            AttributeType::None => 0,
-        };
-
-        pos_size + nrm_size + clr0_size + tex0_size
+        vcd_lo.mtx_idx_count()
+            + attr_size(vcd_lo.position(), vat_a.pos_data_size())
+            + vat_a.nrm_stream_size(vcd_lo.normal())
+            + attr_size(vcd_lo.color0(), vat_a.clr0_data_size())
+            + attr_size(vcd_lo.color1(), vat_a.clr1_data_size())
+            + attr_size(vcd_hi.tex0(), vat_a.tex0_data_size())
+            + attr_size(vcd_hi.tex1(), vat_b.tex1_data_size())
+            + attr_size(vcd_hi.tex2(), vat_b.tex2_data_size())
+            + attr_size(vcd_hi.tex3(), vat_b.tex3_data_size())
+            + attr_size(vcd_hi.tex4(), vat_b.tex4_data_size())
+            + attr_size(vcd_hi.tex5(), vat_c.tex5_data_size())
+            + attr_size(vcd_hi.tex6(), vat_c.tex6_data_size())
+            + attr_size(vcd_hi.tex7(), vat_c.tex7_data_size())
     }
 }
 

@@ -3,6 +3,7 @@ struct FrameUniforms {
     tev_color_reg1: vec4<f32>,
     tev_color_reg2: vec4<f32>,
     tev_color_reg3: vec4<f32>,
+    tev_konst_colors: array<vec4<f32>, 16>,
     tev_color_env: array<vec4<u32>, 4>,
     tev_alpha_env: array<vec4<u32>, 4>,
     num_tev_stages: u32,
@@ -65,7 +66,7 @@ fn extract_bits(val: u32, lo: u32, width: u32) -> u32 {
 }
 
 // TEV color input selector (TevColorIn, 4-bit, 16 variants)
-fn tev_color_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: array<vec4<f32>, 4>) -> vec3<f32> {
+fn tev_color_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: array<vec4<f32>, 4>, konst_color: vec4<f32>) -> vec3<f32> {
     switch sel {
         case 0u:  { return regs[0].rgb; }           // PrevColor
         case 1u:  { return vec3(regs[0].a); }       // PrevAlpha
@@ -81,14 +82,14 @@ fn tev_color_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: arra
         case 11u: { return vec3(ras_color.a); }     // RasAlpha
         case 12u: { return vec3(1.0); }             // One
         case 13u: { return vec3(0.5); }             // Half
-        case 14u: { return vec3(0.0); }             // TODO: const
+        case 14u: { return konst_color.rgb; }       // Konst
         case 15u: { return vec3(0.0); }             // Zero
         default:  { return vec3(0.0); }
     }
 }
 
 // TEV alpha input selector (TevAlphaIn, 3-bit, 8 variants)
-fn tev_alpha_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: array<vec4<f32>, 4>) -> f32 {
+fn tev_alpha_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: array<vec4<f32>, 4>, konst_color: vec4<f32>) -> f32 {
     switch sel {
         case 0u: { return regs[0].a; }      // PrevAlpha
         case 1u: { return regs[1].a; }      // Reg0Alpha
@@ -96,7 +97,7 @@ fn tev_alpha_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: arra
         case 3u: { return regs[3].a; }      // Reg2Alpha
         case 4u: { return tex_color.a; }    // TexAlpha
         case 5u: { return ras_color.a; }    // RasAlpha
-        case 6u: { return 0.0; }            // TODO: const
+        case 6u: { return konst_color.a; }  // Konst
         case 7u: { return 0.0; }            // Zero
         default: { return 0.0; }
     }
@@ -227,10 +228,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let c_scale = extract_bits(cenv, 20u, 2u);
         let c_dest = extract_bits(cenv, 22u, 2u);
 
-        let in_a = tev_color_in(c_a, tex_color, ras_color, regs);
-        let in_b = tev_color_in(c_b, tex_color, ras_color, regs);
-        let in_c = tev_color_in(c_c, tex_color, ras_color, regs);
-        let in_d = tev_color_in(c_d, tex_color, ras_color, regs);
+        let konst_color = frame.tev_konst_colors[stage];
+
+        let in_a = tev_color_in(c_a, tex_color, ras_color, regs, konst_color);
+        let in_b = tev_color_in(c_b, tex_color, ras_color, regs, konst_color);
+        let in_c = tev_color_in(c_c, tex_color, ras_color, regs, konst_color);
+        let in_d = tev_color_in(c_d, tex_color, ras_color, regs, konst_color);
 
         let color_result = tev_combine_color(in_a, in_b, in_c, in_d, c_bias, c_sub, c_scale, c_clamp);
         // Write RGB to dest, preserve alpha
@@ -252,10 +255,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let a_scale = extract_bits(aenv, 20u, 2u);
         let a_dest = extract_bits(aenv, 22u, 2u);
 
-        let ain_a = tev_alpha_in(a_a, tex_color, ras_color, regs);
-        let ain_b = tev_alpha_in(a_b, tex_color, ras_color, regs);
-        let ain_c = tev_alpha_in(a_c, tex_color, ras_color, regs);
-        let ain_d = tev_alpha_in(a_d, tex_color, ras_color, regs);
+        let ain_a = tev_alpha_in(a_a, tex_color, ras_color, regs, konst_color);
+        let ain_b = tev_alpha_in(a_b, tex_color, ras_color, regs, konst_color);
+        let ain_c = tev_alpha_in(a_c, tex_color, ras_color, regs, konst_color);
+        let ain_d = tev_alpha_in(a_d, tex_color, ras_color, regs, konst_color);
 
         let alpha_result = tev_combine_alpha(ain_a, ain_b, ain_c, ain_d, a_bias, a_sub, a_scale, a_clamp);
 
