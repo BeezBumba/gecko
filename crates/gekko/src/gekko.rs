@@ -156,7 +156,7 @@ impl Gekko {
         // Fetch and execute next instruction
         self.cpu.cia = self.cpu.pc;
         self.cpu.nia = self.cpu.cia.wrapping_add(4);
-        let instr = Instruction(self.mmio.virt_read_u32(self.cpu.cia));
+        let instr = Instruction(self.mmio.fetch_instruction(self.cpu.cia));
         cpu::lut::dispatch(self, instr);
         self.scheduler.cycles += 1;
 
@@ -197,7 +197,7 @@ impl Gekko {
         let count = ((end - start) / 4 + 1) as usize;
         let mut buf = [0u32; IDLE_LOOP_MAX_INSTRS];
         for i in 0..count.min(buf.len()) {
-            buf[i] = self.mmio.virt_read_u32(start + (i as u32) * 4);
+            buf[i] = self.mmio.fetch_instruction(start + (i as u32) * 4);
         }
         crate::idle::validate_polling_loop(&buf[..count.min(buf.len())], &self.cpu.gprs)
     }
