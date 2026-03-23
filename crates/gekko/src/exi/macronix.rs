@@ -9,13 +9,14 @@ const IPL_END: u32 = 0x1FFFFF;
 
 const SRAM_START: u32 = 0x800000;
 const SRAM_END: u32 = 0x800043;
+const SRAM_SIZE: usize = 68;
 
 const RTC_START: u32 = 0x840000;
 const RTC_END: u32 = 0x840004;
 
 pub struct ExiMacronix {
     rom: Vec<u8>,
-    sram: [u8; 0x44],
+    sram: Sram,
     command: u32,
     bytes_received: usize,
     cursor: usize,
@@ -28,7 +29,7 @@ impl ExiMacronix {
     pub fn new(rom: Vec<u8>) -> Self {
         Self {
             rom,
-            sram: [0u8; 0x44],
+            sram: Sram::ntsc_default(),
             command: 0,
             bytes_received: 0,
             cursor: 0,
@@ -84,9 +85,9 @@ impl super::device::ExiDevice for ExiMacronix {
                 }
             }
             SRAM_START..=SRAM_END => {
-                let offset = ((addr - SRAM_START) as usize + self.cursor) % 0x44;
+                let offset = ((addr - SRAM_START) as usize + self.cursor) % SRAM_SIZE;
                 if self.is_write() {
-                    self.sram[offset] = *byte;
+                    self.sram.data[offset] = *byte;
                     tracing::debug!(
                         addr = format!("{:06X}", addr),
                         cursor = self.cursor,
@@ -94,7 +95,7 @@ impl super::device::ExiDevice for ExiMacronix {
                         "SRAM byte write"
                     );
                 } else {
-                    *byte = self.sram[offset];
+                    *byte = self.sram.data[offset];
                     tracing::debug!(
                         addr = format!("{:06X}", addr),
                         cursor = self.cursor,
@@ -144,7 +145,7 @@ impl super::device::ExiDevice for ExiMacronix {
             SRAM_START..=SRAM_END => {
                 let base = (addr - SRAM_START) as usize;
                 for (i, b) in buf.iter_mut().enumerate() {
-                    *b = self.sram[(base + i) % 0x44];
+                    *b = self.sram.data[(base + i) % SRAM_SIZE];
                 }
                 tracing::debug!(
                     addr = format!("{:06X}", addr),
@@ -178,8 +179,56 @@ impl super::device::ExiDevice for ExiMacronix {
         if addr >= SRAM_START && addr <= SRAM_END {
             let base = (addr - SRAM_START) as usize;
             for (i, b) in buf.iter().enumerate() {
-                self.sram[(base + i) % 0x44] = *b;
+                self.sram.data[(base + i) % SRAM_SIZE] = *b;
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Sram {
+    pub data: [u8; SRAM_SIZE],
+}
+
+impl Sram {
+    /// Dumped from NTSC IPL
+    pub fn ntsc_default() -> Self {
+        Self {
+            data: [
+                0x01, 0x04, 0xFE, 0xFB, 
+                0x00, 0x14, 0xFF, 0xE8, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x14, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x00, 0x00, 0x00, 0x00, 
+                0x01, 0x04, 0xFE, 0xFB,
+            ],
+        }
+    }
+
+    // TODO: WIP
+    pub fn fix_checksums(&mut self) {
+        let (a, b) = Self::compute_checksums(&self.data);
+        self.data[0x00..0x02].copy_from_slice(&a.to_be_bytes());
+        self.data[0x02..0x04].copy_from_slice(&b.to_be_bytes());
+    }
+
+    fn compute_checksums(data: &[u8; SRAM_SIZE]) -> (u16, u16) {
+        let mut sum: u16 = 0;
+        for i in (0x04..0x40).step_by(2) {
+            let word = u16::from_be_bytes([data[i], data[i + 1]]);
+            sum = sum.wrapping_add(word);
+        }
+        (sum, !sum)
     }
 }
