@@ -1,10 +1,10 @@
-use super::Si;
+use super::SerialInterface;
 use crate::mmio::traits::MmioAccess;
 use chapa::BitEnum;
 
 // 0xCC006430  4  R/W  SIPOLL - SI Poll Register
 crate::mmio_register! {
-    SiPoll: u32 @ 0xCC006430 => Si.poll {
+    SiPoll: u32 @ 0xCC006430 => SerialInterface.poll {
         #[bits(0..=3)]
         pub vbcpy: u8,
 
@@ -72,12 +72,12 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Si> for SiComcsr {
-    fn read(si: &Si) -> Self {
+impl MmioAccess<SerialInterface> for SiComcsr {
+    fn read(si: &SerialInterface) -> Self {
         si.comcsr
     }
 
-    fn write(self, si: &mut Si) {
+    fn write(self, si: &mut SerialInterface) {
         let mut csr = si.comcsr;
 
         if self.tc_interrupt() {
@@ -146,12 +146,12 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Si> for SiStatusRegister {
-    fn read(si: &Si) -> Self {
+impl MmioAccess<SerialInterface> for SiStatusRegister {
+    fn read(si: &SerialInterface) -> Self {
         si.status
     }
 
-    fn write(self, si: &mut Si) {
+    fn write(self, si: &mut SerialInterface) {
         let mut status = si.status;
 
         if self.norep0() {

@@ -1,4 +1,4 @@
-use super::Pi;
+use super::ProcessorInterface;
 
 // 0xCC003000  4  r    INTSR - Interrupt Cause
 
@@ -51,12 +51,12 @@ crate::mmio_register! {
     }
 }
 
-impl crate::mmio::traits::MmioAccess<Pi> for InterruptCause {
-    fn read(dev: &Pi) -> Self {
+impl crate::mmio::traits::MmioAccess<ProcessorInterface> for InterruptCause {
+    fn read(dev: &ProcessorInterface) -> Self {
         dev.intsr
     }
 
-    fn write(self, dev: &mut Pi) {
+    fn write(self, dev: &mut ProcessorInterface) {
         // yagcd seems to be wrong, we should not
         // clear everything on read, but just usual w1c instead
         const RSWST_MASK: u32 = 1 << 16;
@@ -74,7 +74,7 @@ impl Default for InterruptCause {
 
 // 0xCC003004  4  r/w  INTMR - Interrupt Mask
 crate::mmio_register! {
-    InterruptMask: u32 @ 0xCC003004 => Pi.intmr {
+    InterruptMask: u32 @ 0xCC003004 => ProcessorInterface.intmr {
         #[bits(0, alias = "error")]
         pub gp_runtime_error: bool,
 
@@ -125,12 +125,12 @@ crate::mmio_register! {
     ResetCode: u32 @ 0xCC003024 {}
 }
 
-impl crate::mmio::traits::MmioAccess<Pi> for ResetCode {
-    fn read(_pi: &Pi) -> Self {
+impl crate::mmio::traits::MmioAccess<ProcessorInterface> for ResetCode {
+    fn read(_pi: &ProcessorInterface) -> Self {
         Self::from_raw(0)
     }
 
-    fn write(self, _pi: &mut Pi) {
+    fn write(self, _pi: &mut ProcessorInterface) {
         tracing::warn!("TODO: reset DVD");
     }
 }
@@ -144,13 +144,13 @@ crate::mmio_register! {
     }
 }
 
-impl crate::mmio::traits::MmioAccess<super::Pi> for FlipperRev {
-    fn read(_pi: &super::Pi) -> Self {
+impl crate::mmio::traits::MmioAccess<super::ProcessorInterface> for FlipperRev {
+    fn read(_pi: &super::ProcessorInterface) -> Self {
         // FLIPPER_REV_C from Dolphin
         Self::from_raw(0x2465_00B1)
     }
 
-    fn write(self, _pi: &mut super::Pi) {
+    fn write(self, _pi: &mut super::ProcessorInterface) {
         tracing::warn!("writing to FlipperRev???");
     }
 }

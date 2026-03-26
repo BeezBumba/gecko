@@ -1,7 +1,7 @@
 pub mod ai;
 pub mod cp;
-pub mod di;
 pub mod dsp;
+pub mod exi;
 pub mod gx;
 pub mod mi;
 pub mod pe;

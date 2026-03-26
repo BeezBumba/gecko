@@ -1,36 +1,36 @@
 use crate::{
-    flipper::pe::Pe,
+    flipper::pe::PixelEngine,
     mmio::traits::{MmioAccess, MmioRegister},
 };
 
 // 0xCC001000	2	R/W	Z Configuration
 
 crate::mmio_register! {
-    ZConfig: u16 @ 0xCC001000 => Pe.zconf {}
+    ZConfig: u16 @ 0xCC001000 => PixelEngine.zconf {}
 }
 
 // 0xCC001002	2	R/W	Alpha Configuration
 
 crate::mmio_register! {
-    AlphaConfig: u16 @ 0xCC001002 => Pe.alphaconf {}
+    AlphaConfig: u16 @ 0xCC001002 => PixelEngine.alphaconf {}
 }
 
 // 0xCC001004	2	R/W	Destination Alpha
 
 crate::mmio_register! {
-    DstAlphaConfig: u16 @ 0xCC001004 => Pe.dst_alphaconf {}
+    DstAlphaConfig: u16 @ 0xCC001004 => PixelEngine.dst_alphaconf {}
 }
 
 // 0xCC001006	2	R/W	Alpha Compare Mode
 
 crate::mmio_register! {
-    AlphaMode: u16 @ 0xCC001006 => Pe.alphamode {}
+    AlphaMode: u16 @ 0xCC001006 => PixelEngine.alphamode {}
 }
 
 // 0xCC001008	2	R/W	Alpha Read Mode
 
 crate::mmio_register! {
-    AlphaRead: u16 @ 0xCC001008 => Pe.alpharead {}
+    AlphaRead: u16 @ 0xCC001008 => PixelEngine.alpharead {}
 }
 
 // 0xCC00100A	2	R/W	Interrupt Status
@@ -51,16 +51,16 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Pe> for InterruptStatus {
-    fn read(pe: &Pe) -> Self {
+impl MmioAccess<PixelEngine> for InterruptStatus {
+    fn read(pe: &PixelEngine) -> Self {
         pe.sr
     }
 
-    fn write(self, pe: &mut Pe) {
+    fn write(self, pe: &mut PixelEngine) {
         Self::write_at(pe, Self::ADDR, Self::SIZE as u32, self.to_raw());
     }
 
-    fn write_at(pe: &mut Pe, addr: u32, access_size: u32, val: u32) {
+    fn write_at(pe: &mut PixelEngine, addr: u32, access_size: u32, val: u32) {
         const ENABLE_MASK: u32 = (1 << 0) | (1 << 1);
         const STATUS_MASK: u32 = (1 << 2) | (1 << 3);
 
@@ -75,5 +75,5 @@ impl MmioAccess<Pe> for InterruptStatus {
 }
 
 crate::mmio_register! {
-    Token: u16 @ 0xCC00100E => Pe.token {}
+    Token: u16 @ 0xCC00100E => PixelEngine.token {}
 }

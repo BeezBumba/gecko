@@ -7,6 +7,8 @@ pub mod fp;
 pub mod macros;
 pub mod traits;
 
+pub use traits::MmioRw;
+
 use constants::*;
 
 pub struct Mmio {

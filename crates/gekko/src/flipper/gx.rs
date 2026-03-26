@@ -31,7 +31,7 @@ use fifo::FifoCmd;
 use math::{Vec3, saturating_div, unpack_rgba};
 use std::io::{Cursor, Read};
 
-pub struct Gx {
+pub struct GraphicsProcessor {
     pub raise_interrupt: bool,
     pub draw_commands: DrawCommands,
     bp_regs: Vec<u32>,
@@ -55,9 +55,9 @@ pub struct Gx {
     cur_alpha_compare: AlphaCompare,
 }
 
-impl Gx {
+impl GraphicsProcessor {
     pub fn new() -> Self {
-        Gx {
+        GraphicsProcessor {
             raise_interrupt: false,
             bp_regs: vec![0; BP_REG_SIZE],
             cp_regs: vec![0; CP_REG_SIZE],

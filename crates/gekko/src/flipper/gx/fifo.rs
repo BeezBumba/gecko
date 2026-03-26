@@ -1,12 +1,12 @@
 use super::constants::{BP_CMD, CALL_DL_CMD, CP_CMD, INV_VTX_CACHE_CMD, NOP_CMD, XF_CMD};
 use crate::flipper::gx::{
-    Gx,
+    GraphicsProcessor,
     constants::{DRAW_COMMANDS_END, DRAW_COMMANDS_START, VATA_REG, VATB_REG, VATC_REG, VCD_HI_REG, VCD_LO_REG},
     regs::{AttributeType, VatA, VatB, VatC, VcdHi, VcdLo},
 };
 use std::io::{Cursor, Read};
 
-impl Gx {
+impl GraphicsProcessor {
     pub fn push_u8(&mut self, val: u8) {
         self.fifo.push(val);
     }

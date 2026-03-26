@@ -1,14 +1,14 @@
 pub mod regs;
 
 use crate::mmio::constants::AI_BASE;
-use crate::mmio::traits::{MmioAccess, MmioRegister};
+use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 
 /// CPU cycles per AI sample at 32kHz: 486MHz / 32000 = 15187
 const CYCLES_PER_SAMPLE_32K: u64 = 15187;
 /// CPU cycles per AI sample at 48kHz: 486MHz / 48000 = 10125
 const CYCLES_PER_SAMPLE_48K: u64 = 10125;
 
-pub struct Ai {
+pub struct AudioInterface {
     pub control: regs::AiControl,
     pub volume: regs::AiVolume,
     pub sample_counter: regs::AiSampleCounter,
@@ -17,7 +17,7 @@ pub struct Ai {
     pub sample_counter_reset_pending: bool,
 }
 
-impl Ai {
+impl AudioInterface {
     pub fn new() -> Self {
         Self {
             control: regs::AiControl::from_raw(0),
@@ -62,51 +62,18 @@ impl Ai {
         }
     }
 
+}
+
+impl MmioRw for AudioInterface {
+    const BASE: u32 = AI_BASE;
+    const NAME: &'static str = "AI";
+
     crate::impl_mmio_dispatch!(
         regs::AiControl,
         regs::AiVolume,
         regs::AiInterruptTiming,
         regs::AiSampleCounter,
     );
-
-    pub fn mmio_read_u8(&mut self, offset: u32) -> u8 {
-        self.read_raw(AI_BASE + offset, 1).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled AI read_u8");
-            0
-        }) as u8
-    }
-
-    pub fn mmio_write_u8(&mut self, offset: u32, val: u8) {
-        if !self.write_raw(AI_BASE + offset, 1, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled AI write_u8");
-        }
-    }
-
-    pub fn mmio_read_u16(&mut self, offset: u32) -> u16 {
-        self.read_raw(AI_BASE + offset, 2).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled AI read_u16");
-            0
-        }) as u16
-    }
-
-    pub fn mmio_write_u16(&mut self, offset: u32, val: u16) {
-        if !self.write_raw(AI_BASE + offset, 2, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled AI write_u16");
-        }
-    }
-
-    pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
-        self.read_raw(AI_BASE + offset, 4).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled AI read_u32");
-            0
-        })
-    }
-
-    pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
-        if !self.write_raw(AI_BASE + offset, 4, val) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled AI write_u32");
-        }
-    }
 }
 
 impl crate::gekko::Gekko {

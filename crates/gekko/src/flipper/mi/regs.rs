@@ -1,9 +1,9 @@
-use super::Mi;
+use super::MemoryInterface;
 
 // 0xCC00401C  2  R/W  Memory Interface Interrupt Mask
 
 crate::mmio_register! {
-    MiInterruptMask: u16 @ 0xCC00401C => Mi.interrupt_mask {
+    MiInterruptMask: u16 @ 0xCC00401C => MemoryInterface.interrupt_mask {
         #[bits(0)]
         pub mem0_enable: bool,
 

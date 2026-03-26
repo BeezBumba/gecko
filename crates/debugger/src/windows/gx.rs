@@ -1,6 +1,6 @@
 use egui::{Context, Grid, RichText, ScrollArea};
 use egui_material_icons::icons;
-use gekko::flipper::gx::Gx;
+use gekko::flipper::gx::GraphicsProcessor;
 use gekko::flipper::gx::draw::TextureDescriptor;
 use gekko::mmio::Mmio;
 
@@ -22,7 +22,7 @@ fn texture_preview(ui: &mut egui::Ui, tex: &TextureDescriptor, ram: &[u8]) {
     ui.label(format!("Mag: {:?}  Min: {:?}", tex.mag_filter, tex.min_filter));
 }
 
-pub fn show_gx(ctx: &Context, open: &mut bool, gx: &Gx, mmio: &Mmio) {
+pub fn show_gx(ctx: &Context, open: &mut bool, gx: &GraphicsProcessor, mmio: &Mmio) {
     egui::Window::new("GX").open(open).show(ctx, |ui| {
         let dc = &gx.draw_commands;
 

@@ -1,14 +1,14 @@
 pub mod regs;
 
 use crate::mmio::constants::PI_BASE;
-use crate::mmio::traits::{MmioAccess, MmioRegister};
+use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 
 // PI FIFO register offsets (from PI_BASE 0xCC003000)
 const PI_FIFO_BASE_OFFSET: u32 = 0x0C;
 const PI_FIFO_END_OFFSET: u32 = 0x10;
 const PI_FIFO_WPTR_OFFSET: u32 = 0x14;
 
-pub struct Pi {
+pub struct ProcessorInterface {
     pub intsr: regs::InterruptCause,
     pub intmr: regs::InterruptMask,
     pub reset_code: regs::ResetCode,
@@ -41,9 +41,9 @@ pub enum InterruptFlag {
     Hsp = 1 << 13,
 }
 
-impl Pi {
+impl ProcessorInterface {
     pub fn new() -> Self {
-        Pi {
+        ProcessorInterface {
             intsr: regs::InterruptCause::default(),
             intmr: regs::InterruptMask::from_raw(0),
             reset_code: regs::ResetCode::from_raw(0),
@@ -73,6 +73,12 @@ impl Pi {
         (self.intsr.raw() & self.intmr.raw()) != 0
     }
 
+}
+
+impl MmioRw for ProcessorInterface {
+    const BASE: u32 = PI_BASE;
+    const NAME: &'static str = "PI";
+
     crate::impl_mmio_dispatch!(
         regs::InterruptCause,
         regs::InterruptMask,
@@ -80,40 +86,7 @@ impl Pi {
         regs::FlipperRev,
     );
 
-    pub fn mmio_read_u8(&mut self, offset: u32) -> u8 {
-        self.read_raw(PI_BASE + offset, 1).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled PI read_u8");
-            0
-        }) as u8
-    }
-
-    pub fn mmio_write_u8(&mut self, offset: u32, val: u8) {
-        if !self.write_raw(PI_BASE + offset, 1, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled PI write_u8");
-        }
-    }
-
-    pub fn mmio_read_u16(&mut self, offset: u32) -> u16 {
-        self.read_raw(PI_BASE + offset, 2).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled PI read_u16");
-            0
-        }) as u16
-    }
-
-    pub fn mmio_write_u16(&mut self, offset: u32, val: u16) {
-        if !self.write_raw(PI_BASE + offset, 2, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled PI write_u16");
-        }
-    }
-
-    pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
-        self.read_raw(PI_BASE + offset, 4).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled PI read_u32");
-            0
-        })
-    }
-
-    pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
+    fn mmio_write_u32(&mut self, offset: u32, val: u32) {
         match offset {
             PI_FIFO_BASE_OFFSET => {
                 self.fifo_base = val;

@@ -5,7 +5,7 @@ use crate::{
     gekko::Gekko,
     mmio::{
         constants::VI_BASE,
-        traits::{MmioAccess, MmioRegister},
+        traits::{MmioAccess, MmioRegister, MmioRw},
     },
     scheduler::EventKind,
 };
@@ -13,7 +13,7 @@ use crate::{
 const CPU_CORE_CLOCK: u64 = 486_000_000;
 const CLOCK_FREQUENCIES: [u64; 2] = [27_000_000, 54_000_000];
 
-pub struct Vi {
+pub struct VideoInterface {
     pub vtr: regs::VerticalTiming,
     pub htr0: regs::HorizontalTiming0,
     pub htr1: regs::HorizontalTiming1,
@@ -55,9 +55,9 @@ pub struct Vi {
     pub half_line_scheduled: bool,
 }
 
-impl Vi {
+impl VideoInterface {
     pub fn new() -> Self {
-        Vi {
+        VideoInterface {
             vtr: regs::VerticalTiming::from_raw(0),
             htr0: regs::HorizontalTiming0::from_raw(0),
             htr1: regs::HorizontalTiming1::from_raw(0),
@@ -97,43 +97,6 @@ impl Vi {
             half_line_scheduled: false,
         }
     }
-
-    crate::impl_mmio_dispatch!(
-        regs::VerticalTiming,
-        regs::HorizontalTiming0,
-        regs::HorizontalTiming1,
-        regs::VerticalTimingOdd,
-        regs::VerticalTimingEven,
-        regs::DisplayConfiguration,
-        regs::BurstBlankingEvenInterval,
-        regs::BurstBlankingOddInterval,
-        regs::TopFieldBase,
-        regs::TopFieldBaseRight,
-        regs::BottomFieldBase,
-        regs::BottomFieldBaseRight,
-        regs::DisplayPositionVertical,
-        regs::DisplayPositionHorizontal,
-        regs::DisplayInterrupt0,
-        regs::DisplayInterrupt1,
-        regs::DisplayInterrupt2,
-        regs::DisplayInterrupt3,
-        regs::DisplayLatch0,
-        regs::DisplayLatch1,
-        regs::HorizontalScalingWidth,
-        regs::HorizontalScalingRegister,
-        regs::FilterCoefficient0,
-        regs::FilterCoefficient1,
-        regs::FilterCoefficient2,
-        regs::FilterCoefficient3,
-        regs::FilterCoefficient4,
-        regs::FilterCoefficient5,
-        regs::FilterCoefficient6,
-        regs::ViClockSelect,
-        regs::ViDtvStatus,
-        regs::ViUnknown70,
-        regs::BorderHbe,
-        regs::BorderHbs,
-    );
 
     pub fn ticks_per_sample(&self) -> u64 {
         let clock_idx = self.viclk.clock_select() as usize & 1;
@@ -236,45 +199,48 @@ impl Vi {
             self.tfbl.xfb_addr()
         }
     }
+}
 
-    pub fn mmio_read_u8(&mut self, offset: u32) -> u8 {
-        self.read_raw(VI_BASE + offset, 1).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled VI read_u8");
-            0
-        }) as u8
-    }
+impl MmioRw for VideoInterface {
+    const BASE: u32 = VI_BASE;
+    const NAME: &'static str = "VI";
 
-    pub fn mmio_write_u8(&mut self, offset: u32, val: u8) {
-        if !self.write_raw(VI_BASE + offset, 1, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled VI write_u8");
-        }
-    }
-
-    pub fn mmio_read_u16(&mut self, offset: u32) -> u16 {
-        self.read_raw(VI_BASE + offset, 2).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled VI read_u16");
-            0
-        }) as u16
-    }
-
-    pub fn mmio_write_u16(&mut self, offset: u32, val: u16) {
-        if !self.write_raw(VI_BASE + offset, 2, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled VI write_u16");
-        }
-    }
-
-    pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
-        self.read_raw(VI_BASE + offset, 4).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled VI read_u32");
-            0
-        })
-    }
-
-    pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
-        if !self.write_raw(VI_BASE + offset, 4, val) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled VI write_u32");
-        }
-    }
+    crate::impl_mmio_dispatch!(
+        regs::VerticalTiming,
+        regs::HorizontalTiming0,
+        regs::HorizontalTiming1,
+        regs::VerticalTimingOdd,
+        regs::VerticalTimingEven,
+        regs::DisplayConfiguration,
+        regs::BurstBlankingEvenInterval,
+        regs::BurstBlankingOddInterval,
+        regs::TopFieldBase,
+        regs::TopFieldBaseRight,
+        regs::BottomFieldBase,
+        regs::BottomFieldBaseRight,
+        regs::DisplayPositionVertical,
+        regs::DisplayPositionHorizontal,
+        regs::DisplayInterrupt0,
+        regs::DisplayInterrupt1,
+        regs::DisplayInterrupt2,
+        regs::DisplayInterrupt3,
+        regs::DisplayLatch0,
+        regs::DisplayLatch1,
+        regs::HorizontalScalingWidth,
+        regs::HorizontalScalingRegister,
+        regs::FilterCoefficient0,
+        regs::FilterCoefficient1,
+        regs::FilterCoefficient2,
+        regs::FilterCoefficient3,
+        regs::FilterCoefficient4,
+        regs::FilterCoefficient5,
+        regs::FilterCoefficient6,
+        regs::ViClockSelect,
+        regs::ViDtvStatus,
+        regs::ViUnknown70,
+        regs::BorderHbe,
+        regs::BorderHbs,
+    );
 }
 
 impl Gekko {

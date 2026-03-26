@@ -1,4 +1,4 @@
-use super::Di;
+use super::DvdInterface;
 use crate::mmio::traits::MmioAccess;
 
 // 0xCC006000  4  R/W  DISR - DI Status Register
@@ -28,12 +28,12 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Di> for DiStatusRegister {
-    fn read(di: &Di) -> Self {
+impl MmioAccess<DvdInterface> for DiStatusRegister {
+    fn read(di: &DvdInterface) -> Self {
         di.status
     }
 
-    fn write(self, di: &mut Di) {
+    fn write(self, di: &mut DvdInterface) {
         let mut sr = di.status;
 
         if self.break_complete() {
@@ -75,12 +75,12 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Di> for DiCoverRegister {
-    fn read(di: &Di) -> Self {
+impl MmioAccess<DvdInterface> for DiCoverRegister {
+    fn read(di: &DvdInterface) -> Self {
         di.cover
     }
 
-    fn write(self, di: &mut Di) {
+    fn write(self, di: &mut DvdInterface) {
         let mut cvr = di.cover;
 
         if self.cover_interrupt() {

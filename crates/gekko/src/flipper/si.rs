@@ -8,13 +8,13 @@ use pad::{GC_CONTROLLER_ID, PadStatus};
 const NUM_CHANNELS: usize = 4;
 
 #[derive(Clone, Copy, Debug)]
-pub struct SiChannel {
+pub struct SerialChannel {
     pub out: u32,
     pub in_hi: u32,
     pub in_lo: u32,
 }
 
-impl Default for SiChannel {
+impl Default for SerialChannel {
     fn default() -> Self {
         Self {
             out: 0,
@@ -24,8 +24,8 @@ impl Default for SiChannel {
     }
 }
 
-pub struct Si {
-    pub channels: [SiChannel; NUM_CHANNELS],
+pub struct SerialInterface {
+    pub channels: [SerialChannel; NUM_CHANNELS],
     pub poll: regs::SiPoll,
     pub comcsr: regs::SiComcsr,
     pub status: regs::SiStatusRegister,
@@ -34,10 +34,10 @@ pub struct Si {
     pub pad_state: [PadStatus; NUM_CHANNELS],
 }
 
-impl Si {
+impl SerialInterface {
     pub fn new() -> Self {
         Self {
-            channels: [SiChannel::default(); NUM_CHANNELS],
+            channels: [SerialChannel::default(); NUM_CHANNELS],
             poll: regs::SiPoll::from_raw(0),
             comcsr: regs::SiComcsr::from_raw(0),
             status: regs::SiStatusRegister::from_raw(0),

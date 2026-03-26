@@ -1,9 +1,9 @@
 pub mod regs;
 
 use crate::mmio::constants::CP_BASE;
-use crate::mmio::traits::{MmioAccess, MmioRegister};
+use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 
-pub struct Cp {
+pub struct CommandProcessor {
     pub status: regs::CpStatus,
     pub control: regs::CpControl,
     pub fifo_base_lo: regs::FifoBaseLo,
@@ -22,7 +22,7 @@ pub struct Cp {
     pub fifo_read_ptr_hi: regs::FifoReadPtrHi,
 }
 
-impl Cp {
+impl CommandProcessor {
     pub fn new() -> Self {
         Self {
             status: regs::CpStatus::from_raw(0),
@@ -50,6 +50,12 @@ impl Cp {
             || (self.status.fifo_underflow() && self.control.fifo_underflow_interrupt_enable())
     }
 
+}
+
+impl MmioRw for CommandProcessor {
+    const BASE: u32 = CP_BASE;
+    const NAME: &'static str = "CP";
+
     crate::impl_mmio_dispatch!(
         regs::CpStatus,
         regs::CpControl,
@@ -69,45 +75,6 @@ impl Cp {
         regs::FifoReadPtrLo,
         regs::FifoReadPtrHi,
     );
-
-    pub fn mmio_read_u8(&mut self, offset: u32) -> u8 {
-        self.read_raw(CP_BASE + offset, 1).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled CP read_u8");
-            0
-        }) as u8
-    }
-
-    pub fn mmio_write_u8(&mut self, offset: u32, val: u8) {
-        if !self.write_raw(CP_BASE + offset, 1, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled CP write_u8");
-        }
-    }
-
-    pub fn mmio_read_u16(&mut self, offset: u32) -> u16 {
-        self.read_raw(CP_BASE + offset, 2).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled CP read_u16");
-            0
-        }) as u16
-    }
-
-    pub fn mmio_write_u16(&mut self, offset: u32, val: u16) {
-        if !self.write_raw(CP_BASE + offset, 2, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled CP write_u16");
-        }
-    }
-
-    pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
-        self.read_raw(CP_BASE + offset, 4).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled CP read_u32");
-            0
-        })
-    }
-
-    pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
-        if !self.write_raw(CP_BASE + offset, 4, val) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled CP write_u32");
-        }
-    }
 }
 
 impl crate::gekko::Gekko {

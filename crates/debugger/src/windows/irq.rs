@@ -1,7 +1,7 @@
 use egui::{Align, Color32, Context, Grid, Layout, RichText};
 use egui_material_icons::icons;
 use gekko::cpu::Cpu;
-use gekko::flipper::pi::Pi;
+use gekko::flipper::pi::ProcessorInterface;
 
 fn centered_icon(ui: &mut egui::Ui, icon: &str, color: Color32) {
     ui.with_layout(Layout::top_down(Align::Center), |ui| {
@@ -34,7 +34,7 @@ fn interrupt_row(ui: &mut egui::Ui, name: &str, pending: bool, masked: bool) {
     ui.end_row();
 }
 
-pub fn show_irq(ctx: &Context, open: &mut bool, cpu: &Cpu, pi: &Pi) {
+pub fn show_irq(ctx: &Context, open: &mut bool, cpu: &Cpu, pi: &ProcessorInterface) {
     egui::Window::new("IRQ")
         .open(open)
         .default_size(egui::vec2(380.0, 480.0))

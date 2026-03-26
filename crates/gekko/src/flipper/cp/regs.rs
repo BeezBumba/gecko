@@ -1,10 +1,10 @@
-use super::Cp;
+use super::CommandProcessor;
 use crate::mmio::traits::MmioAccess;
 
 // 0xCC000000  2  R/W   CP_STATUS - CP Status Register
 
 crate::mmio_register! {
-    CpStatus: u16 @ 0xCC000000 => Cp.status {
+    CpStatus: u16 @ 0xCC000000 => CommandProcessor.status {
         #[bits(0)]
         pub fifo_overflow: bool,
 
@@ -25,7 +25,7 @@ crate::mmio_register! {
 // 0xCC000002  2  R/W  CP_CTRL - CP Control Register
 
 crate::mmio_register! {
-    CpControl: u16 @ 0xCC000002 => Cp.control {
+    CpControl: u16 @ 0xCC000002 => CommandProcessor.control {
         #[bits(0)]
         pub gp_fifo_read_enable: bool,
 
@@ -58,13 +58,13 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Cp> for CpClear {
-    fn read(_cp: &Cp) -> Self {
+impl MmioAccess<CommandProcessor> for CpClear {
+    fn read(_cp: &CommandProcessor) -> Self {
         tracing::warn!("attempted to read from write-only CpClear register");
         Self::from_raw(0)
     }
 
-    fn write(self, cp: &mut Cp) {
+    fn write(self, cp: &mut CommandProcessor) {
         if self.clear_overflow() {
             cp.status = cp.status.with_fifo_overflow(false);
         }
@@ -75,17 +75,17 @@ impl MmioAccess<Cp> for CpClear {
     }
 }
 
-crate::mmio_register! { FifoBaseLo: u16 @ 0xCC000020 => Cp.fifo_base_lo {} }
-crate::mmio_register! { FifoBaseHi: u16 @ 0xCC000022 => Cp.fifo_base_hi {} }
-crate::mmio_register! { FifoEndLo: u16 @ 0xCC000024 => Cp.fifo_end_lo {} }
-crate::mmio_register! { FifoEndHi: u16 @ 0xCC000026 => Cp.fifo_end_hi {} }
-crate::mmio_register! { FifoHiWatermarkLo: u16 @ 0xCC000028 => Cp.fifo_hi_watermark_lo {} }
-crate::mmio_register! { FifoHiWatermarkHi: u16 @ 0xCC00002A => Cp.fifo_hi_watermark_hi {} }
-crate::mmio_register! { FifoLoWatermarkLo: u16 @ 0xCC00002C => Cp.fifo_lo_watermark_lo {} }
-crate::mmio_register! { FifoLoWatermarkHi: u16 @ 0xCC00002E => Cp.fifo_lo_watermark_hi {} }
-crate::mmio_register! { FifoRwDistanceLo: u16 @ 0xCC000030 => Cp.fifo_rw_distance_lo {} }
-crate::mmio_register! { FifoRwDistanceHi: u16 @ 0xCC000032 => Cp.fifo_rw_distance_hi {} }
-crate::mmio_register! { FifoWritePtrLo: u16 @ 0xCC000034 => Cp.fifo_write_ptr_lo {} }
-crate::mmio_register! { FifoWritePtrHi: u16 @ 0xCC000036 => Cp.fifo_write_ptr_hi {} }
-crate::mmio_register! { FifoReadPtrLo: u16 @ 0xCC000038 => Cp.fifo_read_ptr_lo {} }
-crate::mmio_register! { FifoReadPtrHi: u16 @ 0xCC00003A => Cp.fifo_read_ptr_hi {} }
+crate::mmio_register! { FifoBaseLo: u16 @ 0xCC000020 => CommandProcessor.fifo_base_lo {} }
+crate::mmio_register! { FifoBaseHi: u16 @ 0xCC000022 => CommandProcessor.fifo_base_hi {} }
+crate::mmio_register! { FifoEndLo: u16 @ 0xCC000024 => CommandProcessor.fifo_end_lo {} }
+crate::mmio_register! { FifoEndHi: u16 @ 0xCC000026 => CommandProcessor.fifo_end_hi {} }
+crate::mmio_register! { FifoHiWatermarkLo: u16 @ 0xCC000028 => CommandProcessor.fifo_hi_watermark_lo {} }
+crate::mmio_register! { FifoHiWatermarkHi: u16 @ 0xCC00002A => CommandProcessor.fifo_hi_watermark_hi {} }
+crate::mmio_register! { FifoLoWatermarkLo: u16 @ 0xCC00002C => CommandProcessor.fifo_lo_watermark_lo {} }
+crate::mmio_register! { FifoLoWatermarkHi: u16 @ 0xCC00002E => CommandProcessor.fifo_lo_watermark_hi {} }
+crate::mmio_register! { FifoRwDistanceLo: u16 @ 0xCC000030 => CommandProcessor.fifo_rw_distance_lo {} }
+crate::mmio_register! { FifoRwDistanceHi: u16 @ 0xCC000032 => CommandProcessor.fifo_rw_distance_hi {} }
+crate::mmio_register! { FifoWritePtrLo: u16 @ 0xCC000034 => CommandProcessor.fifo_write_ptr_lo {} }
+crate::mmio_register! { FifoWritePtrHi: u16 @ 0xCC000036 => CommandProcessor.fifo_write_ptr_hi {} }
+crate::mmio_register! { FifoReadPtrLo: u16 @ 0xCC000038 => CommandProcessor.fifo_read_ptr_lo {} }
+crate::mmio_register! { FifoReadPtrHi: u16 @ 0xCC00003A => CommandProcessor.fifo_read_ptr_hi {} }

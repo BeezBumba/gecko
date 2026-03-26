@@ -1,4 +1,4 @@
-use super::Ai;
+use super::AudioInterface;
 use crate::mmio::traits::MmioAccess;
 use chapa::BitEnum;
 
@@ -41,12 +41,12 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Ai> for AiControl {
-    fn read(ai: &Ai) -> Self {
+impl MmioAccess<AudioInterface> for AiControl {
+    fn read(ai: &AudioInterface) -> Self {
         ai.control
     }
 
-    fn write(self, ai: &mut Ai) {
+    fn write(self, ai: &mut AudioInterface) {
         let mut cr = ai.control;
 
         // AIINT is w1c
@@ -74,7 +74,7 @@ impl MmioAccess<Ai> for AiControl {
 
 // 0xCC006C04  4  R/W  AIVR - Audio Interface Volume Register
 crate::mmio_register! {
-    AiVolume: u32 @ 0xCC006C04 => Ai.volume {
+    AiVolume: u32 @ 0xCC006C04 => AudioInterface.volume {
         #[bits(0..=7)]
         pub left: u8,
 
@@ -92,19 +92,19 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Ai> for AiSampleCounter {
-    fn read(ai: &Ai) -> Self {
+impl MmioAccess<AudioInterface> for AiSampleCounter {
+    fn read(ai: &AudioInterface) -> Self {
         ai.sample_counter
     }
 
-    fn write(self, _ai: &mut Ai) {
+    fn write(self, _ai: &mut AudioInterface) {
         tracing::warn!("attempted to write to read-only AiSampleCounter");
     }
 }
 
 // 0xCC006C0C  4  R/W  AIIT - Audio Interface Interrupt Timing
 crate::mmio_register! {
-    AiInterruptTiming: u32 @ 0xCC006C0C => Ai.interrupt_timing {
+    AiInterruptTiming: u32 @ 0xCC006C0C => AudioInterface.interrupt_timing {
         #[bits(0..=30)]
         pub sample_count: u32,
     }

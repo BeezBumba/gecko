@@ -2,12 +2,12 @@ pub mod device;
 pub mod macronix;
 pub mod regs;
 
-use crate::exi::regs::TransferType;
+use crate::flipper::exi::regs::TransferType;
 use crate::mmio::Mmio;
 use crate::mmio::constants::EXI_BASE;
-use crate::mmio::traits::{MmioAccess, MmioRegister};
+use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 
-pub struct Exi {
+pub struct ExternalInterface {
     // Channel 0
     pub ch0_csr: regs::Channel0Status,
     pub ch0_mar: regs::Channel0DmaAddress,
@@ -31,9 +31,9 @@ pub struct Exi {
     prev_cs: [u8; 3],
 }
 
-impl Exi {
+impl ExternalInterface {
     pub fn new() -> Self {
-        Exi {
+        ExternalInterface {
             ch0_csr: regs::Channel0Status::from_raw(0),
             ch0_mar: regs::Channel0DmaAddress::from_raw(0),
             ch0_length: regs::Channel0DmaLength::from_raw(0),
@@ -285,6 +285,12 @@ impl Exi {
         }
     }
 
+}
+
+impl MmioRw for ExternalInterface {
+    const BASE: u32 = EXI_BASE;
+    const NAME: &'static str = "EXI";
+
     crate::impl_mmio_dispatch!(
         regs::Channel0Status,
         regs::Channel0DmaAddress,
@@ -302,46 +308,9 @@ impl Exi {
         regs::Channel2Control,
         regs::Channel2Data,
     );
+}
 
-    pub fn mmio_read_u8(&mut self, offset: u32) -> u8 {
-        self.read_raw(EXI_BASE + offset, 1).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled EXI read_u8");
-            0
-        }) as u8
-    }
-
-    pub fn mmio_write_u8(&mut self, offset: u32, val: u8) {
-        if !self.write_raw(EXI_BASE + offset, 1, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled EXI write_u8");
-        }
-    }
-
-    pub fn mmio_read_u16(&mut self, offset: u32) -> u16 {
-        self.read_raw(EXI_BASE + offset, 2).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled EXI read_u16");
-            0
-        }) as u16
-    }
-
-    pub fn mmio_write_u16(&mut self, offset: u32, val: u16) {
-        if !self.write_raw(EXI_BASE + offset, 2, val as u32) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled EXI write_u16");
-        }
-    }
-
-    pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
-        self.read_raw(EXI_BASE + offset, 4).unwrap_or_else(|| {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled EXI read_u32");
-            0
-        })
-    }
-
-    pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
-        if !self.write_raw(EXI_BASE + offset, 4, val) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled EXI write_u32");
-        }
-    }
-
+impl ExternalInterface {
     pub fn interrupt_active(&self) -> bool {
         Self::channel_interrupt_active(&self.ch0_csr)
             || Self::channel_interrupt_active(&self.ch1_csr)

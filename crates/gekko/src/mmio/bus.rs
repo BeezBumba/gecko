@@ -9,6 +9,7 @@ use crate::{
             GX_FIFO_END, IPL_BASE, IPL_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_BASE, RAM_END,
             SI_BASE, SI_END, VI_BASE, VI_END,
         },
+        MmioRw,
     },
 };
 

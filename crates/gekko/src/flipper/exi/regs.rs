@@ -1,6 +1,6 @@
 use chapa::BitEnum;
 
-use super::Exi;
+use super::ExternalInterface;
 use crate::mmio::traits::{MmioAccess, MmioRegister};
 
 pub trait ChannelStatus {
@@ -78,11 +78,11 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Exi> for Channel0Status {
-    fn read(exi: &Exi) -> Self {
+impl MmioAccess<ExternalInterface> for Channel0Status {
+    fn read(exi: &ExternalInterface) -> Self {
         exi.ch0_csr
     }
-    fn write(self, exi: &mut Exi) {
+    fn write(self, exi: &mut ExternalInterface) {
         write_csr(&mut exi.ch0_csr, self);
     }
 }
@@ -90,7 +90,7 @@ impl MmioAccess<Exi> for Channel0Status {
 // 0xCC006804	4	R/W	EXI0MAR - EXI Channel 0 DMA Start Address
 
 crate::mmio_register! {
-    Channel0DmaAddress: u32 @ 0xCC006804 => Exi.ch0_mar {
+    Channel0DmaAddress: u32 @ 0xCC006804 => ExternalInterface.ch0_mar {
         #[bits(5..=25, alias = "addr")] pub address: u32,
     }
 }
@@ -98,7 +98,7 @@ crate::mmio_register! {
 // 0xCC006808	4	R/W	EXI0LENGTH - EXI Channel 0 DMA Transfer Length
 
 crate::mmio_register! {
-    Channel0DmaLength: u32 @ 0xCC006808 => Exi.ch0_length {
+    Channel0DmaLength: u32 @ 0xCC006808 => ExternalInterface.ch0_length {
         #[bits(5..=25, alias = "len")] pub length: u32,
     }
 }
@@ -114,11 +114,11 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Exi> for Channel0Control {
-    fn read(exi: &Exi) -> Self {
+impl MmioAccess<ExternalInterface> for Channel0Control {
+    fn read(exi: &ExternalInterface) -> Self {
         exi.ch0_cr
     }
-    fn write(self, exi: &mut Exi) {
+    fn write(self, exi: &mut ExternalInterface) {
         let was_started = exi.ch0_cr.transfer_start();
         exi.ch0_cr = self;
         if self.transfer_start() && !was_started && !self.dma_mode() {
@@ -130,7 +130,7 @@ impl MmioAccess<Exi> for Channel0Control {
 // 0xCC006810	4	R/W	EXI0DATA - EXI Channel 0 Immediate Data
 
 crate::mmio_register! {
-    Channel0Data: u32 @ 0xCC006810 => Exi.ch0_data {}
+    Channel0Data: u32 @ 0xCC006810 => ExternalInterface.ch0_data {}
 }
 
 // --- Channel 1 ---
@@ -151,11 +151,11 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Exi> for Channel1Status {
-    fn read(exi: &Exi) -> Self {
+impl MmioAccess<ExternalInterface> for Channel1Status {
+    fn read(exi: &ExternalInterface) -> Self {
         exi.ch1_csr
     }
-    fn write(self, exi: &mut Exi) {
+    fn write(self, exi: &mut ExternalInterface) {
         write_csr(&mut exi.ch1_csr, self);
     }
 }
@@ -163,7 +163,7 @@ impl MmioAccess<Exi> for Channel1Status {
 // 0xCC006818	4	R/W	EXI1MAR - EXI Channel 1 DMA Start Address
 
 crate::mmio_register! {
-    Channel1DmaAddress: u32 @ 0xCC006818 => Exi.ch1_mar {
+    Channel1DmaAddress: u32 @ 0xCC006818 => ExternalInterface.ch1_mar {
         #[bits(5..=25, alias = "addr")] pub address: u32,
     }
 }
@@ -171,7 +171,7 @@ crate::mmio_register! {
 // 0xCC00681C	4	R/W	EXI1LENGTH - EXI Channel 1 DMA Transfer Length
 
 crate::mmio_register! {
-    Channel1DmaLength: u32 @ 0xCC00681C => Exi.ch1_length {
+    Channel1DmaLength: u32 @ 0xCC00681C => ExternalInterface.ch1_length {
         #[bits(5..=25, alias = "len")] pub length: u32,
     }
 }
@@ -187,11 +187,11 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Exi> for Channel1Control {
-    fn read(exi: &Exi) -> Self {
+impl MmioAccess<ExternalInterface> for Channel1Control {
+    fn read(exi: &ExternalInterface) -> Self {
         exi.ch1_cr
     }
-    fn write(self, exi: &mut Exi) {
+    fn write(self, exi: &mut ExternalInterface) {
         let was_started = exi.ch1_cr.transfer_start();
         exi.ch1_cr = self;
         if self.transfer_start() && !was_started && !self.dma_mode() {
@@ -203,7 +203,7 @@ impl MmioAccess<Exi> for Channel1Control {
 // 0xCC006824	4	R/W	EXI1DATA - EXI Channel 1 Immediate Data
 
 crate::mmio_register! {
-    Channel1Data: u32 @ 0xCC006824 => Exi.ch1_data {}
+    Channel1Data: u32 @ 0xCC006824 => ExternalInterface.ch1_data {}
 }
 
 // --- Channel 2 ---
@@ -224,11 +224,11 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Exi> for Channel2Status {
-    fn read(exi: &Exi) -> Self {
+impl MmioAccess<ExternalInterface> for Channel2Status {
+    fn read(exi: &ExternalInterface) -> Self {
         exi.ch2_csr
     }
-    fn write(self, exi: &mut Exi) {
+    fn write(self, exi: &mut ExternalInterface) {
         write_csr(&mut exi.ch2_csr, self);
     }
 }
@@ -238,7 +238,7 @@ impl_channel_status!(Channel0Status, Channel1Status, Channel2Status);
 // 0xCC00682C	4	R/W	EXI2MAR - EXI Channel 2 DMA Start Address
 
 crate::mmio_register! {
-    Channel2DmaAddress: u32 @ 0xCC00682C => Exi.ch2_mar {
+    Channel2DmaAddress: u32 @ 0xCC00682C => ExternalInterface.ch2_mar {
         #[bits(5..=25, alias = "addr")] pub address: u32,
     }
 }
@@ -246,7 +246,7 @@ crate::mmio_register! {
 // 0xCC006830	4	R/W	EXI2LENGTH - EXI Channel 2 DMA Transfer Length
 
 crate::mmio_register! {
-    Channel2DmaLength: u32 @ 0xCC006830 => Exi.ch2_length {
+    Channel2DmaLength: u32 @ 0xCC006830 => ExternalInterface.ch2_length {
         #[bits(5..=25, alias = "len")] pub length: u32,
     }
 }
@@ -262,11 +262,11 @@ crate::mmio_register! {
     }
 }
 
-impl MmioAccess<Exi> for Channel2Control {
-    fn read(exi: &Exi) -> Self {
+impl MmioAccess<ExternalInterface> for Channel2Control {
+    fn read(exi: &ExternalInterface) -> Self {
         exi.ch2_cr
     }
-    fn write(self, exi: &mut Exi) {
+    fn write(self, exi: &mut ExternalInterface) {
         let was_started = exi.ch2_cr.transfer_start();
         exi.ch2_cr = self;
         if self.transfer_start() && !was_started && !self.dma_mode() {
@@ -278,5 +278,5 @@ impl MmioAccess<Exi> for Channel2Control {
 // 0xCC006838	4	R/W	EXI2DATA - EXI Channel 2 Immediate Data
 
 crate::mmio_register! {
-    Channel2Data: u32 @ 0xCC006838 => Exi.ch2_data {}
+    Channel2Data: u32 @ 0xCC006838 => ExternalInterface.ch2_data {}
 }

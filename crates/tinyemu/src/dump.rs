@@ -1,5 +1,5 @@
 use colored::Colorize;
-use gekko::exi::regs::TransferType;
+use gekko::flipper::exi::regs::TransferType;
 
 use crate::snaptshot::CpuSnapshot;
 
@@ -90,7 +90,7 @@ pub fn memory(mmio: &gekko::mmio::Mmio, addr: u32) {
     }
 }
 
-pub fn vi(vi: &gekko::flipper::vi::Vi) {
+pub fn vi(vi: &gekko::flipper::vi::VideoInterface) {
     println!("Display Configuration: {:?}", vi.dcr);
     println!("Bottom Field Base: {:08X?}", vi.bfbl);
     println!("Top Field Base: {:08X?}", vi.tfbl);
@@ -192,7 +192,7 @@ fn exi_channel(ch: &ExiChannelView) {
     println!("    Immediate Data:       0x{:08X}", ch.immediate_data);
 }
 
-pub fn exi(exi: &gekko::exi::Exi) {
+pub fn exi(exi: &gekko::flipper::exi::ExternalInterface) {
     println!("EXI:");
     exi_channel(&ExiChannelView {
         name: "Channel 0",

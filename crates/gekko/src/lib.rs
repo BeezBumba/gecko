@@ -1,5 +1,5 @@
 pub mod cpu;
-pub mod exi;
+pub mod di;
 pub mod flipper;
 pub mod gekko;
 pub mod idle;

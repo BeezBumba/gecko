@@ -1,6 +1,6 @@
 use egui::{Color32, Context, Grid, RichText};
 use egui_material_icons::icons;
-use gekko::exi::Exi;
+use gekko::flipper::exi::ExternalInterface;
 
 fn flag(ui: &mut egui::Ui, val: bool) {
     let (icon, color) = if val {
@@ -53,8 +53,8 @@ struct ChannelInfo {
     data_raw: u32,
 }
 
-fn channel_info(exi: &Exi, ch: usize) -> ChannelInfo {
-    use gekko::exi::regs::TransferType;
+fn channel_info(exi: &ExternalInterface, ch: usize) -> ChannelInfo {
+    use gekko::flipper::exi::regs::TransferType;
     match ch {
         0 => ChannelInfo {
             name: "CH0",
@@ -238,7 +238,7 @@ fn show_channel(ui: &mut egui::Ui, ch: &ChannelInfo) {
     });
 }
 
-pub fn show_exi(ctx: &Context, open: &mut bool, exi: &Exi) {
+pub fn show_exi(ctx: &Context, open: &mut bool, exi: &ExternalInterface) {
     egui::Window::new("EXI")
         .open(open)
         .default_size(egui::vec2(600.0, 400.0))
