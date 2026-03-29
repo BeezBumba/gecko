@@ -14,7 +14,6 @@ macro_rules! stub {
 }
 
 stub! {
-    twi,
     tw,
     mtsrin, mcrxr,
     lwbrx, lswx, lswi, mfsrin,

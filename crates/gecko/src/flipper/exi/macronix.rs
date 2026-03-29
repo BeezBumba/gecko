@@ -217,6 +217,10 @@ impl Sram {
         }
     }
 
+    pub fn empty() -> Self {
+        Self { data: [0; SRAM_SIZE] }
+    }
+
     // TODO: WIP
     pub fn fix_checksums(&mut self) {
         let (a, b) = Self::compute_checksums(&self.data);

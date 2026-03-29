@@ -69,6 +69,23 @@ pub fn mftb(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction:
 }
 
 #[inline(always)]
+pub fn twi(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
+    let a = ctx.cpu.read_gpr(instr.ra()) as i32;
+    let simm = instr.simm();
+    let to = instr.to();
+
+    let trap = (to & 0x10 != 0 && a < simm)
+        || (to & 0x08 != 0 && a > simm)
+        || (to & 0x04 != 0 && a == simm)
+        || (to & 0x02 != 0 && (a as u32) < (simm as u32))
+        || (to & 0x01 != 0 && (a as u32) > (simm as u32));
+
+    if trap {
+        ctx.cause_trap_exception();
+    }
+}
+
+#[inline(always)]
 pub fn nop<const OP: u32>(_ctx: &mut crate::gamecube::GameCube, _instr: crate::cpu::instruction::Instruction) {}
 
 #[inline(always)]
