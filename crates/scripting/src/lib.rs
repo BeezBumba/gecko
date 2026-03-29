@@ -316,12 +316,12 @@ impl LuaScriptHost {
         phys_addr: u32,
         size: u8,
         value: u32,
-    ) -> LuaResult<()> {
+    ) -> LuaResult<Option<u32>> {
         self.lua
             .scope(|scope| {
                 let ud = scope.create_userdata(GameCubeRef(emu as *mut GameCube))?;
                 let func = callback.resolve(&self.lua)?;
-                func.call::<()>((&ud, virt_addr, phys_addr, size, value))
+                func.call::<Option<u32>>((&ud, virt_addr, phys_addr, size, value))
             })
             .map_err(|err| annotate_hook_error(hook_name, err))
     }
@@ -521,14 +521,15 @@ impl ScriptHost for LuaScriptHost {
         }
     }
 
-    fn on_bus_read_post(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32) {
+    fn on_bus_read_post(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32) -> u32 {
         if let Some(callback) = self.bus_read_post.resolve(virt_addr, phys_addr) {
-            if let Err(err) =
-                self.call_bus_read_post_hook("bus_read_post", callback, emu, virt_addr, phys_addr, size, value)
-            {
-                log_hook_error("bus_read_post", &err);
+            match self.call_bus_read_post_hook("bus_read_post", callback, emu, virt_addr, phys_addr, size, value) {
+                Ok(Some(v)) => return v,
+                Ok(None) => {}
+                Err(err) => log_hook_error("bus_read_post", &err),
             }
         }
+        value
     }
 
     fn on_bus_write_pre(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32) -> u32 {

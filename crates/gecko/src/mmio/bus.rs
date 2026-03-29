@@ -67,13 +67,13 @@ macro_rules! bus_read_hooks {
             }
         }
 
-        let result = $body;
+        let mut result = $body;
 
         #[cfg(feature = "scripting")]
         if $self.script_hook_flags.contains(HookFlags::BUS_READ_POST) {
             if $self.script_hook_filters.bus_read_post.matches($addr, $phys) {
                 if let Some(mut host) = $self.script_host.take() {
-                    host.on_bus_read_post($self, $addr, $phys, $size, result as u32);
+                    result = host.on_bus_read_post($self, $addr, $phys, $size, result as u32) as _;
                     $self.sync_pending_script_hook_state(host.as_mut());
                     $self.script_host = Some(host);
                 }

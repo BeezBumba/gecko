@@ -234,3 +234,34 @@ instr_type = "crate::flipper::dsp::instruction::Instruction"
 lut_mod = "crate::flipper::dsp::lut"
 dispatch = "jump_table"
 instr_type_output = "$OUT_DIR/dsp_instr.rs"
+
+[lut.groups]
+control = ["nop", "halt", "ifcc", "jcc", "callcc", "retcc", "rticc", "jrcc", "callrcc"]
+loops = ["loop_reg", "bloop", "loopi", "bloopi"]
+addr_reg = ["dar", "iar", "subarn", "addarn"]
+load_store = [
+    "lri", "lr", "sr", "mrr", "si",
+    "lrr", "lrrd", "lrri", "lrrn",
+    "srr", "srrd", "srri", "srrn",
+    "lrs", "srsh", "srs",
+    "ilrr", "ilrrd", "ilrri", "ilrrn",
+]
+imm_alu = ["addi", "xori", "andi", "ori", "cmpi", "andf", "andcf", "addis", "cmpis", "lris"]
+add_sub = ["addr", "addax", "add", "addp", "subr", "subax", "sub", "subp", "addaxl", "addpaxz"]
+move_ops = ["movr", "movax", "mov", "movp", "movpz", "movnp"]
+inc_dec = ["incm", "inc", "decm", "dec", "neg", "abs_ac"]
+cmp_test = ["cmp", "cmpaxh", "tst", "tstprod", "tstaxh", "nx_0", "nx_1", "clr", "clrp", "clrl"]
+logic = ["xorr", "andr", "orr", "andc", "orc", "xorc", "not_ac"]
+shifts = [
+    "lsl", "lsr", "asl", "asr",
+    "lsl16", "lsr16", "asr16",
+    "lsrn", "asrn", "lsrnrx", "asrnrx", "lsrnr", "asrnr",
+]
+status = ["sbclr", "sbset", "m2", "m0", "clr15", "set15", "set16", "set40"]
+mul = [
+    "mul", "mulx", "mulc", "mulaxh",
+    "mulmv", "mulmvz", "mulac",
+    "mulxmv", "mulxmvz", "mulxac",
+    "mulcmv", "mulcmvz", "mulcac",
+    "madd", "msub", "maddx", "msubx", "maddc", "msubc",
+]

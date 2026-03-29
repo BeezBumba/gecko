@@ -117,8 +117,8 @@ pub trait ScriptHost {
     /// Called before a bus read. Return Some(val) to override the read value.
     fn on_bus_read_pre(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8) -> Option<u32>;
 
-    /// Called after a bus read completes.
-    fn on_bus_read_post(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32);
+    /// Called after a bus read completes. Returns the (possibly modified) value.
+    fn on_bus_read_post(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32) -> u32;
 
     /// Called before a bus write. Returns the (possibly modified) value to write.
     fn on_bus_write_pre(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32) -> u32;
