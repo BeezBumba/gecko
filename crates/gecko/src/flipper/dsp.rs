@@ -16,6 +16,8 @@ use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 pub struct Dsp {
     // Registers
     pub pc: u16,
+    pub nia: u16,
+    pub cia: u16,
 
     // IMEM = IRAM + IROM
     pub iram: Box<[u8; 0x1000]>, // 0x0000 - 0x0FFF
@@ -57,6 +59,8 @@ impl Dsp {
 
         Dsp {
             pc: 0,
+            nia: 0,
+            cia: 0,
             iram,
             irom,
             dram,
@@ -145,8 +149,15 @@ impl GameCube {
         }
 
         let instr = Instruction::from_be_bytes(&self.dsp.iram[self.dsp.pc as usize..]);
+        self.dsp.cia = self.dsp.pc;
+        self.dsp.nia = self
+            .dsp
+            .cia
+            .wrapping_add(crate::flipper::dsp::lut::instr_size(instr) as u16);
+
         crate::flipper::dsp::lut::dispatch(self, instr);
-        self.dsp.pc += crate::flipper::dsp::lut::instr_size(instr) as u16;
+
+        self.dsp.pc = self.dsp.nia;
     }
 }
 

@@ -130,7 +130,8 @@ impl GameCube {
         }
 
         let Some(dvd) = self.di.dvd.take() else {
-            self.di.status.set_device_error(true);
+            // TODO: Setting this causes unrecoverable error when there is no DVD
+            //self.di.status.set_device_error(true);
             self.di.control.set_tstart(false);
             self.di.transfer_started = false;
             return;
