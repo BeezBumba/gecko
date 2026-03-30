@@ -17,7 +17,8 @@ pub fn disassemble_ppc(data: &[u8], start: usize) {
 }
 
 pub fn disassemble_dsp(data: &[u8], start: usize) {
-    let mut offset = start;
+    // start is a word address; convert to byte offset
+    let mut offset = start * 2;
     while offset + 2 <= data.len() {
         let word = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap());
         let addr = (offset / 2) as u32;

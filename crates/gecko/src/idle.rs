@@ -18,7 +18,6 @@ pub enum IdleCheck {
 }
 
 pub struct IdleDetector {
-    enabled: bool,
     loop_pc: Option<u32>,
     loop_end: u32,
     loop_count: u32,
@@ -36,9 +35,8 @@ enum LoopStatus {
 }
 
 impl IdleDetector {
-    pub fn new(enabled: bool) -> Self {
+    pub fn new() -> Self {
         Self {
-            enabled,
             loop_pc: None,
             loop_end: 0,
             loop_count: 0,
@@ -48,10 +46,6 @@ impl IdleDetector {
 
     #[inline]
     pub fn check(&mut self, cia: u32, nia: u32) -> IdleCheck {
-        if !self.enabled {
-            return IdleCheck::Continue;
-        }
-
         // Branching to current is always a safe idle loop
         if nia == cia {
             return IdleCheck::Skip;

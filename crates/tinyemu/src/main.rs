@@ -39,10 +39,6 @@ struct Args {
     #[arg(long)]
     quiet: bool,
 
-    /// Skip idle loops to speed up emulation
-    #[arg(long)]
-    idle_skip: bool,
-
     /// Disable ANSI escape codes
     #[arg(long)]
     no_ansi: bool,
@@ -72,10 +68,10 @@ fn main() {
     let mut emulator = if let Some(rom_path) = &args.rom {
         let rom_data = std::fs::read(rom_path).expect("failed to read ROM");
         let dol = image::Dol::parse(rom_data);
-        gecko::gamecube::GameCube::with_image(&dol, args.idle_skip)
+        gecko::gamecube::GameCube::with_image(&dol)
     } else if let Some(ipl_path) = &args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
-        gecko::gamecube::GameCube::with_ipl(&ipl_data, args.idle_skip)
+        gecko::gamecube::GameCube::with_ipl(&ipl_data)
     } else {
         panic!("Either --rom or --ipl must be provided");
     };

@@ -1,4 +1,8 @@
-use crate::flipper::dsp::{condition::BranchControl, core::{SignExtensionMode, StatusRegister}, lut::*};
+use crate::flipper::dsp::{
+    condition::BranchControl,
+    core::{SignExtensionMode, StatusRegister},
+    lut::*,
+};
 
 #[inline(always)]
 pub fn add_sub<const OP: u32>(
@@ -36,12 +40,24 @@ pub fn addr_reg<const OP: u32>(
 
 #[inline(always)]
 pub fn cmp_test<const OP: u32>(
-    _ctx: &mut crate::gamecube::GameCube,
-    _instr: crate::flipper::dsp::instruction::Instruction,
+    ctx: &mut crate::gamecube::GameCube,
+    instr: crate::flipper::dsp::instruction::Instruction,
 ) {
     match OP {
-        OP_CMP => todo!("cmp"),
-        OP_CMPAXH => todo!("cmpaxh"),
+        OP_CMP => {
+            let a = ctx.dsp.registers.ac(0);
+            let b = ctx.dsp.registers.ac(1);
+            let result = a.wrapping_sub(b);
+            ctx.dsp.registers.update_flags_sub(a, b, result);
+        }
+        OP_CMPAXH => {
+            let s = instr.s_4_4();
+            let r = instr.s_3_3();
+            let a = ctx.dsp.registers.ac(r);
+            let b = (ctx.dsp.registers.axh[s as usize] as i16 as i64) << 16;
+            let result = a.wrapping_sub(b);
+            ctx.dsp.registers.update_flags_sub(a, b, result);
+        }
         OP_TST => todo!("tst"),
         OP_TSTPROD => todo!("tstprod"),
         OP_TSTAXH => todo!("tstaxh"),
@@ -66,10 +82,10 @@ pub fn control<const OP: u32>(
                 ctx.dsp.registers.nia = instr.addr();
             }
         }
-        OP_NOP => {},
+        OP_NOP => {}
         OP_HALT => {
             ctx.dsp.csr.set_halt(true);
-        },
+        }
         OP_IFCC => todo!("ifcc"),
         OP_CALLCC => todo!("callcc"),
         OP_RETCC => todo!("retcc"),
@@ -79,7 +95,7 @@ pub fn control<const OP: u32>(
                 ctx.dsp.registers.status = StatusRegister::from(ctx.dsp.registers.data_stack.pop());
                 ctx.dsp.registers.nia = ctx.dsp.registers.call_stack.pop();
             }
-        },
+        }
         OP_JRCC => todo!("jrcc"),
         OP_CALLRCC => todo!("callrcc"),
         _ => unreachable!(),
@@ -96,9 +112,19 @@ pub fn imm_alu<const OP: u32>(
         OP_XORI => todo!("xori"),
         OP_ANDI => todo!("andi"),
         OP_ORI => todo!("ori"),
-        OP_CMPI => todo!("cmpi"),
+        OP_CMPI => {
+            let d = instr.d_7_7();
+            let a = ctx.dsp.registers.ac(d);
+            let b = (instr.imm_16_31() as i16 as i64) << 16;
+            let result = a.wrapping_sub(b);
+            ctx.dsp.registers.update_flags_sub(a, b, result);
+        }
         OP_ANDF | OP_ANDCF => {
-            let ac_mid = if instr.d_7_7() != 0 { ctx.dsp.registers.ac1_mid } else { ctx.dsp.registers.ac0_mid };
+            let ac_mid = if instr.d_7_7() != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
             let imm = instr.imm_16_31();
             let result = ac_mid & imm;
             let lz = match OP {
@@ -107,9 +133,15 @@ pub fn imm_alu<const OP: u32>(
                 _ => unreachable!(),
             };
             ctx.dsp.registers.status.set_lz(lz);
-        },
+        }
         OP_ADDIS => todo!("addis"),
-        OP_CMPIS => todo!("cmpis"),
+        OP_CMPIS => {
+            let d = instr.d_7_7();
+            let a = ctx.dsp.registers.ac(d);
+            let b = (instr.imm_8_15_i16() as i64) << 16;
+            let result = a.wrapping_sub(b);
+            ctx.dsp.registers.update_flags_sub(a, b, result);
+        }
         OP_LRIS => todo!("lris"),
         _ => unreachable!(),
     }
@@ -139,18 +171,26 @@ pub fn load_store<const OP: u32>(
     match OP {
         OP_LRI => {
             ctx.dsp.registers.write::<true>(instr.d_11_15(), instr.imm_16_31());
-        },
+        }
         OP_LR => todo!("lr"),
         OP_SR => todo!("sr"),
         OP_MRR => todo!("mrr"),
         OP_SI => {
             let addr = 0xFF00 | (instr.mem_8_15_u16());
             ctx.dsp.write_dmem(addr, instr.imm_16_31());
-        },
-        OP_LRR => todo!("lrr"),
-        OP_LRRD => todo!("lrrd"),
-        OP_LRRI => todo!("lrri"),
-        OP_LRRN => todo!("lrrn"),
+        }
+        OP_LRR | OP_LRRD | OP_LRRI | OP_LRRN => {
+            let s = instr.s_9_10() as usize;
+            let d = instr.d_11_15();
+            let value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+            ctx.dsp.registers.write::<true>(d, value);
+            match OP {
+                OP_LRRD => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_sub(1),
+                OP_LRRI => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(1),
+                OP_LRRN => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]),
+                _ => {}
+            }
+        }
         OP_SRR => todo!("srr"),
         OP_SRRD => todo!("srrd"),
         OP_SRRI => todo!("srri"),
@@ -160,17 +200,23 @@ pub fn load_store<const OP: u32>(
             let addr = ((ctx.dsp.registers.config as u16) << 8) | instr.mem_8_15_u16();
             let value = ctx.dsp.read_dmem(addr);
             ctx.dsp.registers.write::<true>(dst, value);
-        },
+        }
         OP_SRSH | OP_SRS => {
             let addr = ((ctx.dsp.registers.config as u16) << 8) | instr.mem_8_15_u16();
             let src = match OP {
-                OP_SRSH => if instr.s_7_7() != 0 { 16 } else { 17 }, // ac0.h (16) or ac1.h (17)
+                OP_SRSH => {
+                    if instr.s_7_7() != 0 {
+                        16
+                    } else {
+                        17
+                    }
+                } // ac0.h (16) or ac1.h (17)
                 OP_SRS => 0x1C + instr.reg_6_7(),
                 _ => unreachable!(),
             };
             let value = ctx.dsp.registers.read::<true>(src);
             ctx.dsp.write_dmem(addr, value);
-        },
+        }
         OP_ILRR | OP_ILRRD | OP_ILRRI | OP_ILRRN => {
             let src = instr.s_14_15() as usize;
             let dst = if instr.d_7_7() != 0 { 31u8 } else { 30u8 }; // ac1.m or ac0.m
@@ -179,10 +225,12 @@ pub fn load_store<const OP: u32>(
             match OP {
                 OP_ILRRD => ctx.dsp.registers.ar[src] = ctx.dsp.registers.ar[src].wrapping_sub(1),
                 OP_ILRRI => ctx.dsp.registers.ar[src] = ctx.dsp.registers.ar[src].wrapping_add(1),
-                OP_ILRRN => ctx.dsp.registers.ar[src] = ctx.dsp.registers.ar[src].wrapping_add(ctx.dsp.registers.ix[src]),
+                OP_ILRRN => {
+                    ctx.dsp.registers.ar[src] = ctx.dsp.registers.ar[src].wrapping_add(ctx.dsp.registers.ix[src])
+                }
                 _ => {}
             }
-        },
+        }
         _ => unreachable!(),
     }
 }
@@ -205,27 +253,39 @@ pub fn logic<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn loops<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn loops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::flipper::dsp::instruction::Instruction) {
     match OP {
-        OP_LOOP_REG => todo!("loop_reg"),
-        OP_BLOOP => {
-            let reg = instr.reg_11_15();
-            let counter = ctx.dsp.registers.read::<true>(reg);
-            let end_addr = instr.addr();
-
+        OP_LOOP_REG | OP_LOOPI => {
+            let counter = match OP {
+                OP_LOOP_REG => ctx.dsp.registers.read::<true>(instr.reg_11_15()),
+                OP_LOOPI => instr.imm_8_15_u8() as u16,
+                _ => unreachable!(),
+            };
+            let end_addr = ctx.dsp.registers.nia; // the instruction to loop on
             if counter != 0 {
-                ctx.dsp.registers.call_stack.push(ctx.dsp.registers.pc.wrapping_add(2));
-                ctx.dsp.registers.loop_addr.push(end_addr);
+                ctx.dsp.registers.call_stack.push(end_addr);
+                ctx.dsp.registers.loop_addr.push(end_addr.wrapping_add(1));
+                ctx.dsp.registers.loop_counter.push(counter);
+            } else {
+                // Skip the looped instruction
+                ctx.dsp.registers.nia = end_addr.wrapping_add(1);
+            }
+        }
+        OP_BLOOP | OP_BLOOPI => {
+            let counter = match OP {
+                OP_BLOOP => ctx.dsp.registers.read::<true>(instr.reg_11_15()),
+                OP_BLOOPI => instr.imm_8_15_u8() as u16,
+                _ => unreachable!(),
+            };
+            let end_addr = instr.addr();
+            if counter != 0 {
+                ctx.dsp.registers.call_stack.push(ctx.dsp.registers.nia);
+                ctx.dsp.registers.loop_addr.push(end_addr.wrapping_add(1));
                 ctx.dsp.registers.loop_counter.push(counter);
             } else {
                 ctx.dsp.registers.nia = end_addr.wrapping_add(1);
             }
-        },
-        OP_LOOPI => todo!("loopi"),
-        OP_BLOOPI => todo!("bloopi"),
+        }
         _ => unreachable!(),
     }
 }
@@ -306,25 +366,167 @@ pub fn status<const OP: u32>(
         }
         OP_SBSET => {
             ctx.dsp.registers.status |= (1 << (6 + instr.bit())) as u16;
-        },
+        }
         OP_M2 => {
             ctx.dsp.registers.status.set_am(false);
-        },
+        }
         OP_M0 => {
             ctx.dsp.registers.status.set_am(true);
-        },
+        }
         OP_CLR15 => {
             ctx.dsp.registers.status.set_su(false);
-        },
+        }
         OP_SET15 => {
             ctx.dsp.registers.status.set_su(true);
-        },
+        }
         OP_SET16 => {
             ctx.dsp.registers.status.set_sxm(SignExtensionMode::Bits16);
         }
         OP_SET40 => {
             ctx.dsp.registers.status.set_sxm(SignExtensionMode::Bits40);
-        },
+        }
+        _ => unreachable!(),
+    }
+}
+
+// Extension opcode handlers
+use crate::flipper::dsp::instruction::GcDspExt;
+
+#[inline(always)]
+pub fn ext_nop(_ctx: &mut crate::gamecube::GameCube, _instr: GcDspExt) {}
+
+#[inline(always)]
+pub fn ext_addr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    let r = instr.r_6_7() as usize;
+    match OP {
+        OP_EXT_DR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.ar[r].wrapping_sub(1),
+        OP_EXT_IR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.ar[r].wrapping_add(1),
+        OP_EXT_NR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.ar[r].wrapping_add(ctx.dsp.registers.ix[r]),
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+pub fn ext_mv(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    let d = instr.d_4_5();
+    let s = instr.s_6_7();
+    let value = ctx.dsp.registers.read::<true>(0x1C + s);
+    ctx.dsp.registers.write::<false>(0x18 + d, value);
+}
+
+#[inline(always)]
+pub fn ext_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    let s = instr.s_3_4();
+    let d = instr.d_6_7() as usize;
+    let value = ctx.dsp.registers.read::<true>(0x1C + s);
+    ctx.dsp.write_dmem(ctx.dsp.registers.ar[d], value);
+    match OP {
+        OP_EXT_S => ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_add(1),
+        OP_EXT_SN => ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_add(ctx.dsp.registers.ix[d]),
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+pub fn ext_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    let d = instr.d_2_4();
+    let s = instr.s_6_7() as usize;
+    let value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+    ctx.dsp.registers.write::<false>(0x18 + d, value);
+    match OP {
+        OP_EXT_L => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(1),
+        OP_EXT_LN => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]),
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+pub fn ext_load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    // 'LS: load from $ar0 into $(0x18+D), store $acS.m to $ar3
+    // 'SL: load from $ar3 into $(0x18+D), store $acS.m to $ar0
+    let store_val = ctx.dsp.registers.read::<true>(30 + instr.s_7_7()); // $acS.m
+    let is_sl = matches!(OP, OP_EXT_SL | OP_EXT_SLN | OP_EXT_SLM | OP_EXT_SLNM);
+    let (load_ar, store_ar) = if is_sl { (3, 0) } else { (0, 3) };
+    let load_val = ctx.dsp.read_dmem(ctx.dsp.registers.ar[load_ar]);
+    ctx.dsp.registers.write::<false>(0x18 + instr.d_2_3(), load_val);
+    ctx.dsp.write_dmem(ctx.dsp.registers.ar[store_ar], store_val);
+    // Post-modify: N = ar0 += ix0, M = ar3 += ix3
+    match OP {
+        OP_EXT_LS | OP_EXT_SL => {
+            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_add(1);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(1);
+        }
+        OP_EXT_LSN | OP_EXT_SLN => {
+            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_add(ctx.dsp.registers.ix[0]);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(1);
+        }
+        OP_EXT_LSM | OP_EXT_SLM => {
+            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_add(1);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+        }
+        OP_EXT_LSNM | OP_EXT_SLNM => {
+            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_add(ctx.dsp.registers.ix[0]);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+pub fn ext_ld<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    let d = instr.d_2_2();
+    let r = instr.r_3_3();
+    let s = instr.s_6_7() as usize;
+    ctx.dsp
+        .registers
+        .write::<false>(0x18 + d * 2, ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]));
+    ctx.dsp
+        .registers
+        .write::<false>(0x19 + r * 2, ctx.dsp.read_dmem(ctx.dsp.registers.ar[3]));
+    match OP {
+        OP_EXT_LD_00 => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(1);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(1);
+        }
+        OP_EXT_LDN_01 => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(1);
+        }
+        OP_EXT_LDM_10 => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(1);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+        }
+        OP_EXT_LDNM_11 => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[inline(always)]
+pub fn ext_ldax<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    let r = instr.r_3_3() as usize;
+    let s = instr.s_2_2() as usize;
+    ctx.dsp.registers.axh[r] = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+    ctx.dsp.registers.ax[r] = ctx.dsp.read_dmem(ctx.dsp.registers.ar[3]);
+    match OP {
+        OP_EXT_LDAX => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(1);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(1);
+        }
+        OP_EXT_LDAXN => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(1);
+        }
+        OP_EXT_LDAXM => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(1);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+        }
+        OP_EXT_LDAXNM => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+        }
         _ => unreachable!(),
     }
 }

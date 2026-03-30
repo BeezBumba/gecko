@@ -70,6 +70,51 @@ pub struct Registers {
 }
 
 impl Registers {
+    /// Get 40-bit accumulator as i64 (sign-extended from bit 39).
+    #[inline(always)]
+    pub fn ac(&self, idx: u8) -> i64 {
+        let (high, mid, low) = match idx {
+            0 => (self.ac0_high, self.ac0_mid, self.ac0_low),
+            1 => (self.ac1_high, self.ac1_mid, self.ac1_low),
+            _ => unreachable!(),
+        };
+        let raw = ((high as u64 & 0xFF) << 32) | ((mid as u64) << 16) | (low as u64);
+        ((raw as i64) << 24) >> 24
+    }
+
+    /// Update flags based on a 40-bit result of subtraction.
+    /// Sets: OS, TB, S32, S, AZ, O, C.
+    #[inline(always)]
+    pub fn update_flags_sub(&mut self, a: i64, b: i64, result: i64) {
+        let r40 = result as u64 & 0xFF_FFFF_FFFF;
+        let a40 = a as u64 & 0xFF_FFFF_FFFF;
+
+        let sign = (r40 >> 39) & 1 != 0;
+        let zero = r40 == 0;
+        // Carry for subtraction: A >= result (unsigned 40-bit), i.e. no borrow
+        let carry = a40 >= r40;
+        // Overflow: sign of A != sign of B, and sign of result != sign of A
+        let a_sign = (a as u64 >> 39) & 1;
+        let b_sign = (b as u64 >> 39) & 1;
+        let r_sign = (r40 >> 39) & 1;
+        let overflow = (a_sign != b_sign) && (r_sign != a_sign);
+        // Above s32: upper 9 bits (39:31) are not all the same
+        let upper9 = (r40 >> 31) & 0x1FF;
+        let above_s32 = upper9 != 0 && upper9 != 0x1FF;
+        // Top two bits equal
+        let tb = ((r40 >> 39) & 1) == ((r40 >> 38) & 1);
+
+        self.status.set_s(sign);
+        self.status.set_z(zero);
+        self.status.set_c(carry);
+        self.status.set_o(overflow);
+        if overflow {
+            self.status.set_os(true);
+        }
+        self.status.set_as32(above_s32);
+        self.status.set_tb(tb);
+    }
+
     #[inline(always)]
     pub fn sign_extended(&self) -> bool {
         self.status.sxm() == SignExtensionMode::Bits40

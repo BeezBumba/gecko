@@ -1,4 +1,4 @@
-use egui::{Align, Color32, Context, Grid, RichText, ScrollArea};
+use egui::{Color32, Context, Grid, RichText, ScrollArea};
 use gecko::flipper::dsp::Dsp;
 
 fn token_color(token: &disasm::tokenizer::AsmToken<'_>) -> Option<Color32> {
@@ -111,10 +111,6 @@ pub fn show_dsp(ctx: &Context, open: &mut bool, dsp: &Dsp) {
                             }
                         });
                         ui.end_row();
-
-                        if is_pc {
-                            ui.scroll_to_cursor(Some(Align::Min));
-                        }
 
                         addr += words;
                     }

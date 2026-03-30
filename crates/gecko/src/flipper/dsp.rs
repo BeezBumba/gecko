@@ -20,13 +20,13 @@ pub struct Dsp {
     pub registers: core::Registers,
 
     // IMEM = IRAM + IROM
-    pub iram: Box<[u8; 0x1000]>, // 0x0000 - 0x0FFF
-    pub irom: Box<[u8; 0x1000]>, // 0x8000 - 0x8FFF
+    pub iram: Box<[u8; 0x2000]>, // 0x0000 - 0x0FFF
+    pub irom: Box<[u8; 0x2000]>, // 0x8000 - 0x8FFF
 
     // DMEM = DRAM + COEF + IFX
-    pub dram: Box<[u8; 0x1000]>, // 0x0000 - 0x0FFF
-    pub coef: Box<[u8; 0x1000]>, // 0x1000 - 0x1FFF
-    pub ifx: Box<[u8; 0x100]>,   // 0xFF00 - 0xFFFF
+    pub dram: Box<[u8; 0x2000]>, // 0x0000 - 0x0FFF (0x1000 words)
+    pub coef: Box<[u8; 0x2000]>, // 0x1000 - 0x1FFF (0x1000 words)
+    pub ifx: Box<[u8; 0x200]>,   // 0xFF00 - 0xFFFF (0x100 words)
 
     // Auxiliary RAM (16 MB)
     pub aram: Box<[u8; 16 * 1024 * 1024]>,
@@ -38,6 +38,7 @@ pub struct Dsp {
     pub mailbox_to_cpu_hi: regs::MailboxToCpuHi,
     pub mailbox_to_cpu_lo: regs::MailboxToCpuLo,
     pub aram_info: regs::AramInfo,
+    pub aram_mode: regs::AramMode,
     pub aram_refresh: regs::AramRefresh,
     pub aram_dma_mmio_addr: regs::AramDmaMmioAddr,
     pub aram_dma_aram_addr: regs::AramDmaAramAddr,
@@ -51,11 +52,11 @@ pub struct Dsp {
 impl Dsp {
     pub fn new() -> Self {
         let aram = unsafe { Box::<[u8; 16 * 1024 * 1024]>::new_zeroed().assume_init() };
-        let iram = unsafe { Box::<[u8; 0x1000]>::new_zeroed().assume_init() };
-        let irom = unsafe { Box::<[u8; 0x1000]>::new_zeroed().assume_init() };
-        let dram = unsafe { Box::<[u8; 0x1000]>::new_zeroed().assume_init() };
-        let coef = unsafe { Box::<[u8; 0x1000]>::new_zeroed().assume_init() };
-        let ifx = unsafe { Box::<[u8; 0x100]>::new_zeroed().assume_init() };
+        let iram = unsafe { Box::<[u8; 0x2000]>::new_zeroed().assume_init() };
+        let irom = unsafe { Box::<[u8; 0x2000]>::new_zeroed().assume_init() };
+        let dram = unsafe { Box::<[u8; 0x2000]>::new_zeroed().assume_init() };
+        let coef = unsafe { Box::<[u8; 0x2000]>::new_zeroed().assume_init() };
+        let ifx = unsafe { Box::<[u8; 0x200]>::new_zeroed().assume_init() };
 
         Dsp {
             registers: core::Registers::default(),
@@ -71,6 +72,7 @@ impl Dsp {
             mailbox_to_cpu_hi: regs::MailboxToCpuHi::from_raw(0),
             mailbox_to_cpu_lo: regs::MailboxToCpuLo::from_raw(0),
             aram_info: regs::AramInfo::from_raw(0),
+            aram_mode: regs::AramMode::from_raw(0),
             aram_refresh: regs::AramRefresh::from_raw(0),
             aram_dma_mmio_addr: regs::AramDmaMmioAddr::from_raw(0),
             aram_dma_aram_addr: regs::AramDmaAramAddr::from_raw(0),
@@ -146,7 +148,7 @@ impl GameCube {
             return;
         }
 
-        let instr = Instruction::from_be_bytes(&self.dsp.iram[self.dsp.registers.pc as usize..]);
+        let instr = Instruction::from_be_bytes(&self.dsp.iram[(self.dsp.registers.pc as usize) * 2..]);
         self.dsp.registers.cia = self.dsp.registers.pc;
         self.dsp.registers.nia = self
             .dsp
@@ -155,6 +157,12 @@ impl GameCube {
             .wrapping_add(crate::flipper::dsp::lut::instr_size(instr) as u16);
 
         crate::flipper::dsp::lut::dispatch(self, instr);
+
+        // Dispatch extension opcode if present
+        if let Some(ext) = instr.ext_opcode() {
+            let ext = instruction::GcDspExt(ext);
+            crate::flipper::dsp::lut::dispatch_gc_dsp_ext(self, ext);
+        }
 
         // Check if we've reached the end of a loop stack
         let is_end_of_loop = self.dsp.registers.nia == self.dsp.registers.loop_addr.top();
@@ -185,6 +193,7 @@ impl MmioRw for Dsp {
         regs::MailboxToCpuHi,
         regs::MailboxToCpuLo,
         regs::AramInfo,
+        regs::AramMode,
         regs::AramRefresh,
         regs::AramDmaMmioAddr,
         regs::AramDmaAramAddr,

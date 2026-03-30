@@ -15,10 +15,11 @@ use crate::{
         si::{SerialInterface, pad},
         vi::VideoInterface,
     },
-    idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector},
     mmio::Mmio,
     scheduler::{CYCLES_PER_VSYNC, EventKind, Scheduler},
 };
+#[cfg(feature = "idle-skip")]
+use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
 use image::Executable;
 
 pub struct GameCube {
@@ -37,6 +38,7 @@ pub struct GameCube {
     pub si: SerialInterface,
     pub ai: AudioInterface,
     pub mi: MemoryInterface,
+    #[cfg(feature = "idle-skip")]
     idle: IdleDetector,
 
     #[cfg(feature = "scripting")]
@@ -69,7 +71,7 @@ impl GameCube {
         let _ = host;
     }
 
-    pub fn new(entrypoint: u32, idle_skip: bool) -> Self {
+    pub fn new(entrypoint: u32) -> Self {
         GameCube {
             vsync_pending: false,
             cpu: Cpu::new(entrypoint),
@@ -86,7 +88,8 @@ impl GameCube {
             si: SerialInterface::new(),
             ai: AudioInterface::new(),
             mi: MemoryInterface::new(),
-            idle: IdleDetector::new(idle_skip),
+            #[cfg(feature = "idle-skip")]
+            idle: IdleDetector::new(),
 
             #[cfg(feature = "scripting")]
             script_host: None,
@@ -97,8 +100,8 @@ impl GameCube {
         }
     }
 
-    pub fn with_image(exe: &impl Executable, idle_skip: bool) -> Self {
-        let mut emulator = GameCube::new(exe.entry_point(), idle_skip);
+    pub fn with_image(exe: &impl Executable) -> Self {
+        let mut emulator = GameCube::new(exe.entry_point());
         let data = exe.data();
 
         // Copy TEXT sections to memory
@@ -129,7 +132,7 @@ impl GameCube {
         emulator
     }
 
-    pub fn with_ipl(ipl: &[u8], idle_skip: bool) -> Self {
+    pub fn with_ipl(ipl: &[u8]) -> Self {
         // Text Sections (1):
         // | idx | offset     | vaddr      | size       | end        |
         // |-----|------------|------------|------------|------------|
@@ -141,7 +144,7 @@ impl GameCube {
         // BSS: 0x00000000 - 0x00000000 (size: 0x00000000)
         // => BS2 DOL, does not apply to the actual IPL here!!
 
-        let mut emulator = GameCube::new(IPL_RESET_VECTOR, idle_skip);
+        let mut emulator = GameCube::new(IPL_RESET_VECTOR);
         emulator.cpu.msr.set_ip(true);
         emulator.mmio.ipl = ipl.to_vec();
         emulator.exi.attach_device(
@@ -219,6 +222,7 @@ impl GameCube {
             }
         }
 
+        #[cfg(feature = "idle-skip")]
         match self.idle.check(self.cpu.cia, self.cpu.nia) {
             IdleCheck::Skip => {
                 if let Some(deadline) = self.scheduler.next_event_deadline() {
@@ -256,6 +260,7 @@ impl GameCube {
 
     /// Read the instructions in `[start, end]` and check whether the loop is a
     /// side effect free MMIO polling loop that can safely be skipped.
+    #[cfg(feature = "idle-skip")]
     #[inline(always)]
     fn is_polling_loop(&self, start: u32, end: u32) -> bool {
         let count = ((end - start) / 4 + 1) as usize;

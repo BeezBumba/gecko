@@ -140,6 +140,12 @@ crate::mmio_register! {
     AramInfo: u16 @ 0xCC005012 => Dsp.aram_info {}
 }
 
+// 0xCC005016 2 [R/W] AR_MODE - ARAM Mode
+
+crate::mmio_register! {
+    AramMode: u16 @ 0xCC005016 => Dsp.aram_mode {}
+}
+
 // 0xCC00501A 2 [R/W] AR_REFRESH - ARAM Refresh
 
 crate::mmio_register! {

@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+idle-skip = []
 scripting = []
 scripting-mut-traps = ["scripting"]
 
 [build-dependencies]
-chipi-build = "0.7.2"
+chipi-build = "0.8.2"
 
 [dependencies]
 chapa = "0.1.2"

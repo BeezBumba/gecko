@@ -265,3 +265,20 @@ mul = [
     "mulcmv", "mulcmvz", "mulcac",
     "madd", "msub", "maddx", "msubx", "maddc", "msubc",
 ]
+
+[lut.subdecoder_instr_type_outputs]
+GcDspExt = "$OUT_DIR/dsp_ext_instr.rs"
+
+[lut.subdecoder_instr_types]
+GcDspExt = "crate::flipper::dsp::instruction::GcDspExt"
+
+[lut.subdecoder_groups.GcDspExt]
+ext_addr = ["ext_dr", "ext_ir", "ext_nr"]
+ext_load = ["ext_l", "ext_ln"]
+ext_store = ["ext_s", "ext_sn"]
+ext_load_store = [
+    "ext_ls", "ext_sl", "ext_lsn", "ext_sln",
+    "ext_lsm", "ext_slm", "ext_lsnm", "ext_slnm",
+]
+ext_ld = ["ext_ld_00", "ext_ldn_01", "ext_ldm_10", "ext_ldnm_11"]
+ext_ldax = ["ext_ldax", "ext_ldaxn", "ext_ldaxm", "ext_ldaxnm"]

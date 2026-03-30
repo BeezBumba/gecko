@@ -10,6 +10,7 @@ members = [
     "crates/backend-wgpu",
     "crates/debugger",
     "crates/scripting",
+    "crates/dspemu",
 ]
 
 [patch.crates-io]

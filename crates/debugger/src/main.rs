@@ -87,8 +87,6 @@ fn main() {
         .any(|a| a == "--immediate")
         .then_some(wgpu::PresentMode::Immediate)
         .unwrap_or(wgpu::PresentMode::Fifo);
-    let idle_skip = args.iter().any(|a| a == "--idle-skip");
-
     let ipl_path = args.iter().position(|a| a == "--ipl").map(|i| &args[i + 1]);
     let rom_path = args
         .iter()
@@ -100,14 +98,14 @@ fn main() {
 
     let mut emulator = if let Some(ipl) = ipl_path {
         let ipl_data = std::fs::read(ipl).expect("failed to read IPL");
-        GameCube::with_ipl(&ipl_data, idle_skip)
+        GameCube::with_ipl(&ipl_data)
     } else if let Some(rom) = rom_path {
         let rom_data = std::fs::read(rom).expect("failed to read ROM");
         let dol = Dol::parse(rom_data);
-        GameCube::with_image(&dol, idle_skip)
+        GameCube::with_image(&dol)
     } else {
         eprintln!(
-            "usage: {} <path/to/game.dol> | --ipl <path> | --rom <path> [--iso <path>] [--immediate] [--idle-skip]",
+            "usage: {} <path/to/game.dol> | --ipl <path> | --rom <path> [--iso <path>] [--immediate] ",
             args[0]
         );
         std::process::exit(1);
