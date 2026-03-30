@@ -1,3 +1,5 @@
+pub mod condition;
+pub mod core;
 pub mod instruction;
 pub mod interpreter;
 pub mod regs;
@@ -15,9 +17,7 @@ use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 
 pub struct Dsp {
     // Registers
-    pub pc: u16,
-    pub nia: u16,
-    pub cia: u16,
+    pub registers: core::Registers,
 
     // IMEM = IRAM + IROM
     pub iram: Box<[u8; 0x1000]>, // 0x0000 - 0x0FFF
@@ -58,9 +58,7 @@ impl Dsp {
         let ifx = unsafe { Box::<[u8; 0x100]>::new_zeroed().assume_init() };
 
         Dsp {
-            pc: 0,
-            nia: 0,
-            cia: 0,
+            registers: core::Registers::default(),
             iram,
             irom,
             dram,
@@ -148,16 +146,31 @@ impl GameCube {
             return;
         }
 
-        let instr = Instruction::from_be_bytes(&self.dsp.iram[self.dsp.pc as usize..]);
-        self.dsp.cia = self.dsp.pc;
-        self.dsp.nia = self
+        let instr = Instruction::from_be_bytes(&self.dsp.iram[self.dsp.registers.pc as usize..]);
+        self.dsp.registers.cia = self.dsp.registers.pc;
+        self.dsp.registers.nia = self
             .dsp
+            .registers
             .cia
             .wrapping_add(crate::flipper::dsp::lut::instr_size(instr) as u16);
 
         crate::flipper::dsp::lut::dispatch(self, instr);
 
-        self.dsp.pc = self.dsp.nia;
+        // Check if we've reached the end of a loop stack
+        let is_end_of_loop = self.dsp.registers.nia == self.dsp.registers.loop_addr.top();
+        if !self.dsp.registers.loop_addr.is_empty() && is_end_of_loop {
+            let counter = self.dsp.registers.loop_counter.top().wrapping_sub(1);
+            if counter != 0 {
+                self.dsp.registers.loop_counter.set_top(counter);
+                self.dsp.registers.nia = self.dsp.registers.call_stack.top();
+            } else {
+                self.dsp.registers.loop_counter.pop();
+                self.dsp.registers.loop_addr.pop();
+                self.dsp.registers.call_stack.pop();
+            }
+        }
+
+        self.dsp.registers.pc = self.dsp.registers.nia;
     }
 }
 
@@ -180,6 +193,52 @@ impl MmioRw for Dsp {
 }
 
 impl Dsp {
+    /// Read a 16-bit word from instruction memory (IRAM 0x0000-0x0FFF, IROM 0x8000-0x8FFF).
+    pub fn read_imem(&self, addr: u16) -> u16 {
+        let byte_addr = addr as usize * 2;
+        let bytes = match addr as usize {
+            0x0000..0x1000 => &self.iram[byte_addr..byte_addr + 2],
+            0x8000..0x9000 => {
+                let offset = byte_addr - 0x8000 * 2;
+                &self.irom[offset..offset + 2]
+            }
+            _ => &[0, 0],
+        };
+        u16::from_be_bytes([bytes[0], bytes[1]])
+    }
+
+    /// Read a 16-bit word from data memory (DRAM 0x0000-0x0FFF, COEF 0x1000-0x1FFF, IFX 0xFF00-0xFFFF).
+    pub fn read_dmem(&self, addr: u16) -> u16 {
+        let byte_addr = addr as usize * 2;
+        let bytes = match addr as usize {
+            0x0000..0x1000 => &self.dram[byte_addr..byte_addr + 2],
+            0x1000..0x2000 => {
+                let offset = byte_addr - 0x1000 * 2;
+                &self.coef[offset..offset + 2]
+            }
+            0xFF00..0x10000 => {
+                let offset = (addr as usize - 0xFF00) * 2;
+                &self.ifx[offset..offset + 2]
+            }
+            _ => &[0, 0],
+        };
+        u16::from_be_bytes([bytes[0], bytes[1]])
+    }
+
+    /// Write a 16-bit word to data memory (DRAM 0x0000-0x0FFF, IFX 0xFF00-0xFFFF).
+    pub fn write_dmem(&mut self, addr: u16, value: u16) {
+        let byte_addr = addr as usize * 2;
+        let bytes = value.to_be_bytes();
+        match addr as usize {
+            0x0000..0x1000 => self.dram[byte_addr..byte_addr + 2].copy_from_slice(&bytes),
+            0xFF00..0x10000 => {
+                let offset = (addr as usize - 0xFF00) * 2;
+                self.ifx[offset..offset + 2].copy_from_slice(&bytes);
+            }
+            _ => {}
+        }
+    }
+
     pub fn interrupt_active(&self) -> bool {
         (self.csr.ai_interrupt() && self.csr.ai_interrupt_mask())
             || (self.csr.ar_interrupt() && self.csr.ar_interrupt_mask())

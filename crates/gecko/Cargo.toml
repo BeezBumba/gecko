@@ -11,6 +11,6 @@ scripting-mut-traps = ["scripting"]
 chipi-build = "0.7.2"
 
 [dependencies]
-chapa = "0.1.0"
+chapa = "0.1.2"
 tracing = { version = "0.1.44", features = ["release_max_level_off"] }
 image = { path = "../image" }

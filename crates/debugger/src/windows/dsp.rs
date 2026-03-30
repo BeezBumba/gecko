@@ -23,7 +23,7 @@ pub fn show_dsp(ctx: &Context, open: &mut bool, dsp: &Dsp) {
             .striped(true)
             .show(ui, |ui| {
                 ui.label("PC");
-                ui.monospace(format!("{:#06X}", dsp.pc));
+                ui.monospace(format!("{:#06X}", dsp.registers.pc));
                 ui.label("Halt");
                 ui.label(if dsp.csr.halt() { "yes" } else { "no" });
                 ui.end_row();
@@ -51,7 +51,7 @@ pub fn show_dsp(ctx: &Context, open: &mut bool, dsp: &Dsp) {
                 .min_col_width(0.0)
                 .striped(true)
                 .show(ui, |ui| {
-                    let mut addr = dsp.pc;
+                    let mut addr = dsp.registers.pc;
                     for _ in 0..20 {
                         let off = (addr as usize) * 2; // word-addressed PC -> byte offset
                         if off + 1 >= dsp.iram.len() {
@@ -66,7 +66,7 @@ pub fn show_dsp(ctx: &Context, open: &mut bool, dsp: &Dsp) {
                             }
                         };
 
-                        let is_pc = addr == dsp.pc;
+                        let is_pc = addr == dsp.registers.pc;
 
                         // PC indicator
                         if is_pc {
