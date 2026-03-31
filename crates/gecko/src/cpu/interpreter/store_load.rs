@@ -146,6 +146,36 @@ pub fn store_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: cra
                 ctx.cpu.write_gpr(instr.ra(), addr);
             }
         }
+        crate::cpu::lut::OP_LWBRX => {
+            let addr = ctx
+                .cpu
+                .read_gpr_or_zero(instr.ra())
+                .wrapping_add(ctx.cpu.read_gpr(instr.rb()));
+            let val = ctx.read_u32(addr).swap_bytes();
+            ctx.cpu.write_gpr(instr.rd(), val);
+        }
+        crate::cpu::lut::OP_LHBRX => {
+            let addr = ctx
+                .cpu
+                .read_gpr_or_zero(instr.ra())
+                .wrapping_add(ctx.cpu.read_gpr(instr.rb()));
+            let val = ctx.read_u16(addr).swap_bytes() as u32;
+            ctx.cpu.write_gpr(instr.rd(), val);
+        }
+        crate::cpu::lut::OP_STWBRX => {
+            let addr = ctx
+                .cpu
+                .read_gpr_or_zero(instr.ra())
+                .wrapping_add(ctx.cpu.read_gpr(instr.rb()));
+            ctx.write_u32(addr, ctx.cpu.read_gpr(instr.rs()).swap_bytes());
+        }
+        crate::cpu::lut::OP_STHBRX => {
+            let addr = ctx
+                .cpu
+                .read_gpr_or_zero(instr.ra())
+                .wrapping_add(ctx.cpu.read_gpr(instr.rb()));
+            ctx.write_u16(addr, (ctx.cpu.read_gpr(instr.rs()) as u16).swap_bytes());
+        }
         _ => todo!("Store/Load instruction with OP = {OP:#x}"),
     }
 }

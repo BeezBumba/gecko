@@ -1,0 +1,35 @@
+[package]
+name = "gecko-web"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gecko = { path = "../gecko" }
+image = { path = "../image" }
+backend-wgpu = { path = "../backend-wgpu" }
+wgpu = { version = "28.0.0", features = ["webgl"] }
+winit = { version = "0.30.13", features = ["rwh_06"] }
+egui = "0.33.3"
+egui-wgpu = "0.33.3"
+egui-winit = { version = "0.33.3", default-features = false, features = ["links"] }
+wasm-bindgen = "0.2.116"
+wasm-bindgen-futures = "0.4.66"
+web-sys = { version = "0.3.93", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+    "HtmlInputElement",
+    "File",
+    "FileReader",
+    "Blob",
+    "Event",
+    "Performance",
+    "console",
+] }
+js-sys = "0.3.93"
+console_error_panic_hook = "0.1.7"
+tracing = "0.1.44"

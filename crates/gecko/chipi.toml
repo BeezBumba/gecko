@@ -75,6 +75,10 @@ store_load = [
     "stwux",
     "stbux",
     "sthux",
+    "lwbrx",
+    "lhbrx",
+    "stwbrx",
+    "sthbrx",
 ]
 store_load_fp = [
     "lfd",

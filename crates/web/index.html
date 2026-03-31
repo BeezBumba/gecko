@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Gecko</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #111;
+            color: #ccc;
+            font-family: system-ui, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #setup {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        #setup h2 {
+            margin-bottom: 4px;
+        }
+
+        .file-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .file-row label {
+            width: 100px;
+            text-align: right;
+            color: #aaa;
+            font-size: 14px;
+        }
+
+        .file-row .name {
+            color: #8f8;
+            font-size: 14px;
+            min-width: 120px;
+        }
+
+        .file-row button,
+        #start {
+            background: #333;
+            color: #ccc;
+            border: 1px solid #555;
+            border-radius: 6px;
+            padding: 6px 16px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .file-row button:hover,
+        #start:hover {
+            background: #444;
+            border-color: #8f8;
+        }
+
+        #start {
+            margin-top: 8px;
+            padding: 10px 32px;
+            font-size: 16px;
+            align-self: stretch;
+            text-align: center;
+        }
+
+        #start:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        canvas {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="setup">
+        <div class="file-row">
+            <label>IPL / DOL:</label>
+            <button id="btn-rom">Choose file</button>
+            <span class="name" id="rom-name">none</span>
+        </div>
+        <input type="file" id="input-rom" accept=".dol,.iso,.gcm,.bin,.ipl">
+
+        <div class="file-row">
+            <label>DSP IROM:</label>
+            <button id="btn-dsp">Choose file</button>
+            <span class="name" id="dsp-name">none</span>
+        </div>
+        <input type="file" id="input-dsp" accept=".bin">
+
+        <button id="start" disabled>Start</button>
+    </div>
+
+    <script type="module">
+        import init, { start_emulator } from './pkg/gecko_web.js';
+
+        async function run() {
+            await init();
+
+            let romData = null;
+            let romName = '';
+            let dspData = null;
+
+            const btnRom = document.getElementById('btn-rom');
+            const btnDsp = document.getElementById('btn-dsp');
+            const inputRom = document.getElementById('input-rom');
+            const inputDsp = document.getElementById('input-dsp');
+            const romNameEl = document.getElementById('rom-name');
+            const dspNameEl = document.getElementById('dsp-name');
+            const startBtn = document.getElementById('start');
+
+            function readFile(file) {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(new Uint8Array(reader.result));
+                    reader.readAsArrayBuffer(file);
+                });
+            }
+
+            btnRom.addEventListener('click', () => inputRom.click());
+            btnDsp.addEventListener('click', () => inputDsp.click());
+
+            inputRom.addEventListener('change', async (e) => {
+                if (e.target.files.length > 0) {
+                    const file = e.target.files[0];
+                    romData = await readFile(file);
+                    romName = file.name;
+                    romNameEl.textContent = file.name;
+                    startBtn.disabled = false;
+                }
+            });
+
+            inputDsp.addEventListener('change', async (e) => {
+                if (e.target.files.length > 0) {
+                    const file = e.target.files[0];
+                    dspData = await readFile(file);
+                    dspNameEl.textContent = file.name;
+                }
+            });
+
+            startBtn.addEventListener('click', () => {
+                if (!romData) return;
+                document.getElementById('setup').style.display = 'none';
+                start_emulator(romData, romName, dspData ?? undefined);
+            });
+        }
+
+        run();
+    </script>
+</body>
+
+</html>

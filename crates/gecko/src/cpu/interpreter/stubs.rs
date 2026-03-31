@@ -16,9 +16,7 @@ macro_rules! stub {
 stub! {
     tw,
     mtsrin, mcrxr,
-    lwbrx, lswx, lswi, mfsrin,
-    stswx, stwbrx, stswi,
-    lhbrx,
+    lswx, lswi, mfsrin,
+    stswx, stswi,
     eciwx, ecowx,
-    sthbrx,
 }
