@@ -89,7 +89,11 @@
         }
 
         input[type="file"] {
-            display: none;
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+            pointer-events: none;
         }
     </style>
 </head>
@@ -101,7 +105,7 @@
             <button id="btn-rom">Choose file</button>
             <span class="name" id="rom-name">none</span>
         </div>
-        <input type="file" id="input-rom" accept=".dol,.iso,.gcm,.bin,.ipl">
+        <input type="file" id="input-rom" accept=".dol,.ipl">
 
         <div class="file-row">
             <label>DSP IROM:</label>
