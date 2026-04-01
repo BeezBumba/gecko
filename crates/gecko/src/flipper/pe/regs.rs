@@ -1,7 +1,5 @@
-use crate::{
-    flipper::pe::PixelEngine,
-    mmio::traits::{MmioAccess, MmioRegister},
-};
+use crate::flipper::pe::PixelEngine;
+use crate::mmio::traits::{MmioAccess, MmioRegister};
 
 // 0xCC001000	2	R/W	Z Configuration
 

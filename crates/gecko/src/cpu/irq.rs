@@ -1,4 +1,6 @@
-use crate::{cpu::spr::Srr0, gamecube::GameCube, mmio::Mmio};
+use crate::cpu::spr::Srr0;
+use crate::gamecube::GameCube;
+use crate::mmio::Mmio;
 
 // Exception vectors
 #[rustfmt::skip] pub const IRQ_SYSTEM_RESET: u32         = Mmio::virt_to_phys(0x8000_0100);

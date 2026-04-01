@@ -1,14 +1,12 @@
-use super::{
-    GraphicsProcessor,
-    constants::{
-        XF_DUAL_TEX_ENABLE, XF_DUALTEX_BASE, XF_MATRIX_INDEX_A, XF_MATRIX_INDEX_B, XF_POS_MTX_STRIDE, XF_POST_MTX_BASE,
-        XF_TEXGEN_BASE,
-    },
-    regs::{DualTexGenReg, MatrixIndex0, MatrixIndex1, TexGenReg},
+use super::GraphicsProcessor;
+use super::constants::{
+    XF_DUAL_TEX_ENABLE, XF_DUALTEX_BASE, XF_MATRIX_INDEX_A, XF_MATRIX_INDEX_B, XF_POS_MTX_STRIDE, XF_POST_MTX_BASE,
+    XF_TEXGEN_BASE,
 };
+use super::regs::{DualTexGenReg, MatrixIndex0, MatrixIndex1, TexGenReg};
 
 impl GraphicsProcessor {
-    pub(crate) fn compute_texgen(
+    pub fn compute_texgen(
         &self,
         texgen_idx: usize,
         position: [f32; 3],

@@ -8,6 +8,8 @@ wgpu = "28.0.0"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 gecko = { path = "../gecko" }
 wesl = "0.3.2"
+encase = "0.12.0"
+glam = { version = "0.32.1", features = ["encase"] }
 
 [build-dependencies]
 wesl = "0.3.2"

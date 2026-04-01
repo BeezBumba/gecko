@@ -1,8 +1,7 @@
 use crate::cli::IplAction;
 
-use std::fs;
 use std::path::Path;
-use std::process;
+use std::{fs, process};
 
 const IPL_ROM_SIZE: usize = 0x200000;
 const SCRAMBLE_START: usize = 0x100;

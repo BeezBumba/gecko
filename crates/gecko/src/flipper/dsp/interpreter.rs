@@ -1,8 +1,6 @@
-use crate::flipper::dsp::{
-    condition::BranchControl,
-    core::{SignExtensionMode, StatusRegister, reg},
-    lut::*,
-};
+use crate::flipper::dsp::condition::BranchControl;
+use crate::flipper::dsp::core::{SignExtensionMode, StatusRegister, reg};
+use crate::flipper::dsp::lut::*;
 
 #[inline(always)]
 pub fn add_sub<const OP: u32>(

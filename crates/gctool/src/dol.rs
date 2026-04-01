@@ -1,4 +1,5 @@
-use comfy_table::{Table, presets::ASCII_MARKDOWN};
+use comfy_table::Table;
+use comfy_table::presets::ASCII_MARKDOWN;
 use image::{Dol, Executable};
 
 fn section_table(sections: &[image::Section]) -> Table {

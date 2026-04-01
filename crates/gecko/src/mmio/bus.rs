@@ -1,16 +1,12 @@
+use crate::gamecube::GameCube;
+use crate::mmio::constants::{
+    AI_BASE, AI_END, CP_BASE, CP_END, DI_BASE, DI_END, DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE, GX_FIFO_END,
+    IPL_BASE, IPL_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_BASE, RAM_END, SI_BASE, SI_END, VI_BASE,
+    VI_END,
+};
+use crate::mmio::{Mmio, MmioRw};
 #[cfg(feature = "scripting")]
 use crate::scripting::HookFlags;
-use crate::{
-    gamecube::GameCube,
-    mmio::{
-        Mmio, MmioRw,
-        constants::{
-            AI_BASE, AI_END, CP_BASE, CP_END, DI_BASE, DI_END, DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE,
-            GX_FIFO_END, IPL_BASE, IPL_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_BASE, RAM_END,
-            SI_BASE, SI_END, VI_BASE, VI_END,
-        },
-    },
-};
 
 enum BusTarget {
     Ram,

@@ -1,16 +1,15 @@
 use clap::Parser;
 use std::sync::Arc;
-use winit::{
-    application::ApplicationHandler,
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
-    window::{Window, WindowId},
-};
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{Window, WindowId};
 
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::gamecube::GameCube;
-use image::{Dol, dvd::Dvd};
+use image::Dol;
+use image::dvd::Dvd;
 
 use crate::debugger::DebuggerUi;
 use crate::render::RenderState;

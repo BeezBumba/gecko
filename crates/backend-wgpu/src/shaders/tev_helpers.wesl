@@ -1,18 +1,16 @@
 import super::common::{VsOut, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
 
-// Read a single u32 from a packed array<vec4<u32>, 4> by flat index (0-15)
+// Index into a packed array<vec4<u32>, 4> by flat index
 fn read_packed(arr: array<vec4<u32>, 4>, idx: u32) -> u32 {
     let vi = idx / 4u;
     let ci = idx % 4u;
     return arr[vi][ci];
 }
 
-// Extract `width` bits starting at bit `lo` from `val`
 fn extract_bits(val: u32, lo: u32, width: u32) -> u32 {
     return (val >> lo) & ((1u << width) - 1u);
 }
 
-// Select texcoord by index (from TevOrder.texcoord)
 fn select_texcoord(in: VsOut, idx: u32) -> vec2<f32> {
     switch idx {
         case 0u: { return in.uv0; }
@@ -27,7 +25,6 @@ fn select_texcoord(in: VsOut, idx: u32) -> vec2<f32> {
     }
 }
 
-// Sample from texmap by index (from TevOrder.texmap)
 fn sample_texmap(texmap: u32, uv: vec2<f32>) -> vec4<f32> {
     switch texmap {
         case 0u: { return textureSample(tex0, samp0, uv); }
@@ -42,7 +39,7 @@ fn sample_texmap(texmap: u32, uv: vec2<f32>) -> vec4<f32> {
     }
 }
 
-// TEV color input selector (TevColorIn, 4-bit, 16 variants)
+// TevColorIn: 4-bit selector, 16 variants
 fn tev_color_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: array<vec4<f32>, 4>, konst_color: vec4<f32>) -> vec3<f32> {
     switch sel {
         case 0u:  { return regs[0].rgb; }           // PrevColor
@@ -65,7 +62,7 @@ fn tev_color_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: arra
     }
 }
 
-// TEV alpha input selector (TevAlphaIn, 3-bit, 8 variants)
+// TevAlphaIn: 3-bit selector, 8 variants
 fn tev_alpha_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: array<vec4<f32>, 4>, konst_color: vec4<f32>) -> f32 {
     switch sel {
         case 0u: { return regs[0].a; }      // PrevAlpha

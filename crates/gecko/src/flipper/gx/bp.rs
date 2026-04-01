@@ -1,19 +1,16 @@
-use super::{
-    GraphicsProcessor,
-    constants::{
-        BP_GEN_MODE, BP_PE_ALPHA_COMPARE, BP_PE_CMODE0, BP_PE_DONE, BP_PE_DONE_FINISH_BIT, BP_PE_ZMODE,
-        BP_RAS1_TREF_COUNT, BP_RAS1_TREF0, BP_TEV_COLOR_ENV_0, BP_TEV_REGISTERL_0, BP_TX_SETIMAGE0_I0,
-        BP_TX_SETIMAGE0_I4, BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, BP_TX_SETMODE0_I0, BP_TX_SETMODE0_I4,
-    },
-    draw,
-    regs::{
-        AlphaCompare, BlendMode, GenMode, TevAlphaEnv, TevColorEnv, TevOrder, TevRegType, TevRegisterH, TevRegisterL,
-        TxSetImage0, TxSetImage3, TxSetMode0, ZMode,
-    },
+use super::constants::{
+    BP_GEN_MODE, BP_PE_ALPHA_COMPARE, BP_PE_CMODE0, BP_PE_DONE, BP_PE_DONE_FINISH_BIT, BP_PE_ZMODE, BP_RAS1_TREF_COUNT,
+    BP_RAS1_TREF0, BP_TEV_COLOR_ENV_0, BP_TEV_REGISTERL_0, BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, BP_TX_SETIMAGE3_I0,
+    BP_TX_SETIMAGE3_I4, BP_TX_SETMODE0_I0, BP_TX_SETMODE0_I4,
 };
+use super::regs::{
+    AlphaCompare, BlendMode, GenMode, TevAlphaEnv, TevColorEnv, TevOrder, TevRegType, TevRegisterH, TevRegisterL,
+    TxSetImage0, TxSetImage3, TxSetMode0, ZMode,
+};
+use super::{GraphicsProcessor, draw};
 
 impl GraphicsProcessor {
-    pub(crate) fn load_bp(&mut self, data: &[u8]) {
+    pub fn load_bp(&mut self, data: &[u8]) {
         let idx = data[0] as usize;
         let val = u32::from_be_bytes([0, data[1], data[2], data[3]]);
         self.bp_regs[idx] = val;

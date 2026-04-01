@@ -1,7 +1,6 @@
-use crate::{
-    gamecube::GameCube,
-    mmio::{Mmio, constants::RAM_END},
-};
+use crate::gamecube::GameCube;
+use crate::mmio::Mmio;
+use crate::mmio::constants::RAM_END;
 
 impl GameCube {
     // Load a 64-bit double from memory

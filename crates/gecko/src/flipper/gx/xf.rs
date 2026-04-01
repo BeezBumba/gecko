@@ -1,20 +1,13 @@
-use super::{
-    GraphicsProcessor,
-    constants::{XF_PROJECTION_BASE, XF_PROJECTION_END},
-    draw,
-    math::Vec3,
-};
+use super::constants::{XF_PROJECTION_BASE, XF_PROJECTION_END};
+use super::math::Vec3;
+use super::{GraphicsProcessor, draw};
 
 impl GraphicsProcessor {
-    pub(crate) fn xf_f32(&self, reg: usize) -> f32 {
+    pub fn xf_f32(&self, reg: usize) -> f32 {
         f32::from_bits(self.xf_mem[reg])
     }
 
-    pub(crate) fn xf_vec3(&self, reg: usize) -> Vec3 {
-        Vec3(self.xf_f32(reg), self.xf_f32(reg + 1), self.xf_f32(reg + 2))
-    }
-
-    pub(crate) fn xf_transform_3x4(&self, base: usize, v: [f32; 3]) -> Vec3 {
+    pub fn xf_transform_3x4(&self, base: usize, v: [f32; 3]) -> Vec3 {
         Vec3(
             self.xf_f32(base) * v[0]
                 + self.xf_f32(base + 1) * v[1]
@@ -31,7 +24,7 @@ impl GraphicsProcessor {
         )
     }
 
-    pub(crate) fn rebuild_projection(&mut self) {
+    pub fn rebuild_projection(&mut self) {
         let pm1 = self.xf_f32(XF_PROJECTION_BASE);
         let pm2 = self.xf_f32(XF_PROJECTION_BASE + 1);
         let pm3 = self.xf_f32(XF_PROJECTION_BASE + 2);
@@ -59,7 +52,7 @@ impl GraphicsProcessor {
         };
     }
 
-    pub(crate) fn load_cp(&mut self, data: &[u8]) {
+    pub fn load_cp(&mut self, data: &[u8]) {
         let idx = data[0] as usize;
         let val = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
         self.cp_regs[idx] = val;
@@ -71,7 +64,7 @@ impl GraphicsProcessor {
         );
     }
 
-    pub(crate) fn load_xf(&mut self, data: &[u8]) {
+    pub fn load_xf(&mut self, data: &[u8]) {
         let length = u16::from_be_bytes([data[0], data[1]]) as usize;
         let addr = u16::from_be_bytes([data[2], data[3]]) as usize;
         let n = length + 1;

@@ -1,6 +1,7 @@
 use chapa::BitEnum;
 
-use crate::{flipper::dsp::Dsp, mmio::traits::MmioAccess};
+use crate::flipper::dsp::Dsp;
+use crate::mmio::traits::MmioAccess;
 
 // 0xCC00500A 2 [R/W] CSR - DSP Control/Status Register
 

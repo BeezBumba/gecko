@@ -13,19 +13,26 @@ struct FrameUniforms {
     alpha_comp0: u32,
     alpha_comp1: u32,
     alpha_op: u32,
+    // XF lighting state
+    light_colors: array<vec4<f32>, 8>,
+    light_cosatt: array<vec4<f32>, 8>,
+    light_distatt: array<vec4<f32>, 8>,
+    light_pos: array<vec4<f32>, 8>,
+    light_dir: array<vec4<f32>, 8>,
+    color_ctrl: u32,
+    alpha_ctrl: u32,
+    ambient_color: vec4<f32>,
+    material_color: vec4<f32>,
 };
 
 struct DrawUniforms {
     mvp: mat4x4<f32>,
 };
 
-@group(0) @binding(0)
-var<uniform> frame: FrameUniforms;
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var<uniform> draw: DrawUniforms;
 
-@group(0) @binding(1)
-var<uniform> draw: DrawUniforms;
-
-// 8 texture maps (texmap 0-7)
+// Texmaps 0-7
 @group(0) @binding(2) var tex0: texture_2d<f32>;
 @group(0) @binding(3) var tex1: texture_2d<f32>;
 @group(0) @binding(4) var tex2: texture_2d<f32>;
@@ -35,7 +42,7 @@ var<uniform> draw: DrawUniforms;
 @group(0) @binding(8) var tex6: texture_2d<f32>;
 @group(0) @binding(9) var tex7: texture_2d<f32>;
 
-// 8 samplers (paired with texmaps)
+// Samplers 0-7
 @group(0) @binding(10) var samp0: sampler;
 @group(0) @binding(11) var samp1: sampler;
 @group(0) @binding(12) var samp2: sampler;
@@ -48,14 +55,16 @@ var<uniform> draw: DrawUniforms;
 struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
-    @location(2) tex0: vec2<f32>,
-    @location(3) tex1: vec2<f32>,
-    @location(4) tex2: vec2<f32>,
-    @location(5) tex3: vec2<f32>,
-    @location(6) tex4: vec2<f32>,
-    @location(7) tex5: vec2<f32>,
-    @location(8) tex6: vec2<f32>,
-    @location(9) tex7: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) pos_view: vec3<f32>,
+    @location(4) tex0: vec2<f32>,
+    @location(5) tex1: vec2<f32>,
+    @location(6) tex2: vec2<f32>,
+    @location(7) tex3: vec2<f32>,
+    @location(8) tex4: vec2<f32>,
+    @location(9) tex5: vec2<f32>,
+    @location(10) tex6: vec2<f32>,
+    @location(11) tex7: vec2<f32>,
 };
 
 struct VsOut {

@@ -1,14 +1,12 @@
-use super::{
-    GraphicsProcessor,
-    constants::{
-        ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_NRM, ARRAY_POS, ARRAY_STRIDE_REG, ARRAY_TEX0, VATA_REG, VATB_REG, VATC_REG,
-        VCD_HI_REG, VCD_LO_REG, XF_ALPHA_CTRL0, XF_AMBIENT_COLOR0, XF_COLOR_CTRL0, XF_MATERIAL_COLOR0,
-        XF_MATRIX_INDEX_A, XF_NRM_MTX_BASE, XF_NUM_TEXGENS, XF_POS_MTX_STRIDE,
-    },
-    draw,
-    math::{Vec3, unpack_rgba},
-    regs::{self, AttributeType, ChanCtrl, ComponentFormat, MatrixIndex0, TexCount, VatA, VatB, VatC, VcdHi, VcdLo},
+use super::constants::{
+    ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_NRM, ARRAY_POS, ARRAY_STRIDE_REG, ARRAY_TEX0, VATA_REG, VATB_REG, VATC_REG,
+    VCD_HI_REG, VCD_LO_REG, XF_ALPHA_CTRL0, XF_AMBIENT_COLOR0, XF_COLOR_CTRL0, XF_LIGHT_A0, XF_LIGHT_BASE,
+    XF_LIGHT_COLOR, XF_LIGHT_K0, XF_LIGHT_NX, XF_LIGHT_PX, XF_LIGHT_STRIDE, XF_MATERIAL_COLOR0, XF_MATRIX_INDEX_A,
+    XF_NRM_MTX_BASE, XF_NUM_TEXGENS, XF_POS_MTX_STRIDE,
 };
+use super::math::{Vec3, unpack_rgba};
+use super::regs::{self, AttributeType, ComponentFormat, MatrixIndex0, TexCount, VatA, VatB, VatC, VcdHi, VcdLo};
+use super::{GraphicsProcessor, draw};
 use crate::mmio::Mmio;
 use std::io::{Cursor, Read};
 
@@ -42,7 +40,7 @@ struct VertexFormat {
 }
 
 impl GraphicsProcessor {
-    pub(crate) fn create_draw_call(&mut self, mmio: &mut Mmio, cmd: u8, data: Vec<u8>) {
+    pub fn create_draw_call(&mut self, mmio: &mut Mmio, cmd: u8, data: Vec<u8>) {
         let Some(primitive) = draw::Primitive::from_cmd(cmd) else {
             tracing::error!(cmd, "goofy draw command");
             return;
@@ -57,27 +55,11 @@ impl GraphicsProcessor {
 
         let vertex_count = data.len() / vf.vertex_stride;
 
-        // Channel 0 lighting state (COLOR0 and ALPHA0 have separate controls)
-        let color_ctrl = ChanCtrl::from_raw(self.xf_mem[XF_COLOR_CTRL0]);
-        let alpha_ctrl = ChanCtrl::from_raw(self.xf_mem[XF_ALPHA_CTRL0]);
-        let ambient_reg = unpack_rgba(self.xf_mem[XF_AMBIENT_COLOR0]);
-        let material_reg = unpack_rgba(self.xf_mem[XF_MATERIAL_COLOR0]);
-
         let mut vertices: Vec<draw::Vertex> = Vec::with_capacity(vertex_count);
         let mut cur = Cursor::new(&data);
 
         for i in 0..vertex_count {
-            let vertex = self.decode_vertex(
-                &mut cur,
-                &data,
-                &mmio.ram,
-                &vf,
-                &color_ctrl,
-                &alpha_ctrl,
-                ambient_reg,
-                material_reg,
-                i,
-            );
+            let vertex = self.decode_vertex(&mut cur, &data, &mmio.ram, &vf, i);
             vertices.push(vertex);
         }
 
@@ -109,6 +91,15 @@ impl GraphicsProcessor {
             bp_zmode: self.cur_zmode,
             bp_blend_mode: self.cur_blend_mode,
             bp_alpha_compare: self.cur_alpha_compare,
+            light_colors: self.snapshot_light_field(XF_LIGHT_COLOR),
+            light_cosatt: self.snapshot_light_field(XF_LIGHT_A0),
+            light_distatt: self.snapshot_light_field(XF_LIGHT_K0),
+            light_pos: self.snapshot_light_field(XF_LIGHT_PX),
+            light_dir: self.snapshot_light_field(XF_LIGHT_NX),
+            color_ctrl: regs::ChanCtrl::from_raw(self.xf_mem[XF_COLOR_CTRL0]),
+            alpha_ctrl: regs::ChanCtrl::from_raw(self.xf_mem[XF_ALPHA_CTRL0]),
+            ambient_color: unpack_rgba(self.xf_mem[XF_AMBIENT_COLOR0]),
+            material_color: unpack_rgba(self.xf_mem[XF_MATERIAL_COLOR0]),
         });
     }
 
@@ -238,17 +229,12 @@ impl GraphicsProcessor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn decode_vertex(
         &self,
         cur: &mut Cursor<&Vec<u8>>,
         data: &[u8],
         ram: &[u8],
         vf: &VertexFormat,
-        color_ctrl: &ChanCtrl,
-        alpha_ctrl: &ChanCtrl,
-        ambient_reg: [f32; 4],
-        material_reg: [f32; 4],
         vertex_idx: usize,
     ) -> draw::Vertex {
         // Read per-vertex position/normal matrix index, or use register default
@@ -345,18 +331,9 @@ impl GraphicsProcessor {
             });
         }
 
-        // Compute per-vertex lighting
+        // Transform position and normal to view space (per-vertex matrix dependent)
         let normal_view = Vec3::from(normal).transform(&nrm_mtx).normalize();
         let pos_view = self.xf_transform_3x4(pos_mtx_base, position);
-        let final_color = self.compute_channel_lighting(
-            color_ctrl,
-            alpha_ctrl,
-            ambient_reg,
-            material_reg,
-            color0,
-            normal_view,
-            pos_view,
-        );
 
         // Texture coordinate generation (XF texgen)
         let num_texgens = (self.xf_mem[XF_NUM_TEXGENS] as usize).min(8);
@@ -372,13 +349,15 @@ impl GraphicsProcessor {
         tracing::debug!(
             vertex = vertex_idx,
             position = format!("{:02X?}", position),
-            color0 = format!("{:?}", final_color),
+            color0 = format!("{:?}", color0),
             "Vertex"
         );
 
         draw::Vertex {
             position,
-            color0: final_color,
+            color0,
+            normal: [normal_view.0, normal_view.1, normal_view.2],
+            pos_view: [pos_view.0, pos_view.1, pos_view.2],
             texcoords,
         }
     }
@@ -411,6 +390,19 @@ impl GraphicsProcessor {
                 1.0,
             ],
         ])
+    }
+
+    fn snapshot_light_field(&self, field_offset: usize) -> [[f32; 4]; 8] {
+        std::array::from_fn(|i| {
+            let base = XF_LIGHT_BASE + i * XF_LIGHT_STRIDE + field_offset;
+            if field_offset == XF_LIGHT_COLOR {
+                // Color is stored as packed RGBA, not float
+                unpack_rgba(self.xf_mem[base])
+            } else {
+                // Float vec3, w = 0
+                [self.xf_f32(base), self.xf_f32(base + 1), self.xf_f32(base + 2), 0.0]
+            }
+        })
     }
 }
 

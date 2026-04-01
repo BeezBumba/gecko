@@ -1,7 +1,9 @@
-use super::{GraphicsProcessor, constants::BP_TEV_KSEL_0, regs::TevStageOrder};
+use super::GraphicsProcessor;
+use super::constants::BP_TEV_KSEL_0;
+use super::regs::TevStageOrder;
 
 impl GraphicsProcessor {
-    pub(crate) fn resolve_tev_orders(&self) -> [TevStageOrder; 16] {
+    pub fn resolve_tev_orders(&self) -> [TevStageOrder; 16] {
         let mut orders = [TevStageOrder::default(); 16];
         for i in 0..8 {
             let reg = self.cur_tev_orders[i];
@@ -17,7 +19,7 @@ impl GraphicsProcessor {
         orders
     }
 
-    pub(crate) fn resolve_tev_color_regs(&self) -> [[f32; 4]; 4] {
+    pub fn resolve_tev_color_regs(&self) -> [[f32; 4]; 4] {
         std::array::from_fn(|i| {
             let lo = self.cur_tev_color_regs_lo[i];
             let hi = self.cur_tev_color_regs_hi[i];
@@ -30,7 +32,7 @@ impl GraphicsProcessor {
         })
     }
 
-    pub(crate) fn resolve_konst_colors(&mut self) {
+    pub fn resolve_konst_colors(&mut self) {
         let kregs: [[f32; 4]; 4] = std::array::from_fn(|i| {
             let lo = self.cur_tev_const_regs_lo[i];
             let hi = self.cur_tev_const_regs_hi[i];
@@ -57,7 +59,7 @@ impl GraphicsProcessor {
     }
 }
 
-pub(crate) fn s11_to_f32(val: u16) -> f32 {
+pub fn s11_to_f32(val: u16) -> f32 {
     let signed = if val & 0x400 != 0 {
         val as i32 - 0x800
     } else {

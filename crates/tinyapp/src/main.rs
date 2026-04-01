@@ -4,17 +4,16 @@ use egui_plot::{Line, Plot, PlotPoints};
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
-use image::{Dol, dvd::Dvd};
+use image::Dol;
+use image::dvd::Dvd;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
-use winit::{
-    application::ApplicationHandler,
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
-    window::{Window, WindowId},
-};
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{Window, WindowId};
 
 const SHADER: &str = include_str!("xfb.wgsl");
 

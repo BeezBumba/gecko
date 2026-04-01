@@ -1,14 +1,10 @@
 pub mod regs;
 
-use crate::{
-    flipper::pi::InterruptFlag,
-    gamecube::GameCube,
-    mmio::{
-        constants::VI_BASE,
-        traits::{MmioAccess, MmioRegister, MmioRw},
-    },
-    scheduler::EventKind,
-};
+use crate::flipper::pi::InterruptFlag;
+use crate::gamecube::GameCube;
+use crate::mmio::constants::VI_BASE;
+use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
+use crate::scheduler::EventKind;
 
 const CPU_CORE_CLOCK: u64 = 486_000_000;
 const CLOCK_FREQUENCIES: [u64; 2] = [27_000_000, 54_000_000];

@@ -1,11 +1,10 @@
-use crate::{
-    DrawUniforms, FrameUniforms, GxRenderer, helpers,
-    pipeline::PipelineKey,
-    texture,
-    triangulate::{self, GpuVertex, align_up},
-};
+use crate::pipeline::PipelineKey;
+use crate::triangulate::{self, GpuVertex, align_up};
+use crate::{DrawUniforms, FrameUniforms, GxRenderer, helpers, texture};
+use encase::{ShaderType as _, UniformBuffer};
 use gecko::flipper::gx::draw::DrawCommands;
 use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
+use glam::{Mat4, UVec4, Vec4};
 
 impl GxRenderer {
     pub fn render(
@@ -64,7 +63,6 @@ impl GxRenderer {
             }
         }
 
-        // Ensure fallback sampler exists
         let fallback_sampler_key = (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear);
         if !self.sampler_cache.contains_key(&fallback_sampler_key) {
             let s = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -81,12 +79,12 @@ impl GxRenderer {
         self.scratch_uniform_bytes.clear();
 
         let draw_stride = self.draw_uniform_stride as usize;
-        let draw_size = std::mem::size_of::<DrawUniforms>();
+        let draw_encase_size = DrawUniforms::min_size().get() as usize;
         let frame_stride = align_up(
-            std::mem::size_of::<FrameUniforms>() as u64,
+            FrameUniforms::min_size().get(),
             device.limits().min_uniform_buffer_offset_alignment as u64,
         ) as usize;
-        let frame_size = std::mem::size_of::<FrameUniforms>();
+        let frame_encase_size = FrameUniforms::min_size().get() as usize;
         let mut frame_uniform_bytes: Vec<u8> = Vec::new();
         let mut draw_call_indices: Vec<usize> = Vec::new();
 
@@ -99,29 +97,43 @@ impl GxRenderer {
             }
 
             let mvp = commands.projection * dc.modelview;
-            let draw_uniform = DrawUniforms { mvp: mvp.0 };
+            let draw_uniform = DrawUniforms {
+                mvp: Mat4::from_cols_array_2d(&mvp.0),
+            };
+
             let start = self.scratch_draws.len() * draw_stride;
             self.scratch_uniform_bytes.resize(start + draw_stride, 0);
-            self.scratch_uniform_bytes[start..start + draw_size].copy_from_slice(bytemuck::bytes_of(&draw_uniform));
+            let mut draw_buf = UniformBuffer::new(&mut self.scratch_uniform_bytes[start..start + draw_encase_size]);
+            draw_buf.write(&draw_uniform).unwrap();
 
             let alpha_cmp = dc.bp_alpha_compare;
             let frame_uniform = FrameUniforms {
-                tev_color_regs: dc.tev_color_regs,
-                tev_konst_colors: dc.tev_konst_colors,
-                tev_color_env: dc.tev_color_env.map(|e| e.raw()),
-                tev_alpha_env: dc.tev_alpha_env.map(|e| e.raw()),
-                tev_orders: dc.tev_orders.map(|o| o.raw()),
+                tev_color_regs: dc.tev_color_regs.map(Vec4::from),
+                tev_konst_colors: dc.tev_konst_colors.map(Vec4::from),
+                tev_color_env: pack_u32x16_to_uvec4x4(&dc.tev_color_env.map(|e| e.raw())),
+                tev_alpha_env: pack_u32x16_to_uvec4x4(&dc.tev_alpha_env.map(|e| e.raw())),
+                tev_orders: pack_u32x16_to_uvec4x4(&dc.tev_orders.map(|o| o.raw())),
                 num_tev_stages: dc.num_tev_stages as u32,
                 alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
                 alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
                 alpha_comp0: alpha_cmp.comp0() as u32,
                 alpha_comp1: alpha_cmp.comp1() as u32,
                 alpha_op: alpha_cmp.op() as u32,
-                _padding: [0; 2],
+                light_colors: dc.light_colors.map(Vec4::from),
+                light_cosatt: dc.light_cosatt.map(Vec4::from),
+                light_distatt: dc.light_distatt.map(Vec4::from),
+                light_pos: dc.light_pos.map(Vec4::from),
+                light_dir: dc.light_dir.map(Vec4::from),
+                color_ctrl: dc.color_ctrl.raw(),
+                alpha_ctrl: dc.alpha_ctrl.raw(),
+                ambient_color: Vec4::from(dc.ambient_color),
+                material_color: Vec4::from(dc.material_color),
             };
+
             let fstart = self.scratch_draws.len() * frame_stride;
             frame_uniform_bytes.resize(fstart + frame_stride, 0);
-            frame_uniform_bytes[fstart..fstart + frame_size].copy_from_slice(bytemuck::bytes_of(&frame_uniform));
+            let mut frame_buf = UniformBuffer::new(&mut frame_uniform_bytes[fstart..fstart + frame_encase_size]);
+            frame_buf.write(&frame_uniform).unwrap();
 
             self.scratch_draws.push((prev_len as u32, added as u32));
             draw_call_indices.push(dc_idx);
@@ -145,7 +157,7 @@ impl GxRenderer {
         }
 
         let frame_stride = align_up(
-            std::mem::size_of::<FrameUniforms>() as u64,
+            FrameUniforms::min_size().get(),
             device.limits().min_uniform_buffer_offset_alignment as u64,
         ) as usize;
         let needed_frame_size = (num_draws * frame_stride) as u64;
@@ -173,7 +185,7 @@ impl GxRenderer {
     ) {
         let fallback_sampler_key = (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear);
         let frame_stride = align_up(
-            std::mem::size_of::<FrameUniforms>() as u64,
+            FrameUniforms::min_size().get(),
             device.limits().min_uniform_buffer_offset_alignment as u64,
         ) as usize;
 
@@ -210,7 +222,6 @@ impl GxRenderer {
                 let pipeline = &self.pipeline_cache[&pipeline_key];
                 rpass.set_pipeline(pipeline);
 
-                // Resolve all 8 texture views + samplers for this draw call
                 let mut tex_views: [&wgpu::TextureView; 8] = [&self.fallback_view; 8];
                 let mut tex_samplers: [&wgpu::Sampler; 8] = [&self.sampler_cache[&fallback_sampler_key]; 8];
                 for slot in 0..8 {
@@ -231,7 +242,7 @@ impl GxRenderer {
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: &self.frame_uniform_buffer,
                             offset: frame_offset,
-                            size: wgpu::BufferSize::new(std::mem::size_of::<FrameUniforms>() as u64),
+                            size: Some(FrameUniforms::min_size()),
                         }),
                     },
                     wgpu::BindGroupEntry {
@@ -239,7 +250,7 @@ impl GxRenderer {
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: &self.draw_uniform_buffer,
                             offset: 0,
-                            size: wgpu::BufferSize::new(std::mem::size_of::<DrawUniforms>() as u64),
+                            size: Some(DrawUniforms::min_size()),
                         }),
                     },
                 ];
@@ -282,4 +293,13 @@ impl GxRenderer {
             mapped_at_creation: false,
         });
     }
+}
+
+fn pack_u32x16_to_uvec4x4(data: &[u32; 16]) -> [UVec4; 4] {
+    [
+        UVec4::new(data[0], data[1], data[2], data[3]),
+        UVec4::new(data[4], data[5], data[6], data[7]),
+        UVec4::new(data[8], data[9], data[10], data[11]),
+        UVec4::new(data[12], data[13], data[14], data[15]),
+    ]
 }

@@ -1,12 +1,8 @@
 pub mod regs;
-use crate::{
-    flipper::pi::InterruptFlag,
-    gamecube::GameCube,
-    mmio::{
-        constants::PE_BASE,
-        traits::{MmioAccess, MmioRegister, MmioRw},
-    },
-};
+use crate::flipper::pi::InterruptFlag;
+use crate::gamecube::GameCube;
+use crate::mmio::constants::PE_BASE;
+use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 
 pub struct PixelEngine {
     pub zconf: regs::ZConfig,

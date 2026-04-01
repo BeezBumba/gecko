@@ -2,6 +2,7 @@ import super::common::{FrameUniforms, DrawUniforms, VsIn, VsOut, frame, draw, te
 import super::tev_helpers::{read_packed, extract_bits, select_texcoord, sample_texmap, tev_color_in, tev_alpha_in};
 import super::tev_combiners::{tev_combine_color, tev_combine_alpha};
 import super::alpha_test::{alpha_compare, alpha_combine};
+import super::lighting::compute_channel_lighting;
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
@@ -9,7 +10,11 @@ fn vs_main(in: VsIn) -> VsOut {
     out.clip_pos = draw.mvp * vec4<f32>(in.position, 1.0);
     // Remap depth: GameCube/OpenGL uses [-1,1], wgpu uses [0,1]
     out.clip_pos.z = out.clip_pos.z * 0.5 + out.clip_pos.w * 0.5;
-    out.color = in.color;
+    out.color = compute_channel_lighting(
+        frame.color_ctrl, frame.alpha_ctrl,
+        frame.ambient_color, frame.material_color,
+        in.color, in.normal, in.pos_view,
+    );
     out.uv0 = in.tex0;
     out.uv1 = in.tex1;
     out.uv2 = in.tex2;

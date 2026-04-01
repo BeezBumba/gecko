@@ -4,33 +4,40 @@ mod render;
 pub mod texture;
 mod triangulate;
 
+use encase::ShaderType as _;
 use gecko::flipper::gx::draw::TextureFormat;
 use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
 use pipeline::PipelineKey;
 use std::collections::HashMap;
 use triangulate::{GpuVertex, align_up};
 
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(encase::ShaderType)]
 pub(crate) struct FrameUniforms {
-    tev_color_regs: [[f32; 4]; 4],
-    tev_konst_colors: [[f32; 4]; 16],
-    tev_color_env: [u32; 16],
-    tev_alpha_env: [u32; 16],
-    tev_orders: [u32; 16],
+    tev_color_regs: [glam::Vec4; 4],
+    tev_konst_colors: [glam::Vec4; 16],
+    tev_color_env: [glam::UVec4; 4],
+    tev_alpha_env: [glam::UVec4; 4],
+    tev_orders: [glam::UVec4; 4],
     num_tev_stages: u32,
     alpha_ref0: f32,
     alpha_ref1: f32,
     alpha_comp0: u32,
     alpha_comp1: u32,
     alpha_op: u32,
-    _padding: [u32; 2],
+    light_colors: [glam::Vec4; 8],
+    light_cosatt: [glam::Vec4; 8],
+    light_distatt: [glam::Vec4; 8],
+    light_pos: [glam::Vec4; 8],
+    light_dir: [glam::Vec4; 8],
+    color_ctrl: u32,
+    alpha_ctrl: u32,
+    ambient_color: glam::Vec4,
+    material_color: glam::Vec4,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(encase::ShaderType)]
 pub(crate) struct DrawUniforms {
-    mvp: [[f32; 4]; 4],
+    mvp: glam::Mat4,
 }
 
 const SHADER: &str = wesl::include_wesl!("gx_shader");
@@ -67,8 +74,8 @@ impl GxRenderer {
         width: u32,
         height: u32,
     ) -> Self {
-        let frame_uniform_size = std::mem::size_of::<FrameUniforms>() as u64;
-        let draw_uniform_size = std::mem::size_of::<DrawUniforms>() as u64;
+        let frame_uniform_size = FrameUniforms::min_size().get();
+        let draw_uniform_size = DrawUniforms::min_size().get();
         let draw_uniform_stride = align_up(
             draw_uniform_size,
             device.limits().min_uniform_buffer_offset_alignment as u64,
@@ -87,7 +94,7 @@ impl GxRenderer {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(frame_uniform_size),
+                    min_binding_size: Some(FrameUniforms::min_size()),
                 },
                 count: None,
             },
@@ -97,7 +104,7 @@ impl GxRenderer {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(draw_uniform_size),
+                    min_binding_size: Some(DrawUniforms::min_size()),
                 },
                 count: None,
             },
@@ -170,7 +177,6 @@ impl GxRenderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        // White pixel
         queue.write_texture(
             fallback_texture.as_image_copy(),
             &[255u8, 255, 255, 255],

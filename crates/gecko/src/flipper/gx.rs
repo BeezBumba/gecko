@@ -2,47 +2,42 @@ mod bp;
 pub mod constants;
 pub mod draw;
 pub mod fifo;
-mod lighting;
 pub mod math;
 pub mod regs;
-mod tev;
+pub mod tev;
 mod texgen;
 mod vertex;
 mod xf;
 
-use crate::{
-    flipper::gx::{
-        constants::{BP_REG_SIZE, CP_REG_SIZE, XF_MEM_SIZE},
-        draw::DrawCommands,
-        regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode},
-    },
-    gamecube::GameCube,
-    mmio::Mmio,
-};
+use crate::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, XF_MEM_SIZE};
+use crate::flipper::gx::draw::DrawCommands;
+use crate::flipper::gx::regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
+use crate::gamecube::GameCube;
+use crate::mmio::Mmio;
 use fifo::FifoCmd;
 
 pub struct GraphicsProcessor {
     pub raise_interrupt: bool,
     pub draw_commands: DrawCommands,
-    pub(crate) bp_regs: Vec<u32>,
-    pub(crate) cp_regs: Vec<u32>,
-    pub(crate) xf_mem: Vec<u32>,
-    pub(crate) fifo: Vec<u8>,
+    pub bp_regs: Vec<u32>,
+    pub cp_regs: Vec<u32>,
+    pub xf_mem: Vec<u32>,
+    pub fifo: Vec<u8>,
 
     // Current GX state to snapshot into a DrawCall later
-    pub(crate) cur_textures: [Option<draw::TextureDescriptor>; 8],
-    pub(crate) cur_tev_color_env: [TevColorEnv; 16],
-    pub(crate) cur_tev_alpha_env: [TevAlphaEnv; 16],
-    pub(crate) cur_tev_color_regs_lo: [TevRegisterL; 4],
-    pub(crate) cur_tev_color_regs_hi: [TevRegisterH; 4],
-    pub(crate) cur_tev_const_regs_lo: [TevRegisterL; 4],
-    pub(crate) cur_tev_const_regs_hi: [TevRegisterH; 4],
-    pub(crate) cur_tev_orders: [regs::TevOrder; 8],
-    pub(crate) cur_num_tev_stages: u8,
-    pub(crate) cur_tev_konst_colors: [[f32; 4]; 16],
-    pub(crate) cur_zmode: ZMode,
-    pub(crate) cur_blend_mode: BlendMode,
-    pub(crate) cur_alpha_compare: AlphaCompare,
+    pub cur_textures: [Option<draw::TextureDescriptor>; 8],
+    pub cur_tev_color_env: [TevColorEnv; 16],
+    pub cur_tev_alpha_env: [TevAlphaEnv; 16],
+    pub cur_tev_color_regs_lo: [TevRegisterL; 4],
+    pub cur_tev_color_regs_hi: [TevRegisterH; 4],
+    pub cur_tev_const_regs_lo: [TevRegisterL; 4],
+    pub cur_tev_const_regs_hi: [TevRegisterH; 4],
+    pub cur_tev_orders: [regs::TevOrder; 8],
+    pub cur_num_tev_stages: u8,
+    pub cur_tev_konst_colors: [[f32; 4]; 16],
+    pub cur_zmode: ZMode,
+    pub cur_blend_mode: BlendMode,
+    pub cur_alpha_compare: AlphaCompare,
 }
 
 impl GraphicsProcessor {

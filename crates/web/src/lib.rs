@@ -9,14 +9,12 @@ use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
 use image::Dol;
 use wasm_bindgen::prelude::*;
-use winit::{
-    application::ApplicationHandler,
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
-    platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys},
-    window::{Window, WindowId},
-};
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
+use winit::window::{Window, WindowId};
 
 #[cfg(feature = "debug")]
 mod debug_ui;

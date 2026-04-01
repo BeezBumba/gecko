@@ -1,5 +1,5 @@
 use super::regs::{
-    AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevStageOrder, WrapMode, ZMode,
+    AlphaCompare, BlendMode, ChanCtrl, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevStageOrder, WrapMode, ZMode,
 };
 use chapa::BitEnum;
 
@@ -38,6 +38,8 @@ impl Primitive {
 pub struct Vertex {
     pub position: [f32; 3],
     pub color0: [f32; 4],
+    pub normal: [f32; 3],
+    pub pos_view: [f32; 3],
     pub texcoords: [Option<[f32; 2]>; 8],
 }
 
@@ -90,6 +92,17 @@ pub struct DrawCall {
     pub bp_zmode: ZMode,
     pub bp_blend_mode: BlendMode,
     pub bp_alpha_compare: AlphaCompare,
+
+    // Lighting state snapshot (XF)
+    pub light_colors: [[f32; 4]; 8],
+    pub light_cosatt: [[f32; 4]; 8],
+    pub light_distatt: [[f32; 4]; 8],
+    pub light_pos: [[f32; 4]; 8],
+    pub light_dir: [[f32; 4]; 8],
+    pub color_ctrl: ChanCtrl,
+    pub alpha_ctrl: ChanCtrl,
+    pub ambient_color: [f32; 4],
+    pub material_color: [f32; 4],
 }
 
 #[derive(Debug, Clone, Copy)]

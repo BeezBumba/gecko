@@ -8,8 +8,7 @@ use crate::cli::{Args, Command, DisasmArch};
 use crate::disassembly::{disassemble_dsp, disassemble_ppc};
 
 use clap::Parser;
-use std::fs;
-use std::process;
+use std::{fs, process};
 
 fn read_file_or_exit(file: &str) -> Vec<u8> {
     fs::read(file).unwrap_or_else(|e| {

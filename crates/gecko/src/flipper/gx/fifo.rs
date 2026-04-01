@@ -1,9 +1,9 @@
 use super::constants::{BP_CMD, CALL_DL_CMD, CP_CMD, INV_VTX_CACHE_CMD, NOP_CMD, XF_CMD};
-use crate::flipper::gx::{
-    GraphicsProcessor,
-    constants::{DRAW_COMMANDS_END, DRAW_COMMANDS_START, VATA_REG, VATB_REG, VATC_REG, VCD_HI_REG, VCD_LO_REG},
-    regs::{AttributeType, VatA, VatB, VatC, VcdHi, VcdLo},
+use crate::flipper::gx::GraphicsProcessor;
+use crate::flipper::gx::constants::{
+    DRAW_COMMANDS_END, DRAW_COMMANDS_START, VATA_REG, VATB_REG, VATC_REG, VCD_HI_REG, VCD_LO_REG,
 };
+use crate::flipper::gx::regs::{AttributeType, VatA, VatB, VatC, VcdHi, VcdLo};
 use std::io::{Cursor, Read};
 
 impl GraphicsProcessor {

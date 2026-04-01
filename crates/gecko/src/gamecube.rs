@@ -1,25 +1,23 @@
+use crate::cpu::instruction::Instruction;
+use crate::cpu::{self, Cpu, IPL_RESET_VECTOR};
+use crate::dvd::DvdInterface;
+use crate::flipper::ai::AudioInterface;
+use crate::flipper::cp::CommandProcessor;
+use crate::flipper::dsp::Dsp;
+use crate::flipper::exi::ExternalInterface;
+use crate::flipper::exi::macronix::ExiMacronix;
+use crate::flipper::gx::GraphicsProcessor;
+use crate::flipper::mi::MemoryInterface;
+use crate::flipper::pe::PixelEngine;
+use crate::flipper::pi::ProcessorInterface;
+use crate::flipper::si::{SerialInterface, pad};
+use crate::flipper::vi::VideoInterface;
 #[cfg(feature = "idle-skip")]
 use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
+use crate::mmio::Mmio;
+use crate::scheduler::{CYCLES_PER_VSYNC, EventKind, Scheduler};
 #[cfg(feature = "scripting")]
 use crate::scripting::{HookFlags, ScriptHookFilters, ScriptHookState, ScriptHost};
-use crate::{
-    cpu::{self, Cpu, IPL_RESET_VECTOR, instruction::Instruction},
-    dvd::DvdInterface,
-    flipper::{
-        ai::AudioInterface,
-        cp::CommandProcessor,
-        dsp::Dsp,
-        exi::{ExternalInterface, macronix::ExiMacronix},
-        gx::GraphicsProcessor,
-        mi::MemoryInterface,
-        pe::PixelEngine,
-        pi::ProcessorInterface,
-        si::{SerialInterface, pad},
-        vi::VideoInterface,
-    },
-    mmio::Mmio,
-    scheduler::{CYCLES_PER_VSYNC, EventKind, Scheduler},
-};
 use image::Executable;
 
 pub struct GameCube {
@@ -52,14 +50,14 @@ pub struct GameCube {
 impl GameCube {
     #[cfg(feature = "scripting")]
     #[inline(always)]
-    pub(crate) fn apply_script_hook_state(&mut self, state: ScriptHookState) {
+    pub fn apply_script_hook_state(&mut self, state: ScriptHookState) {
         self.script_hook_flags = state.flags;
         self.script_hook_filters = state.filters;
     }
 
     #[cfg(feature = "scripting")]
     #[inline(always)]
-    pub(crate) fn sync_pending_script_hook_state(&mut self, host: &mut dyn ScriptHost) {
+    pub fn sync_pending_script_hook_state(&mut self, host: &mut dyn ScriptHost) {
         #[cfg(feature = "scripting-mut-traps")]
         match host.take_pending_hook_state() {
             Ok(Some(state)) => self.apply_script_hook_state(state),
