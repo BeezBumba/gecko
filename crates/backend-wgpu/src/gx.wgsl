@@ -270,6 +270,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let ras_color = in.color;
     let num_stages = frame.num_tev_stages;
 
+    var last_color_dest = 0u;
+    var last_alpha_dest = 0u;
+
     for (var stage = 0u; stage < 16u; stage++) {
         if stage >= num_stages {
             break;
@@ -342,10 +345,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
         // Write alpha to dest, preserve RGB
         regs[a_dest] = vec4(regs[a_dest].rgb, alpha_result);
+
+        last_color_dest = c_dest;
+        last_alpha_dest = a_dest;
     }
 
-    // Output is always TEVPREV (regs[0])
-    let color = regs[0];
+    // Output from the dest registers of the last active TEV stage (not always TEVPREV)
+    let color = vec4<f32>(regs[last_color_dest].rgb, regs[last_alpha_dest].a);
 
     let c0 = alpha_compare(color.a, frame.alpha_ref0, frame.alpha_comp0);
     let c1 = alpha_compare(color.a, frame.alpha_ref1, frame.alpha_comp1);

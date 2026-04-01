@@ -519,6 +519,8 @@ impl GxRenderer {
                 continue;
             }
 
+
+
             let mvp = commands.projection * dc.modelview;
             let draw_uniform = DrawUniforms { mvp: mvp.0 };
             let start = self.scratch_draws.len() * draw_stride;

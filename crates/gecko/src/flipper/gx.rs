@@ -1104,8 +1104,8 @@ impl GraphicsProcessor {
             };
             let mode0 = TxSetMode0::from_raw(self.bp_regs[mode0_reg]);
 
-            let width = image0.width();
-            let height = image0.height();
+            let width = image0.width() + 1;
+            let height = image0.height() + 1;
             let ram_addr = image3.ram_addr();
 
             tracing::debug!(

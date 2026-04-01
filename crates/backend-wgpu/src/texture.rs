@@ -27,6 +27,7 @@ pub fn upload_texture(
     desc: &TextureDescriptor,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let rgba = decode_to_rgba(ram, desc);
+
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("gx_tex"),
         size: wgpu::Extent3d {
