@@ -21,7 +21,16 @@ pub fn colorize(tok: &AsmToken<'_>) -> String {
 
 pub fn colorize_instr(instr: &disasm::gekko::GekkoInstruction) -> String {
     let text = format!("{}", instr);
-    let tokens = tokenizer::tokenize(&text);
+    colorize_asm(&text)
+}
+
+pub fn colorize_dsp_instr(instr: &disasm::dsp::GcDspInstruction) -> String {
+    let text = format!("{}", instr);
+    colorize_asm(&text)
+}
+
+fn colorize_asm(text: &str) -> String {
+    let tokens = tokenizer::tokenize(text);
     tokens.into_iter().map(|t| colorize(&t)).collect::<Vec<_>>().join("")
 }
 

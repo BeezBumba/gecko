@@ -137,7 +137,8 @@ pub fn show_dsp(ctx: &Context, open: &mut bool, dsp: &Dsp) {
                     .min_col_width(0.0)
                     .striped(true)
                     .show(ui, |ui| {
-                        let mut addr = dsp.registers.pc.saturating_sub(20);
+                        let region_base = if dsp.registers.pc >= 0x8000 { 0x8000 } else { 0x0000 };
+                        let mut addr = dsp.registers.pc.saturating_sub(20).max(region_base);
                         for _ in 0..40 {
                             let mem = imem_slice(dsp, addr);
                             let Some(mem) = mem else { break };

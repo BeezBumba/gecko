@@ -130,9 +130,8 @@ impl MmioAccess<Dsp> for MailboxToDspHi {
     }
 
     fn write(self, dsp: &mut Dsp) {
-        // CPU writing CMBH sets data bits (14:0) and clears M bit
-        // M will be set when CMBL is written
-        dsp.mailbox_to_dsp_hi = self.with_busy(false);
+        // CPU writing CMBH sets data bits (14:0), busy is preserved
+        dsp.mailbox_to_dsp_hi = self.with_busy(dsp.mailbox_to_dsp_hi.busy());
     }
 }
 

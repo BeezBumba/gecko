@@ -3251,7 +3251,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "tinyemu"
+name = "tinystr"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42d3e9c45c09de15d06dd8acf5f4e0e399e85927b7f00711024eb7ae10fa4869"
+dependencies = [
+ "displaydoc",
+ "zerovec",
+]
+
+[[package]]
+name = "tinytracer"
 version = "0.1.0"
 dependencies = [
  "base64",
@@ -3262,16 +3272,6 @@ dependencies = [
  "image 0.1.0",
  "scripting",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "tinystr"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42d3e9c45c09de15d06dd8acf5f4e0e399e85927b7f00711024eb7ae10fa4869"
-dependencies = [
- "displaydoc",
- "zerovec",
 ]
 
 [[package]]

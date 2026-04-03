@@ -3,10 +3,27 @@ mod fmt;
 mod kitty;
 mod snaptshot;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use colored::Colorize;
+use disasm::dsp::GcDspInstruction;
 use disasm::gekko::GekkoInstruction;
 use snaptshot::CpuSnapshot;
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TraceMode {
+    Cpu,
+    Dsp,
+    Both,
+}
+
+impl TraceMode {
+    fn trace_cpu(self) -> bool {
+        matches!(self, TraceMode::Cpu | TraceMode::Both)
+    }
+    fn trace_dsp(self) -> bool {
+        matches!(self, TraceMode::Dsp | TraceMode::Both)
+    }
+}
 
 #[derive(Parser)]
 #[command(about = "GameCube emulator")]
@@ -26,6 +43,10 @@ struct Args {
     /// Print decoded instructions and register diffs after each step
     #[arg(long)]
     debug: bool,
+
+    /// Which processors to trace: cpu, dsp, or both
+    #[arg(long, default_value = "cpu")]
+    trace: TraceMode,
 
     /// Stop emulation when PC reaches this address (hex, e.g. 0x80003A00)
     #[arg(long, value_parser = parse_hex_addr)]
@@ -121,11 +142,15 @@ fn main() {
 fn run_emulator(emulator: &mut gecko::gamecube::GameCube, args: &Args, symbols: Option<&image::symbols::SymbolTable>) {
     let mut prev_snapshot = CpuSnapshot::from_cpu(&emulator.cpu);
     let mut prev_pc = emulator.cpu.pc;
+    let mut prev_dsp_pc = emulator.dsp.registers.pc;
     let mut in_busyloop = false;
     let mut current_func: Option<String> = None;
+    let trace_cpu = args.trace.trace_cpu();
+    let trace_dsp = args.trace.trace_dsp();
+    let is_both = args.trace == TraceMode::Both;
 
     loop {
-        if !in_busyloop && !args.quiet {
+        if !in_busyloop && !args.quiet && trace_cpu {
             if let Some(symbols) = symbols {
                 if let Some(sym) = symbols.lookup_exact(emulator.cpu.pc) {
                     if sym.kind == image::symbols::SymbolKind::Func {
@@ -138,25 +163,37 @@ fn run_emulator(emulator: &mut gecko::gamecube::GameCube, args: &Args, symbols: 
                     }
                 }
             }
-            print_instruction(emulator, &prev_snapshot, args.debug);
+            print_cpu_instruction(emulator, &prev_snapshot, args.debug, is_both);
         }
 
         emulator.step();
 
+        // CPU trace
         let curr_snapshot = CpuSnapshot::from_cpu(&emulator.cpu);
         let curr_pc = emulator.cpu.pc;
 
-        if curr_pc == prev_pc {
-            if !in_busyloop && !args.quiet {
-                println!("{}", "Busyloop detected!".bright_red().bold());
+        if trace_cpu {
+            if curr_pc == prev_pc {
+                if !in_busyloop && !args.quiet {
+                    println!("{}", "Busyloop detected!".bright_red().bold());
+                }
+                in_busyloop = true;
+            } else {
+                in_busyloop = false;
             }
-            in_busyloop = true;
-        } else {
-            in_busyloop = false;
+
+            if args.debug && !in_busyloop && !args.quiet {
+                dump::registers(&curr_snapshot, &prev_snapshot);
+            }
         }
 
-        if args.debug && !in_busyloop && !args.quiet {
-            dump::registers(&curr_snapshot, &prev_snapshot);
+        // DSP trace
+        if trace_dsp && !args.quiet {
+            let dsp_pc = emulator.dsp.registers.pc;
+            if dsp_pc != prev_dsp_pc {
+                print_dsp_instruction(emulator, prev_dsp_pc, is_both);
+            }
+            prev_dsp_pc = dsp_pc;
         }
 
         prev_pc = curr_pc;
@@ -168,7 +205,12 @@ fn run_emulator(emulator: &mut gecko::gamecube::GameCube, args: &Args, symbols: 
     }
 }
 
-fn print_instruction(emulator: &gecko::gamecube::GameCube, prev_snapshot: &CpuSnapshot, debug: bool) {
+fn print_cpu_instruction(
+    emulator: &gecko::gamecube::GameCube,
+    prev_snapshot: &CpuSnapshot,
+    debug: bool,
+    prefix_tag: bool,
+) {
     let instr = GekkoInstruction::decode(emulator.mmio.virt_slice(emulator.cpu.pc, 4))
         .unwrap_or_else(|| {
             dump::registers(prev_snapshot, prev_snapshot);
@@ -188,8 +230,14 @@ fn print_instruction(emulator: &gecko::gamecube::GameCube, prev_snapshot: &CpuSn
     let refs = fmt::gpr_refs(&instr);
     let fpr_refs = fmt::fpr_refs(&instr);
     let comment = fmt::reg_comment(&prev_snapshot.gprs, &refs, &prev_snapshot.fprs, &fpr_refs);
+    let tag = if prefix_tag {
+        format!("{} ", "[cpu]".bold())
+    } else {
+        String::new()
+    };
     let prefix = format!(
-        "{}: {}",
+        "{}{}: {}",
+        tag,
         format!("{:08X}", emulator.cpu.pc).bold(),
         fmt::colorize_instr(&instr)
     );
@@ -201,5 +249,26 @@ fn print_instruction(emulator: &gecko::gamecube::GameCube, prev_snapshot: &CpuSn
         println!("{}", prefix);
     } else {
         println!("{}{}{}", prefix, " ".repeat(pad), comment);
+    }
+}
+
+fn print_dsp_instruction(emulator: &gecko::gamecube::GameCube, pc: u16, prefix_tag: bool) {
+    let w0 = emulator.dsp.read_imem(pc);
+    let w1 = emulator.dsp.read_imem(pc.wrapping_add(1));
+    let bytes = [(w0 >> 8) as u8, w0 as u8, (w1 >> 8) as u8, w1 as u8];
+    let tag = if prefix_tag {
+        format!("{} ", "[dsp]".bold().bright_blue())
+    } else {
+        String::new()
+    };
+    if let Some((insn, _)) = GcDspInstruction::decode(&bytes) {
+        println!(
+            "{}{}: {}",
+            tag,
+            format!("{:04X}", pc).bold(),
+            fmt::colorize_dsp_instr(&insn)
+        );
+    } else {
+        println!("{}{}: .word {w0:#06x}", tag, format!("{:04X}", pc).bold());
     }
 }

@@ -15,7 +15,7 @@ use crate::flipper::vi::VideoInterface;
 #[cfg(feature = "idle-skip")]
 use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
 use crate::mmio::Mmio;
-use crate::scheduler::{CYCLES_PER_VSYNC, DSP_TICKS_PER_CPU_CYCLE, EventKind, Scheduler};
+use crate::scheduler::{CYCLES_PER_VSYNC, CPU_CYCLES_PER_DSP_TICK, EventKind, Scheduler};
 #[cfg(feature = "scripting")]
 use crate::scripting::{HookFlags, ScriptHookFilters, ScriptHookState, ScriptHost};
 use image::Executable;
@@ -175,7 +175,7 @@ impl GameCube {
             }
             EventKind::DspTick => {
                 self.tick_dsp();
-                self.scheduler.schedule_in(DSP_TICKS_PER_CPU_CYCLE, EventKind::DspTick);
+                self.scheduler.schedule_in(CPU_CYCLES_PER_DSP_TICK, EventKind::DspTick);
             }
         }
     }

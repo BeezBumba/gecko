@@ -4,3 +4,6 @@
 [submodule "submodules/lilyskategc"]
 	path = submodules/lilyskategc
 	url = https://github.com/ioncodes/lilyskategc
+[submodule "submodules/gcwii-resources"]
+	path = submodules/gcwii-resources
+	url = https://codeberg.org/hazelwiss/gcwii-resources

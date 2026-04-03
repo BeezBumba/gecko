@@ -15,6 +15,8 @@ use crate::mmio::Mmio;
 use crate::mmio::constants::DSP_BASE;
 use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 
+pub const DSP_MAIL_SLICE: u32 = 72;
+
 pub struct Dsp {
     // Registers
     pub registers: core::Registers,
@@ -230,13 +232,9 @@ impl Dsp {
     /// Read a 16-bit word from IFX register space, with mailbox side-effects.
     pub fn read_ifx(&mut self, addr: u16) -> u16 {
         match addr {
-            // CMBH (CPU Mailbox High): reading returns data + M bit;
-            // clears M (busy) so the CPU sees the mailbox as free.
-            0xFFFE => {
-                let val = self.mailbox_to_dsp_hi.raw();
-                self.mailbox_to_dsp_hi.set_busy(false);
-                val
-            }
+            // CMBH (CPU Mailbox High): reading returns data + M bit.
+            // M is only cleared when CMBL is read (0xFFFF).
+            0xFFFE => self.mailbox_to_dsp_hi.raw(),
             // CMBL (CPU Mailbox Low): reading clears CMBH.M (busy)
             0xFFFF => {
                 self.mailbox_to_dsp_hi.set_busy(false);
@@ -253,10 +251,10 @@ impl Dsp {
     /// Write a 16-bit word to IFX register space, with mailbox side-effects.
     pub fn write_ifx(&mut self, addr: u16, value: u16) {
         match addr {
-            // DMBH (DSP Mailbox High): store data bits (14:0), clear M bit
-            // M will be set when DMBL is written (matching Dolphin behavior)
+            // DMBH (DSP Mailbox High): store data bits (14:0), busy is preserved
             0xFFFC => {
-                self.mailbox_to_cpu_hi = regs::MailboxToCpuHi::from_raw(value & 0x7FFF);
+                let busy = self.mailbox_to_cpu_hi.busy();
+                self.mailbox_to_cpu_hi = regs::MailboxToCpuHi::from_raw(value & 0x7FFF).with_busy(busy);
             }
             // DMBL (DSP Mailbox Low): writing sets DMBH.M
             // Interrupt is NOT raised here; the ucode must explicitly write DIRQ (0xFFFB)
@@ -267,6 +265,7 @@ impl Dsp {
             // DIRQ: DSP explicitly raises interrupt to CPU
             0xFFFB => {
                 if value & 1 != 0 {
+                    tracing::debug!("DSP DIRQ: requesting CPU interrupt");
                     self.csr.set_dsp_interrupt(true);
                 }
             }

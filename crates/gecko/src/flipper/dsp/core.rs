@@ -195,15 +195,15 @@ impl Registers {
     }
 
     #[inline(always)]
-    pub fn read<const ALLOW_SATURATION: bool>(&self, index: u8) -> u16 {
+    pub fn read<const ALLOW_SATURATION: bool>(&mut self, index: u8) -> u16 {
         match index {
             0..=3 => self.ar[index as usize],
             4..=7 => self.ix[(index - 4) as usize],
             8..=11 => self.wr[(index - 8) as usize],
-            12 => self.call_stack.top(),
-            13 => self.data_stack.top(),
-            14 => self.loop_addr.top(),
-            15 => self.loop_counter.top(),
+            12 => self.call_stack.pop(),
+            13 => self.data_stack.pop(),
+            14 => self.loop_addr.pop(),
+            15 => self.loop_counter.pop(),
             16 => self.ac0_high,
             17 => self.ac1_high,
             18 => self.config,
@@ -250,10 +250,10 @@ impl Registers {
             0..=3 => self.ar[index as usize] = value,
             4..=7 => self.ix[(index - 4) as usize] = value,
             8..=11 => self.wr[(index - 8) as usize] = value,
-            12 => self.call_stack.set_top(value),
-            13 => self.data_stack.set_top(value),
-            14 => self.loop_addr.set_top(value),
-            15 => self.loop_counter.set_top(value),
+            12 => self.call_stack.push(value),
+            13 => self.data_stack.push(value),
+            14 => self.loop_addr.push(value),
+            15 => self.loop_counter.push(value),
             16 => self.ac0_high = value,
             17 => self.ac1_high = value,
             18 => self.config = value,

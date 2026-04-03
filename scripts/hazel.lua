@@ -1,27 +1,23 @@
--- toggle = false
--- local function hack(emu, virt_addr, phys_addr, size, value)
---     log(string.format("Toggling DSP busy bit: %s", toggle and "ON" or "OFF"))
---     log(string.format("Original DSP read value: %08X", value))
---     if toggle then
---         value = value | 0x8000
---         toggle = false
---     else
---         value = value & 0x7FFF
---         toggle = true
---     end
---     log(string.format("Modified DSP read value: %08X", value))
---     return value
--- end
+local stdout_buffer = ""
 
-local function ar_mode_hook(emu, virt_addr, phys_addr, size, value)
-    log(string.format("Original AR mode value: %08X", value))
-    return value | 1
+local function on_stdout_write(emu, virt_addr, phys_addr, size, value)
+    local ch = value & 0xFF
+    local done = (value & 0x100) ~= 0
+    if ch == 0x0A then
+        log("hazel says: " .. stdout_buffer)
+        stdout_buffer = ""
+    elseif ch ~= 0 then
+        stdout_buffer = stdout_buffer .. string.char(ch)
+    end
+    if done then
+        stdout_buffer = ""
+    end
 end
 
 traps = {
-    bus_read_post = {
+    bus_write_post = {
         virt = {
-            [0xCC005016] = ar_mode_hook,
+            [0xCC007000] = on_stdout_write,
         },
     },
 }
