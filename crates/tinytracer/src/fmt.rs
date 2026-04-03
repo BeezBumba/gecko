@@ -82,6 +82,151 @@ pub fn reg_comment(gprs: &[u32; 32], gpr_refs: &[u8], fprs: &[f64; 32], fpr_refs
     format!("; {}", parts.join(", ")).dimmed().to_string()
 }
 
+/// Extract DSP register references from a formatted instruction string and
+/// build an inline comment showing their current values.
+pub fn dsp_reg_comment(text: &str, regs: &gecko::flipper::dsp::core::Registers) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut seen = [false; 40]; // indices: 0-31 = reg5, 32 = ac0, 33 = ac1, 34 = ax0, 35 = ax1, 36 = prod
+
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        if bytes[i] == b'$' {
+            let start = i + 1;
+            let mut end = start;
+            while end < len && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'.') {
+                end += 1;
+            }
+            let name = &text[start..end];
+            match name {
+                // Full 40-bit accumulators
+                "ac0" if !seen[32] => {
+                    seen[32] = true;
+                    let v = regs.ac(0) as u64 & 0xFF_FFFF_FFFF;
+                    parts.push(format!(
+                        "ac0={:02X}_{:04X}_{:04X}",
+                        (v >> 32) as u16,
+                        (v >> 16) as u16,
+                        v as u16
+                    ));
+                }
+                "ac1" if !seen[33] => {
+                    seen[33] = true;
+                    let v = regs.ac(1) as u64 & 0xFF_FFFF_FFFF;
+                    parts.push(format!(
+                        "ac1={:02X}_{:04X}_{:04X}",
+                        (v >> 32) as u16,
+                        (v >> 16) as u16,
+                        v as u16
+                    ));
+                }
+                // Full 32-bit AX registers
+                "ax0" if !seen[34] => {
+                    seen[34] = true;
+                    parts.push(format!("ax0={:04X}_{:04X}", regs.axh[0], regs.ax[0]));
+                }
+                "ax1" if !seen[35] => {
+                    seen[35] = true;
+                    parts.push(format!("ax1={:04X}_{:04X}", regs.axh[1], regs.ax[1]));
+                }
+                // Product register
+                "prod" if !seen[36] => {
+                    seen[36] = true;
+                    parts.push(format!(
+                        "prod={:04X}_{:04X}_{:04X}_{:04X}",
+                        regs.product_mid2, regs.product_high, regs.product_mid1, regs.product_low
+                    ));
+                }
+                _ => {
+                    // Individual 16-bit registers (reg5 index 0-31)
+                    if let Some(idx) = dsp_reg_index(name) {
+                        if !seen[idx as usize] {
+                            seen[idx as usize] = true;
+                            let val = dsp_reg_read(regs, idx);
+                            parts.push(format!("{}={:04X}", name, val));
+                        }
+                    }
+                }
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!("; {}", parts.join(", ")).dimmed().to_string()
+}
+
+fn dsp_reg_index(name: &str) -> Option<u8> {
+    match name {
+        "ar0" => Some(0),
+        "ar1" => Some(1),
+        "ar2" => Some(2),
+        "ar3" => Some(3),
+        "ix0" => Some(4),
+        "ix1" => Some(5),
+        "ix2" => Some(6),
+        "ix3" => Some(7),
+        "wr0" => Some(8),
+        "wr1" => Some(9),
+        "wr2" => Some(10),
+        "wr3" => Some(11),
+        "st0" => Some(12),
+        "st1" => Some(13),
+        "st2" => Some(14),
+        "st3" => Some(15),
+        "ac0.h" => Some(16),
+        "ac1.h" => Some(17),
+        "cr" => Some(18),
+        "sr" => Some(19),
+        "prod.l" => Some(20),
+        "prod.m1" => Some(21),
+        "prod.h" => Some(22),
+        "prod.m2" => Some(23),
+        "ax0.l" => Some(24),
+        "ax1.l" => Some(25),
+        "ax0.h" => Some(26),
+        "ax1.h" => Some(27),
+        "ac0.l" => Some(28),
+        "ac1.l" => Some(29),
+        "ac0.m" => Some(30),
+        "ac1.m" => Some(31),
+        _ => None,
+    }
+}
+
+/// Read a DSP register by index without side effects (no stack pops).
+fn dsp_reg_read(regs: &gecko::flipper::dsp::core::Registers, idx: u8) -> u16 {
+    match idx {
+        0..=3 => regs.ar[idx as usize],
+        4..=7 => regs.ix[(idx - 4) as usize],
+        8..=11 => regs.wr[(idx - 8) as usize],
+        12 => regs.call_stack.top(),
+        13 => regs.data_stack.top(),
+        14 => regs.loop_addr.top(),
+        15 => regs.loop_counter.top(),
+        16 => regs.ac0_high,
+        17 => regs.ac1_high,
+        18 => regs.config,
+        19 => regs.status.into(),
+        20 => regs.product_low,
+        21 => regs.product_mid1,
+        22 => regs.product_high,
+        23 => regs.product_mid2,
+        24..=25 => regs.ax[(idx - 24) as usize],
+        26..=27 => regs.axh[(idx - 26) as usize],
+        28 => regs.ac0_low,
+        29 => regs.ac1_low,
+        30 => regs.ac0_mid,
+        31 => regs.ac1_mid,
+        _ => 0,
+    }
+}
+
 pub fn visible_len(s: &str) -> usize {
     let mut len = 0;
     let mut chars = s.chars();

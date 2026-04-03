@@ -262,12 +262,21 @@ fn print_dsp_instruction(emulator: &gecko::gamecube::GameCube, pc: u16, prefix_t
         String::new()
     };
     if let Some((insn, _)) = GcDspInstruction::decode(&bytes) {
-        println!(
+        let text = format!("{}", insn);
+        let comment = fmt::dsp_reg_comment(&text, &emulator.dsp.registers);
+        let prefix = format!(
             "{}{}: {}",
             tag,
             format!("{:04X}", pc).bold(),
             fmt::colorize_dsp_instr(&insn)
         );
+        const COMMENT_COL: usize = 50;
+        let pad = COMMENT_COL.saturating_sub(fmt::visible_len(&prefix));
+        if comment.is_empty() {
+            println!("{}", prefix);
+        } else {
+            println!("{}{}{}", prefix, " ".repeat(pad), comment);
+        }
     } else {
         println!("{}{}: .word {w0:#06x}", tag, format!("{:04X}", pc).bold());
     }

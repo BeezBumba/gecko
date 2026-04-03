@@ -105,7 +105,7 @@ pub fn cmp_test<const OP: u32>(
             ctx.dsp.registers.product_mid2 = 0x0010;
         }
         OP_CLRL => {
-            let r = instr.r_4_4();
+            let r = instr.r_7_7();
             let ac = ctx.dsp.registers.ac(r);
             let rounded = if (ac & 0x10000) != 0 {
                 (ac.wrapping_add(0x8000)) & !0xFFFF
@@ -167,14 +167,14 @@ pub fn control<const OP: u32>(
         OP_JRCC => {
             let branch_control = BranchControl::from(instr.cond());
             if branch_control.evaluate(&ctx.dsp) {
-                ctx.dsp.registers.nia = ctx.dsp.registers.read::<true>(instr.reg_5_7());
+                ctx.dsp.registers.nia = ctx.dsp.registers.read::<true>(instr.reg_8_10());
             }
         }
         OP_CALLRCC => {
             let branch_control = BranchControl::from(instr.cond());
             if branch_control.evaluate(&ctx.dsp) {
                 ctx.dsp.registers.call_stack.push(ctx.dsp.registers.nia);
-                ctx.dsp.registers.nia = ctx.dsp.registers.read::<true>(instr.reg_5_7());
+                ctx.dsp.registers.nia = ctx.dsp.registers.read::<true>(instr.reg_8_10());
             }
         }
         _ => unreachable!(),
@@ -339,9 +339,9 @@ pub fn load_store<const OP: u32>(
             let src = match OP {
                 OP_SRSH => {
                     if instr.s_7_7() != 0 {
-                        reg::AC0H
-                    } else {
                         reg::AC1H
+                    } else {
+                        reg::AC0H
                     }
                 }
                 OP_SRS => reg::AC0L + instr.reg_6_7(),
