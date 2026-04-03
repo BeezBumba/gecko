@@ -80,6 +80,15 @@ impl Registers {
         ((raw as i64) << 24) >> 24
     }
 
+    #[inline(always)]
+    pub fn ac_mid(&self, idx: u8) -> u16 {
+        match idx {
+            0 => self.ac0_mid,
+            1 => self.ac1_mid,
+            _ => unreachable!(),
+        }
+    }
+
     /// Write a 40-bit value (masked to 40 bits) into accumulator `idx` (0 or 1).
     #[inline(always)]
     pub fn set_ac(&mut self, idx: u8, val: i64) {
@@ -114,6 +123,35 @@ impl Registers {
 
         self.status.set_s(sign);
         self.status.set_z(zero);
+        self.status.set_as32(above_s32);
+        self.status.set_tb(tb);
+    }
+
+    /// Update flags based on a 40-bit result of addition.
+    /// Sets: OS, TB, S32, S, AZ, O, C.
+    #[inline(always)]
+    pub fn update_flags_add(&mut self, a: i64, b: i64, result: i64) {
+        let r40 = result as u64 & 0xFF_FFFF_FFFF;
+        let a40 = a as u64 & 0xFF_FFFF_FFFF;
+
+        let sign = (r40 >> 39) & 1 != 0;
+        let zero = r40 == 0;
+        let carry = r40 < a40;
+        let a_sign = (a as u64 >> 39) & 1;
+        let b_sign = (b as u64 >> 39) & 1;
+        let r_sign = (r40 >> 39) & 1;
+        let overflow = (a_sign == b_sign) && (r_sign != a_sign);
+        let upper9 = (r40 >> 31) & 0x1FF;
+        let above_s32 = upper9 != 0 && upper9 != 0x1FF;
+        let tb = ((r40 >> 39) & 1) == ((r40 >> 38) & 1);
+
+        self.status.set_s(sign);
+        self.status.set_z(zero);
+        self.status.set_c(carry);
+        self.status.set_o(overflow);
+        if overflow {
+            self.status.set_os(true);
+        }
         self.status.set_as32(above_s32);
         self.status.set_tb(tb);
     }
@@ -216,8 +254,11 @@ impl Registers {
             13 => self.data_stack.push(value),
             14 => self.loop_addr.push(value),
             15 => self.loop_counter.push(value),
-            16 => self.ac0_high = value,
-            17 => self.ac1_high = value,
+            // The high parts of the 40-bit accumulators (acX.h) are sign-extended 8-bit registers. Writes to the upper
+            // 8 bits are ignored, and the upper 8 bits read the same as the 7th bit. For instance, 0x007F reads back as
+            // 0x007F, but 0x0080 reads back as 0xFF80.
+            16 => self.ac0_high = ((value as i8) as i16) as u16,
+            17 => self.ac1_high = ((value as i8) as i16) as u16,
             18 => self.config = value,
             19 => self.status = StatusRegister::from(value),
             20 => self.product_low = value,

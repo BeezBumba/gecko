@@ -4,6 +4,7 @@ use std::collections::BinaryHeap;
 pub const CYCLES_PER_VSYNC: u64 = 486_000_000 / 60; // TODO: fix
 pub const TIMEBASE_DIVISOR: u64 = 12;
 pub const CPU_CYCLES_PER_DSP_TICK: u64 = 6; // ~486MHz CPU / ~81MHz DSP
+pub const DSP_BATCH_SIZE: u64 = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventKind {
@@ -27,7 +28,7 @@ impl Scheduler {
             events: BinaryHeap::new(),
         };
         s.schedule_at(CYCLES_PER_VSYNC, EventKind::VSync);
-        s.schedule_at(CPU_CYCLES_PER_DSP_TICK, EventKind::DspTick);
+        s.schedule_at(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, EventKind::DspTick);
         s
     }
 

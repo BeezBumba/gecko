@@ -5,14 +5,13 @@ pub mod windows;
 use std::io::Write;
 
 use gecko::gamecube::GameCube;
-use gecko::scheduler::EventKind;
+use gecko::scheduler::{CPU_CYCLES_PER_DSP_TICK, DSP_BATCH_SIZE, EventKind};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum EmulatorState {
     Running,
     Paused,
     Step,
-    StepDsp,
     RunUntilVsync,
     RunUntilAddress(u32),
     RunUntilDsp,
@@ -115,10 +114,20 @@ impl Debugger {
     #[inline(always)]
     fn drain_events(&mut self, emulator: &mut GameCube) {
         while let Some(event) = emulator.scheduler.poll() {
-            if event == EventKind::DspTick {
-                self.dsp_trace_step(emulator);
+            if event == EventKind::DspTick && self.is_dsp_tracing() {
+                for _ in 0..DSP_BATCH_SIZE {
+                    self.dsp_trace_step(emulator);
+                    if !emulator.step_dsp_instruction() {
+                        break;
+                    }
+                }
+                emulator.check_dsp_interrupts();
+                emulator
+                    .scheduler
+                    .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, EventKind::DspTick);
+            } else {
+                emulator.process_event(event);
             }
-            emulator.process_event(event);
         }
     }
 
@@ -130,10 +139,24 @@ impl Debugger {
         let mut dsp_hit = false;
         while let Some(event) = emulator.scheduler.poll() {
             if event == EventKind::DspTick {
-                self.dsp_trace_step(emulator);
+                if self.is_dsp_tracing() {
+                    for _ in 0..DSP_BATCH_SIZE {
+                        self.dsp_trace_step(emulator);
+                        if !emulator.step_dsp_instruction() {
+                            break;
+                        }
+                    }
+                    emulator.check_dsp_interrupts();
+                    emulator
+                        .scheduler
+                        .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, EventKind::DspTick);
+                } else {
+                    emulator.process_event(event);
+                }
                 dsp_hit = true;
+            } else {
+                emulator.process_event(event);
             }
-            emulator.process_event(event);
         }
         dsp_hit
     }
@@ -159,11 +182,6 @@ impl Debugger {
             EmulatorState::Step => {
                 self.trace_step(emulator);
                 emulator.step();
-                self.state = EmulatorState::Paused;
-            }
-            EmulatorState::StepDsp => {
-                self.dsp_trace_step(emulator);
-                emulator.tick_dsp();
                 self.state = EmulatorState::Paused;
             }
             EmulatorState::RunUntilVsync => {

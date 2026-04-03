@@ -183,10 +183,12 @@ impl Dsp {
 }
 
 impl GameCube {
+    /// Execute a single DSP instruction. Returns `false` if the DSP is halted or
+    /// in reset (no instruction was executed).
     #[inline(always)]
-    pub fn tick_dsp(&mut self) {
+    pub fn step_dsp_instruction(&mut self) -> bool {
         if self.dsp.csr.reset() || self.dsp.csr.halt() {
-            return;
+            return false;
         }
 
         let pc = self.dsp.registers.pc as usize;
@@ -199,14 +201,14 @@ impl GameCube {
             .dsp
             .registers
             .cia
-            .wrapping_add(crate::flipper::dsp::lut::instr_size(instr) as u16);
+            .wrapping_add(lut::instr_size(instr) as u16);
 
-        crate::flipper::dsp::lut::dispatch(self, instr);
+        lut::dispatch(self, instr);
 
         // Dispatch extension opcode if present
         if let Some(ext) = instr.ext_opcode() {
             let ext = instruction::GcDspExt(ext);
-            crate::flipper::dsp::lut::dispatch_gc_dsp_ext(self, ext);
+            lut::dispatch_gc_dsp_ext(self, ext);
         }
 
         // Check if we've reached the end of a loop stack
@@ -229,6 +231,17 @@ impl GameCube {
         }
 
         self.dsp.registers.pc = self.dsp.registers.nia;
+        true
+    }
+
+    /// Execute a batch of DSP instructions (scheduler hot path).
+    #[inline(always)]
+    pub fn tick_dsp(&mut self) {
+        for _ in 0..crate::scheduler::DSP_BATCH_SIZE {
+            if !self.step_dsp_instruction() {
+                break;
+            }
+        }
         self.check_dsp_interrupts();
     }
 }

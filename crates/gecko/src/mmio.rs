@@ -33,7 +33,7 @@ impl Mmio {
             RAM_BASE..=RAM_END => (&self.ram, phys as usize),
             EFB_BASE..=EFB_END => (&self.efb, (phys - EFB_BASE) as usize),
             HW_REG_BASE..=HW_REG_END => {
-                tracing::warn!(phys_addr = format!("{:08X}", phys), "read from mmio");
+                //tracing::warn!(phys_addr = format!("{:08X}", phys), "read from mmio");
                 (&self.hwr, (phys - HW_REG_BASE) as usize)
             }
             IPL_BASE..=IPL_END => (&self.ipl, (phys - IPL_BASE) as usize),
@@ -53,7 +53,7 @@ impl Mmio {
             RAM_BASE..=RAM_END => (&mut self.ram, phys as usize),
             EFB_BASE..=EFB_END => (&mut self.efb, (phys - EFB_BASE) as usize),
             HW_REG_BASE..=HW_REG_END => {
-                tracing::warn!(phys_addr = format!("{:08X}", phys), "write to mmio");
+                //tracing::warn!(phys_addr = format!("{:08X}", phys), "write to mmio");
                 (&mut self.hwr, (phys - HW_REG_BASE) as usize)
             }
             IPL_BASE..=IPL_END => (&mut self.ipl, (phys - IPL_BASE) as usize),

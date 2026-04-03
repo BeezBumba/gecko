@@ -59,16 +59,6 @@ pub fn show_controls(
             }
 
             if ui
-                .add_enabled(
-                    is_paused,
-                    egui::Button::new(format!("{} Step DSP", icons::SKIP_FORWARD)).min_size(btn_size),
-                )
-                .clicked()
-            {
-                *state = EmulatorState::StepDsp;
-            }
-
-            if ui
                 .add(egui::Button::new(format!("{} Run Until VSync", icons::FAST_FORWARD)).min_size(btn_size))
                 .clicked()
             {

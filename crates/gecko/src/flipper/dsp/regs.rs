@@ -97,7 +97,7 @@ impl MmioAccess<super::Dsp> for ControlStatus {
         // On reset, set PC to the address indicated by the reset vector
         if self.reset() {
             let addr = self.reset_vector().address();
-            tracing::info!(reset_vector = ?self.reset_vector(), pc = format!("{addr:04X}"), "DSP reset, executing from reset vector");
+            tracing::debug!(reset_vector = ?self.reset_vector(), pc = format!("{addr:04X}"), "DSP reset, executing from reset vector");
             dsp.registers.pc = addr;
         }
         csr = csr.with_reset(false);

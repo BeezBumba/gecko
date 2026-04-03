@@ -262,16 +262,6 @@ impl RenderState {
                             debugger_ui.debugger.set_state(EmulatorState::Step);
                             ui.close();
                         }
-                        if ui
-                            .add_enabled(
-                                is_paused,
-                                egui::Button::new(format!("{} Step DSP", icons::SKIP_FORWARD)),
-                            )
-                            .clicked()
-                        {
-                            debugger_ui.debugger.set_state(EmulatorState::StepDsp);
-                            ui.close();
-                        }
                         if ui.button(format!("{} Run Until VSync", icons::FAST_FORWARD)).clicked() {
                             debugger_ui.debugger.set_state(EmulatorState::RunUntilVsync);
                             ui.close();
