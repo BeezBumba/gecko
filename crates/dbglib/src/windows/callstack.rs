@@ -29,10 +29,10 @@ pub fn walk_callstack(cpu: &Cpu, mmio: &Mmio, symbols: Option<&SymbolTable>) -> 
     let mut frames = Vec::new();
 
     let resolve = |addr: u32| -> (Option<String>, u32) {
-        if let Some(syms) = symbols {
-            if let Some(sym) = syms.lookup(addr) {
-                return (Some(sym.name.clone()), addr - sym.addr);
-            }
+        if let Some(syms) = symbols
+            && let Some(sym) = syms.lookup(addr)
+        {
+            return (Some(sym.name.clone()), addr - sym.addr);
         }
         (None, 0)
     };

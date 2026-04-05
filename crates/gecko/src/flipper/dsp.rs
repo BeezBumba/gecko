@@ -208,9 +208,8 @@ impl GameCube {
             lut::dispatch_gc_dsp_ext(self, ext);
         }
 
-        // Check if we've reached the end of a loop stack
-        let is_end_of_loop = self.dsp.registers.nia == self.dsp.registers.loop_addr.top();
-        if !self.dsp.registers.loop_addr.is_empty() && is_end_of_loop {
+        // Check if we've reached the end of a loop
+        if !self.dsp.registers.loop_addr.is_empty() && self.dsp.registers.nia == self.dsp.registers.loop_addr.top() {
             let counter = self.dsp.registers.loop_counter.top().wrapping_sub(1);
             if counter != 0 {
                 self.dsp.registers.loop_counter.set_top(counter);

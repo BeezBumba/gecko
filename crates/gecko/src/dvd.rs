@@ -12,6 +12,7 @@ const DICMDBUF2: u32 = DI_BASE + 0x10;
 const DIIMMBUF: u32 = DI_BASE + 0x20;
 
 pub enum Command {
+    DriveInfo,
     ReadDiskId,
     ReadSectorData,
     AudioToggle(bool),
@@ -23,6 +24,7 @@ pub struct DvdInterface {
     pub dma_address: regs::DiDmaAddressRegister,
     pub dma_length: regs::DiDmaLengthRegister,
     pub control: regs::DiControlRegister,
+    pub config: regs::DiConfigurationRegister,
     pub cmdbuf0: u32,
     pub cmdbuf1: u32,
     pub cmdbuf2: u32,
@@ -39,6 +41,7 @@ impl DvdInterface {
             dma_address: regs::DiDmaAddressRegister::from_raw(0),
             dma_length: regs::DiDmaLengthRegister::from_raw(0),
             control: regs::DiControlRegister::from_raw(0),
+            config: regs::DiConfigurationRegister::default(),
             cmdbuf0: 0,
             cmdbuf1: 0,
             cmdbuf2: 0,
@@ -62,6 +65,7 @@ impl DvdInterface {
         let sub2 = self.cmdbuf0 & 0xFFFF;
 
         match (cmd, sub1, sub2) {
+            (0x12, 0x00, 0x0000) => Some(Command::DriveInfo),
             (0xA8, _, 0x0000) => Some(Command::ReadSectorData),
             (0xA8, _, 0x0040) => Some(Command::ReadDiskId),
             (0xE4, 0x00, _) => Some(Command::AudioToggle(false)),
@@ -85,6 +89,11 @@ impl GameCube {
     #[inline(always)]
     fn process_dvd_command(&mut self, cmd: Command, dvd: &image::dvd::Dvd) {
         match cmd {
+            Command::DriveInfo => {
+                let dst = self.di.dma_address.address();
+                let buffer = self.mmio.phys_slice_mut(dst, 0x20);
+                buffer.copy_from_slice(&[0x69; 0x20]); // TODO: Drive Info?
+            }
             Command::ReadSectorData => {
                 let src = self.di.cmdbuf1 << 2;
                 let dst = self.di.dma_address.address();

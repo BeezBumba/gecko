@@ -96,8 +96,8 @@ fn decode_i4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: usize
     const BLOCK_H: usize = 8;
     const BLOCK_BYTES: usize = 32;
 
-    let blocks_x = (width + BLOCK_W - 1) / BLOCK_W;
-    let blocks_y = (height + BLOCK_H - 1) / BLOCK_H;
+    let blocks_x = width.div_ceil(BLOCK_W);
+    let blocks_y = height.div_ceil(BLOCK_H);
 
     for block_y in 0..blocks_y {
         for block_x in 0..blocks_x {
@@ -138,8 +138,8 @@ fn decode_i8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: usize
     const BLOCK_H: usize = 4;
     const BLOCK_BYTES: usize = 32;
 
-    let blocks_x = (width + BLOCK_W - 1) / BLOCK_W;
-    let blocks_y = (height + BLOCK_H - 1) / BLOCK_H;
+    let blocks_x = width.div_ceil(BLOCK_W);
+    let blocks_y = height.div_ceil(BLOCK_H);
 
     for block_y in 0..blocks_y {
         for block_x in 0..blocks_x {
@@ -173,8 +173,8 @@ fn decode_ia4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: usiz
     const BLOCK_H: usize = 4;
     const BLOCK_BYTES: usize = 32;
 
-    let blocks_x = (width + BLOCK_W - 1) / BLOCK_W;
-    let blocks_y = (height + BLOCK_H - 1) / BLOCK_H;
+    let blocks_x = width.div_ceil(BLOCK_W);
+    let blocks_y = height.div_ceil(BLOCK_H);
 
     for block_y in 0..blocks_y {
         for block_x in 0..blocks_x {
@@ -208,8 +208,8 @@ fn decode_ia8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: usiz
     const BLOCK_H: usize = 4;
     const BLOCK_BYTES: usize = 32;
 
-    let blocks_x = (width + BLOCK_W - 1) / BLOCK_W;
-    let blocks_y = (height + BLOCK_H - 1) / BLOCK_H;
+    let blocks_x = width.div_ceil(BLOCK_W);
+    let blocks_y = height.div_ceil(BLOCK_H);
 
     for block_y in 0..blocks_y {
         for block_x in 0..blocks_x {
@@ -242,8 +242,8 @@ fn decode_rgb565(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: u
     const BLOCK_H: usize = 4;
     const BLOCK_BYTES: usize = 32;
 
-    let blocks_x = (width + BLOCK_W - 1) / BLOCK_W;
-    let blocks_y = (height + BLOCK_H - 1) / BLOCK_H;
+    let blocks_x = width.div_ceil(BLOCK_W);
+    let blocks_y = height.div_ceil(BLOCK_H);
 
     for block_y in 0..blocks_y {
         for block_x in 0..blocks_x {
@@ -275,8 +275,8 @@ fn decode_rgb5a3(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: u
     const BLOCK_H: usize = 4;
     const BLOCK_BYTES: usize = 32;
 
-    let blocks_x = (width + BLOCK_W - 1) / BLOCK_W;
-    let blocks_y = (height + BLOCK_H - 1) / BLOCK_H;
+    let blocks_x = width.div_ceil(BLOCK_W);
+    let blocks_y = height.div_ceil(BLOCK_H);
 
     for block_y in 0..blocks_y {
         for block_x in 0..blocks_x {
@@ -321,8 +321,8 @@ fn decode_rgba8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: us
     const BLOCK_H: usize = 4;
     const BLOCK_BYTES: usize = 64;
 
-    let blocks_x = (width + BLOCK_W - 1) / BLOCK_W;
-    let blocks_y = (height + BLOCK_H - 1) / BLOCK_H;
+    let blocks_x = width.div_ceil(BLOCK_W);
+    let blocks_y = height.div_ceil(BLOCK_H);
 
     for block_y in 0..blocks_y {
         for block_x in 0..blocks_x {
@@ -360,8 +360,8 @@ fn decode_cmpr(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: usi
     const MACRO_BYTES: usize = 32;
     const SUB_BLOCK_BYTES: usize = 8;
 
-    let blocks_x = (width + MACRO_W - 1) / MACRO_W;
-    let blocks_y = (height + MACRO_H - 1) / MACRO_H;
+    let blocks_x = width.div_ceil(MACRO_W);
+    let blocks_y = height.div_ceil(MACRO_H);
 
     for block_y in 0..blocks_y {
         for block_x in 0..blocks_x {

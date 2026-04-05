@@ -1,7 +1,6 @@
-use chapa::BitEnum;
-
 use super::DvdInterface;
 use crate::mmio::traits::MmioAccess;
+use chapa::BitEnum;
 
 // 0xCC006000  4  R/W  DISR - DI Status Register
 
@@ -171,5 +170,18 @@ impl MmioAccess<DvdInterface> for DiControlRegister {
         if self.tstart() {
             di.transfer_started = true;
         }
+    }
+}
+
+crate::mmio_register! {
+    DiConfigurationRegister: u32 @ 0xCC006024 {
+        #[bits(0, readonly)]
+        pub config: bool
+    }
+}
+
+impl Default for DiConfigurationRegister {
+    fn default() -> Self {
+        DiConfigurationRegister::from_raw(0b1)
     }
 }

@@ -68,6 +68,74 @@ pub struct Registers {
 }
 
 impl Registers {
+    /// Increment address register by 1 with WR wrapping.
+    #[inline(always)]
+    pub fn increment_ar(&self, reg: usize) -> u16 {
+        let ar = self.ar[reg] as u32;
+        let wr = self.wr[reg] as u32;
+        let nar = ar.wrapping_add(1);
+        if (nar ^ ar) > ((wr | 1) << 1) {
+            nar.wrapping_sub(wr + 1) as u16
+        } else {
+            nar as u16
+        }
+    }
+
+    /// Decrement address register by 1 with WR wrapping.
+    #[inline(always)]
+    pub fn decrement_ar(&self, reg: usize) -> u16 {
+        let ar = self.ar[reg] as u32;
+        let wr = self.wr[reg] as u32;
+        let nar = ar.wrapping_add(wr);
+        if ((nar ^ ar) & ((wr | 1) << 1)) > wr {
+            nar.wrapping_sub(wr + 1) as u16
+        } else {
+            nar as u16
+        }
+    }
+
+    /// Decrease address register by signed IX with WR wrapping (ar -= ix).
+    #[inline(always)]
+    pub fn decrease_ar_ix(&self, reg: usize, ix: i16) -> u16 {
+        let ar = self.ar[reg] as u32;
+        let wr = self.wr[reg] as u32;
+        let mx = (wr | 1) << 1;
+        let nar = ar.wrapping_sub(ix as i32 as u32);
+        let dar = (nar ^ ar ^ !(ix as i32) as u32) & mx;
+        if (ix as u32) > 0xFFFF8000 {
+            if dar > wr {
+                nar.wrapping_sub(wr + 1) as u16
+            } else {
+                nar as u16
+            }
+        } else if (((nar.wrapping_add(wr + 1)) ^ nar) & dar) <= wr {
+            nar.wrapping_add(wr + 1) as u16
+        } else {
+            nar as u16
+        }
+    }
+
+    /// Increase address register by signed IX with WR wrapping.
+    #[inline(always)]
+    pub fn increase_ar(&self, reg: usize, ix: i16) -> u16 {
+        let ar = self.ar[reg] as u32;
+        let wr = self.wr[reg] as u32;
+        let mx = (wr | 1) << 1;
+        let nar = ar.wrapping_add(ix as i32 as u32);
+        let dar = (nar ^ ar ^ ix as i32 as u32) & mx;
+        if ix >= 0 {
+            if dar > wr {
+                nar.wrapping_sub(wr + 1) as u16
+            } else {
+                nar as u16
+            }
+        } else if (((nar.wrapping_add(wr + 1)) ^ nar) & dar) <= wr {
+            nar.wrapping_add(wr + 1) as u16
+        } else {
+            nar as u16
+        }
+    }
+
     /// Get 40-bit accumulator as i64 (sign-extended from bit 39).
     #[inline(always)]
     pub fn ac(&self, idx: u8) -> i64 {
@@ -93,7 +161,7 @@ impl Registers {
     #[inline(always)]
     pub fn set_ac(&mut self, idx: u8, val: i64) {
         let v = val as u64 & 0xFF_FFFF_FFFF;
-        let high = (v >> 32) as u16;
+        let high = (((v >> 32) as u8 as i8) as i16) as u16;
         let mid = (v >> 16) as u16;
         let low = v as u16;
         match idx {
@@ -111,6 +179,22 @@ impl Registers {
         }
     }
 
+    /// Update flags for 16-bit logic operations: S, Z from 16-bit result; AS32 from full ac; TB from 16-bit result.
+    #[inline(always)]
+    pub fn update_flags_logic(&mut self, result16: u16, ac_full: i64) {
+        let sign = result16 & 0x8000 != 0;
+        let zero = result16 == 0;
+        let r40 = ac_full as u64 & 0xFF_FFFF_FFFF;
+        let upper9 = (r40 >> 31) & 0x1FF;
+        let above_s32 = upper9 != 0 && upper9 != 0x1FF;
+        let tb = (result16 >> 14) == 0 || (result16 >> 14) == 3;
+
+        self.status.set_s(sign);
+        self.status.set_z(zero);
+        self.status.set_as32(above_s32);
+        self.status.set_tb(tb);
+    }
+
     /// Update flags based on a 40-bit accumulator result: TB, S32, S, AZ.
     #[inline(always)]
     pub fn update_flags_ac(&mut self, result: i64) {
@@ -119,7 +203,7 @@ impl Registers {
         let zero = r40 == 0;
         let upper9 = (r40 >> 31) & 0x1FF;
         let above_s32 = upper9 != 0 && upper9 != 0x1FF;
-        let tb = ((r40 >> 39) & 1) == ((r40 >> 38) & 1);
+        let tb = (r40 & 0xC000_0000) == 0 || (r40 & 0xC000_0000) == 0xC000_0000;
 
         self.status.set_s(sign);
         self.status.set_z(zero);
@@ -143,7 +227,7 @@ impl Registers {
         let overflow = (a_sign == b_sign) && (r_sign != a_sign);
         let upper9 = (r40 >> 31) & 0x1FF;
         let above_s32 = upper9 != 0 && upper9 != 0x1FF;
-        let tb = ((r40 >> 39) & 1) == ((r40 >> 38) & 1);
+        let tb = (r40 & 0xC000_0000) == 0 || (r40 & 0xC000_0000) == 0xC000_0000;
 
         self.status.set_s(sign);
         self.status.set_z(zero);
@@ -176,7 +260,7 @@ impl Registers {
         let upper9 = (r40 >> 31) & 0x1FF;
         let above_s32 = upper9 != 0 && upper9 != 0x1FF;
         // Top two bits equal
-        let tb = ((r40 >> 39) & 1) == ((r40 >> 38) & 1);
+        let tb = (r40 & 0xC000_0000) == 0 || (r40 & 0xC000_0000) == 0xC000_0000;
 
         self.status.set_s(sign);
         self.status.set_z(zero);
@@ -207,10 +291,13 @@ impl Registers {
             16 => self.ac0_high,
             17 => self.ac1_high,
             18 => self.config,
-            19 => self.status.into(),
+            19 => {
+                let raw: u16 = self.status.into();
+                raw & !0x0100 // bit 8 always reads as 0
+            }
             20 => self.product_low,
             21 => self.product_mid1,
-            22 => self.product_high,
+            22 => self.product_high & 0xFF,
             23 => self.product_mid2,
             24..=25 => self.ax[(index - 24) as usize],
             26..=27 => self.axh[(index - 26) as usize],
@@ -236,12 +323,41 @@ impl Registers {
     /// return 0x7FFF (positive) or 0x8000 (negative).
     #[inline(always)]
     fn saturate_ac_mid(&self, high: u16, mid: u16) -> u16 {
-        let sign_ext = if mid & 0x8000 != 0 { 0x00FF } else { 0 };
+        let sign_ext = if mid & 0x8000 != 0 { 0xFFFF } else { 0 };
         if high != sign_ext {
             if high & 0x80 != 0 { 0x8000 } else { 0x7FFF }
         } else {
             mid
         }
+    }
+
+    /// Get the 40-bit product register value.
+    #[inline(always)]
+    pub fn product(&self) -> i64 {
+        let ph = (self.product_high as u8) as i8 as i64;
+        let pm1 = self.product_mid1 as i64;
+        let pm2 = self.product_mid2 as i64;
+        let pl = self.product_low as i64;
+        (ph << 32) + ((pm1 + pm2) << 16) + pl
+    }
+
+    /// Write a value to the product register.
+    #[inline(always)]
+    pub fn write_product(&mut self, val: i64) {
+        self.product_high = (((val >> 32) as u8 as i8) as i16) as u16;
+        self.product_mid1 = (val >> 16) as u16;
+        self.product_low = val as u16;
+        self.product_mid2 = 0;
+    }
+
+    /// Compute carry and overflow flags from the product register's internal structure.
+    #[inline(always)]
+    pub fn product_flags(&self) -> (bool, bool) {
+        let mid_carry = ((self.product_mid1 as u32 + self.product_mid2 as u32) >> 16) as u16;
+        let ph = self.product_high as u8 as u16;
+        let carry = ph + mid_carry > 0xFF;
+        let overflow = ph == 0x7F && mid_carry != 0;
+        (carry, overflow)
     }
 
     #[inline(always)]
@@ -272,14 +388,14 @@ impl Registers {
             30 => {
                 self.ac0_mid = value;
                 if ALLOW_SIGN_EXTENSION && self.sign_extended() {
-                    self.ac0_high = if value & 0x8000 != 0 { 0x00FF } else { 0 };
+                    self.ac0_high = if value & 0x8000 != 0 { 0xFFFF } else { 0 };
                     self.ac0_low = 0;
                 }
             }
             31 => {
                 self.ac1_mid = value;
                 if ALLOW_SIGN_EXTENSION && self.sign_extended() {
-                    self.ac1_high = if value & 0x8000 != 0 { 0x00FF } else { 0 };
+                    self.ac1_high = if value & 0x8000 != 0 { 0xFFFF } else { 0 };
                     self.ac1_low = 0;
                 }
             }

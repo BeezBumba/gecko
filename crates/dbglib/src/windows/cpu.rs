@@ -82,18 +82,18 @@ pub fn show_cpu(ctx: &Context, open: &mut bool, cpu: &Cpu, mmio: &Mmio, symbols:
                                 let mut addr = start;
                                 while addr <= end {
                                     // Show function label if this address is a function entry
-                                    if let Some(sym) = symbols.and_then(|s| s.lookup_exact(addr)) {
-                                        if sym.kind == image::symbols::SymbolKind::Func {
-                                            ui.label("");
-                                            ui.label("");
-                                            ui.label("");
-                                            ui.label(
-                                                RichText::new(format!("{}:", sym.name))
-                                                    .monospace()
-                                                    .color(Color32::from_rgb(220, 180, 80)),
-                                            );
-                                            ui.end_row();
-                                        }
+                                    if let Some(sym) = symbols.and_then(|s| s.lookup_exact(addr))
+                                        && sym.kind == image::symbols::SymbolKind::Func
+                                    {
+                                        ui.label("");
+                                        ui.label("");
+                                        ui.label("");
+                                        ui.label(
+                                            RichText::new(format!("{}:", sym.name))
+                                                .monospace()
+                                                .color(Color32::from_rgb(220, 180, 80)),
+                                        );
+                                        ui.end_row();
                                     }
 
                                     let raw = mmio.virt_read_u32(addr);

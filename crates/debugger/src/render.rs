@@ -185,10 +185,10 @@ impl RenderState {
         }
 
         // Drain Lua log messages from the script host
-        if debugger_ui.show_lua {
-            if let Some(ref mut host) = emulator.hook_host {
-                debugger_ui.lua_log.extend(host.drain_logs());
-            }
+        if debugger_ui.show_lua
+            && let Some(ref mut host) = emulator.hook_host
+        {
+            debugger_ui.lua_log.extend(host.drain_logs());
         }
 
         // Load a new Lua script if requested

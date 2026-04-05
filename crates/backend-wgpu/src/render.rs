@@ -39,22 +39,21 @@ impl GxRenderer {
         for dc in &commands.commands {
             for desc in dc.textures.iter().flatten() {
                 let key = (desc.ram_addr, desc.width, desc.height, desc.format);
-                if !self.texture_cache.contains_key(&key) {
+                self.texture_cache.entry(key).or_insert_with(|| {
                     let (tex, view) = texture::upload_texture(device, queue, ram, desc);
-                    self.texture_cache.insert(key, (tex, view));
-                }
+                    (tex, view)
+                });
                 let sampler_key = (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
-                if !self.sampler_cache.contains_key(&sampler_key) {
-                    let s = device.create_sampler(&wgpu::SamplerDescriptor {
+                self.sampler_cache.entry(sampler_key).or_insert_with(|| {
+                    device.create_sampler(&wgpu::SamplerDescriptor {
                         label: Some("gx_sampler"),
                         address_mode_u: helpers::map_wrap_mode(sampler_key.0),
                         address_mode_v: helpers::map_wrap_mode(sampler_key.1),
                         mag_filter: helpers::map_mag_filter(sampler_key.2),
                         min_filter: helpers::map_min_filter(sampler_key.3),
                         ..Default::default()
-                    });
-                    self.sampler_cache.insert(sampler_key, s);
-                }
+                    })
+                });
             }
             let pipeline_key = PipelineKey::from_draw_call(dc);
             if !self.pipeline_cache.contains_key(&pipeline_key) {
@@ -64,13 +63,12 @@ impl GxRenderer {
         }
 
         let fallback_sampler_key = (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear);
-        if !self.sampler_cache.contains_key(&fallback_sampler_key) {
-            let s = device.create_sampler(&wgpu::SamplerDescriptor {
+        self.sampler_cache.entry(fallback_sampler_key).or_insert_with(|| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("gx_sampler_fallback"),
                 ..Default::default()
-            });
-            self.sampler_cache.insert(fallback_sampler_key, s);
-        }
+            })
+        });
     }
 
     fn aggregate_draw_data(&mut self, device: &wgpu::Device, commands: &DrawCommands) -> (Vec<u8>, Vec<usize>) {

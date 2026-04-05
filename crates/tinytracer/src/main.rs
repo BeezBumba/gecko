@@ -151,16 +151,15 @@ fn run_emulator(emulator: &mut gecko::gamecube::GameCube, args: &Args, symbols: 
 
     loop {
         if !in_busyloop && !args.quiet && trace_cpu {
-            if let Some(symbols) = symbols {
-                if let Some(sym) = symbols.lookup_exact(emulator.cpu.pc) {
-                    if sym.kind == image::symbols::SymbolKind::Func {
-                        let name = &sym.name;
-                        let changed = current_func.as_ref() != Some(name);
-                        if changed {
-                            println!("{}", format!("{name}:").green().bold());
-                            current_func = Some(name.clone());
-                        }
-                    }
+            if let Some(symbols) = symbols
+                && let Some(sym) = symbols.lookup_exact(emulator.cpu.pc)
+                && sym.kind == image::symbols::SymbolKind::Func
+            {
+                let name = &sym.name;
+                let changed = current_func.as_ref() != Some(name);
+                if changed {
+                    println!("{}", format!("{name}:").green().bold());
+                    current_func = Some(name.clone());
                 }
             }
             print_cpu_instruction(emulator, &prev_snapshot, args.debug, is_both);

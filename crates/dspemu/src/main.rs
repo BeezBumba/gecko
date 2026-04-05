@@ -84,18 +84,18 @@ fn main() {
             break;
         }
 
-        if let Some(max) = args.max_steps {
-            if steps >= max {
-                eprintln!("reached max steps ({max}) at PC={:04X}", emu.dsp.registers.pc);
-                break;
-            }
+        if let Some(max) = args.max_steps
+            && steps >= max
+        {
+            eprintln!("reached max steps ({max}) at PC={:04X}", emu.dsp.registers.pc);
+            break;
         }
 
-        if let Some(until) = args.until {
-            if emu.dsp.registers.pc == until {
-                eprintln!("reached target PC={until:04X} after {steps} steps");
-                break;
-            }
+        if let Some(until) = args.until
+            && emu.dsp.registers.pc == until
+        {
+            eprintln!("reached target PC={until:04X} after {steps} steps");
+            break;
         }
 
         let pc = emu.dsp.registers.pc;

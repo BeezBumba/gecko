@@ -4,29 +4,12 @@ use crate::flipper::dsp::core::regs::{SignExtensionMode, StatusRegister};
 use crate::flipper::dsp::lut::*;
 
 #[inline(always)]
-fn product(regs: &crate::flipper::dsp::core::Registers) -> i64 {
-    let ph = (regs.product_high as u8) as i8 as i64;
-    let pm1 = regs.product_mid1 as i64;
-    let pm2 = regs.product_mid2 as i64;
-    let pl = regs.product_low as i64;
-    (ph << 32) + ((pm1 + pm2) << 16) + pl
-}
-
-#[inline(always)]
-fn write_product(regs: &mut crate::flipper::dsp::core::Registers, val: i64) {
-    regs.product_high = (val >> 32) as u16;
-    regs.product_mid1 = (val >> 16) as u16;
-    regs.product_low = val as u16;
-    regs.product_mid2 = 0;
-}
-
-#[inline(always)]
 fn multiply(regs: &mut crate::flipper::dsp::core::Registers, a: i16, b: i16) {
     let mut result = a as i32 as i64 * b as i32 as i64;
     if !regs.status.am() {
         result <<= 1;
     }
-    write_product(regs, result);
+    regs.write_product(result);
 }
 
 /// Compute a * b (with AM shift), then add/sub to current product.
@@ -36,57 +19,96 @@ fn multiply_accumulate<const ADD: bool>(regs: &mut crate::flipper::dsp::core::Re
     if !regs.status.am() {
         mul_result <<= 1;
     }
-    let prod = product(regs);
+    let prod = regs.product();
     let result = if ADD {
         prod.wrapping_add(mul_result)
     } else {
         prod.wrapping_sub(mul_result)
     };
-    write_product(regs, result);
+    regs.write_product(result);
+}
+
+/// Apply product carry/overflow to status: set O and OS from product flags.
+#[inline(always)]
+fn apply_product_oc(regs: &mut crate::flipper::dsp::core::Registers, carry: bool, overflow: bool) {
+    regs.status.set_o(overflow);
+    if overflow {
+        regs.status.set_os(true);
+    }
+    regs.status.set_c(carry);
+}
+
+/// Apply combined arithmetic + product carry/overflow.
+/// Preserves OS from before the arithmetic flag update, then sets based on the XORed overflow.
+#[inline(always)]
+fn apply_combined_add_product_oc(regs: &mut crate::flipper::dsp::core::Registers, pc: bool, po: bool, os_before: bool) {
+    regs.status.set_os(os_before);
+    let c = regs.status.c();
+    let o = regs.status.o();
+    regs.status.set_c(c || pc);
+    regs.status.set_o(o ^ po);
+    if regs.status.o() {
+        regs.status.set_os(true);
+    }
 }
 
 #[inline(always)]
 fn move_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
-    let prod = product(&ctx.dsp.registers);
+    let prod = ctx.dsp.registers.product();
+    let (carry, overflow) = ctx.dsp.registers.product_flags();
     ctx.dsp.registers.set_ac(r, prod);
     ctx.dsp.registers.update_flags_ac(prod);
-    ctx.dsp.registers.status.set_o(false);
+    apply_product_oc(&mut ctx.dsp.registers, carry, overflow);
 }
 
 #[inline(always)]
 fn move_prod_to_ac_zero(ctx: &mut crate::gamecube::GameCube, r: u8) {
-    let prod = product(&ctx.dsp.registers) & !0xFFFFi64;
+    let (carry, overflow) = ctx.dsp.registers.product_flags();
+    let raw = ctx.dsp.registers.product();
+    let prod = if raw & 0x8000 != 0 {
+        (raw + 0x10000) & !0xFFFFi64
+    } else {
+        raw & !0xFFFFi64
+    };
     ctx.dsp.registers.set_ac(r, prod);
     ctx.dsp.registers.update_flags_ac(prod);
-    ctx.dsp.registers.status.set_o(false);
+    apply_product_oc(&mut ctx.dsp.registers, carry, overflow);
 }
 
 #[inline(always)]
 fn add_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
     let a = ctx.dsp.registers.ac(r);
-    let b = product(&ctx.dsp.registers);
+    let (pc, po) = ctx.dsp.registers.product_flags();
+    let b = ctx.dsp.registers.product();
     let result = a.wrapping_add(b);
+    let os_before = ctx.dsp.registers.status.os();
     ctx.dsp.registers.set_ac(r, result);
     ctx.dsp.registers.update_flags_add(a, b, result);
+    apply_combined_add_product_oc(&mut ctx.dsp.registers, pc, po, os_before);
 }
 
-/// Dynamic shift based on a 7-bit shift control value.
-/// LOGICAL: right shift is unsigned. !LOGICAL: right shift is arithmetic.
+/// LOGICAL controls whether right shifts are logical.
+/// REVERSED controls direction: when false (ASRN/LSRN), bit6=LEFT/!bit6=RIGHT.
+/// When true (ASRNR/NRX variants), bit6=RIGHT/!bit6=LEFT.
 #[inline(always)]
-fn dynamic_shift<const LOGICAL: bool>(regs: &mut crate::flipper::dsp::core::Registers, d: u8, shift_val: i16) {
-    if shift_val & 64 != 0 {
-        let amount = (shift_val & 63) as u32;
-        if amount != 0 {
-            let ac = if LOGICAL {
-                ((regs.ac(d) as u64 & 0xFF_FFFF_FFFF) >> (64 - amount)) as i64
-            } else {
-                regs.ac(d) >> (64 - amount)
-            };
-            regs.set_ac(d, ac as i64);
-        }
-    } else {
-        let amount = (shift_val & 63) as u32;
+fn dynamic_shift<const LOGICAL: bool, const REVERSED: bool>(
+    regs: &mut crate::flipper::dsp::core::Registers,
+    d: u8,
+    shift_val: i16,
+) {
+    let low6 = (shift_val & 63) as u32;
+    let bit6 = shift_val & 64 != 0;
+    let amount = if bit6 { (64 - low6) % 64 } else { low6 };
+    let shift_left = if REVERSED { !bit6 } else { bit6 };
+    if shift_left {
         let ac = ((regs.ac(d) as u64 & 0xFF_FFFF_FFFF) << amount) as i64;
+        regs.set_ac(d, ac);
+    } else if amount != 0 {
+        let ac = if LOGICAL {
+            ((regs.ac(d) as u64 & 0xFF_FFFF_FFFF) >> amount) as i64
+        } else {
+            regs.ac(d) >> amount
+        };
         regs.set_ac(d, ac);
     }
     let ac = regs.ac(d);
@@ -146,13 +168,16 @@ pub fn add_sub<const OP: u32>(
         OP_ADDP => {
             let d = instr.d_7_7();
             let a = ctx.dsp.registers.ac(d);
-            let b = product(&ctx.dsp.registers);
+            let (pc, po) = ctx.dsp.registers.product_flags();
+            let b = ctx.dsp.registers.product();
             let result = a.wrapping_add(b);
+            let os_before = ctx.dsp.registers.status.os();
             ctx.dsp.registers.set_ac(d, result);
             ctx.dsp.registers.update_flags_add(a, b, result);
+            apply_combined_add_product_oc(&mut ctx.dsp.registers, pc, po, os_before);
         }
         OP_SUBR => {
-            let ss = instr.ss() as u8;
+            let ss = instr.ss();
             let d = instr.d_7_7();
             let a = ctx.dsp.registers.ac(d);
             let b = (ctx.dsp.registers.read::<true>(reg::AX0L + ss) as i16 as i64) << 16;
@@ -180,16 +205,27 @@ pub fn add_sub<const OP: u32>(
         OP_SUBP => {
             let d = instr.d_7_7();
             let a = ctx.dsp.registers.ac(d);
-            let b = product(&ctx.dsp.registers);
+            let (pc, po) = ctx.dsp.registers.product_flags();
+            let b = ctx.dsp.registers.product();
             let result = a.wrapping_sub(b);
+            let os_before = ctx.dsp.registers.status.os();
             ctx.dsp.registers.set_ac(d, result);
             ctx.dsp.registers.update_flags_sub(a, b, result);
+            // SUBP: carry = sub_carry XOR !product_carry
+            ctx.dsp.registers.status.set_os(os_before);
+            let c = ctx.dsp.registers.status.c();
+            let o = ctx.dsp.registers.status.o();
+            ctx.dsp.registers.status.set_c(c ^ !pc);
+            ctx.dsp.registers.status.set_o(o ^ po);
+            if ctx.dsp.registers.status.o() {
+                ctx.dsp.registers.status.set_os(true);
+            }
         }
         OP_ADDAXL => {
             let s = instr.s_6_6() as usize;
             let d = instr.d_7_7();
             let a = ctx.dsp.registers.ac(d);
-            let b = ctx.dsp.registers.ax[s] as u16 as i64;
+            let b = ctx.dsp.registers.ax[s] as i64;
             let result = a.wrapping_add(b);
             ctx.dsp.registers.set_ac(d, result);
             ctx.dsp.registers.update_flags_add(a, b, result);
@@ -197,16 +233,27 @@ pub fn add_sub<const OP: u32>(
         OP_ADDPAXZ => {
             let s = instr.s_6_6() as usize;
             let d = instr.d_7_7();
-            let a = product(&ctx.dsp.registers);
+            let (pc, po) = ctx.dsp.registers.product_flags();
+            let a = ctx.dsp.registers.product();
             let b = (ctx.dsp.registers.axh[s] as i16 as i64) << 16;
-            let result = a.wrapping_add(b) & !0xFFFFi64;
+            let rounded = if a & 0x8000 != 0 {
+                (a + 0x10000) & !0xFFFFi64
+            } else {
+                a & !0xFFFFi64
+            };
+            let result = rounded.wrapping_add(b) & !0xFFFFi64;
+            let os_before = ctx.dsp.registers.status.os();
             ctx.dsp.registers.set_ac(d, result);
-            ctx.dsp.registers.update_flags_ac(result);
-            ctx.dsp.registers.status.set_o(false);
-            ctx.dsp.registers.status.set_c(
-                ((a as u64 & 0xFF_FFFF_FFFF).wrapping_add(b as u64 & 0xFF_FFFF_FFFF) & 0xFF_FFFF_FFFF)
-                    < (a as u64 & 0xFF_FFFF_FFFF),
-            );
+            ctx.dsp.registers.update_flags_add(rounded, b, result);
+            // carry = add_carry XOR product_carry
+            ctx.dsp.registers.status.set_os(os_before);
+            let c = ctx.dsp.registers.status.c();
+            let o = ctx.dsp.registers.status.o();
+            ctx.dsp.registers.status.set_c(c ^ pc);
+            ctx.dsp.registers.status.set_o(o ^ po);
+            if ctx.dsp.registers.status.o() {
+                ctx.dsp.registers.status.set_os(true);
+            }
         }
         _ => unreachable!(),
     }
@@ -220,20 +267,22 @@ pub fn addr_reg<const OP: u32>(
     match OP {
         OP_DAR => {
             let d = instr.d_14_15() as usize;
-            ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_sub(1);
+            ctx.dsp.registers.ar[d] = ctx.dsp.registers.decrement_ar(d);
         }
         OP_IAR => {
             let d = instr.d_14_15() as usize;
-            ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_add(1);
+            ctx.dsp.registers.ar[d] = ctx.dsp.registers.increment_ar(d);
         }
         OP_SUBARN => {
             let d = instr.d_14_15() as usize;
-            ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_sub(ctx.dsp.registers.ix[d]);
+            let ix = ctx.dsp.registers.ix[d] as i16;
+            ctx.dsp.registers.ar[d] = ctx.dsp.registers.decrease_ar_ix(d, ix);
         }
         OP_ADDARN => {
             let s = instr.s_12_13() as usize;
             let d = instr.d_14_15() as usize;
-            ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_add(ctx.dsp.registers.ix[s]);
+            let ix = ctx.dsp.registers.ix[s] as i16;
+            ctx.dsp.registers.ar[d] = ctx.dsp.registers.increase_ar(d, ix);
         }
         _ => unreachable!(),
     }
@@ -254,8 +303,8 @@ pub fn cmp_test<const OP: u32>(
         OP_CMPAXH => {
             let s = instr.s_4_4();
             let r = instr.s_3_3();
-            let a = ctx.dsp.registers.ac(r);
-            let b = (ctx.dsp.registers.axh[s as usize] as i16 as i64) << 16;
+            let a = ctx.dsp.registers.ac(s);
+            let b = (ctx.dsp.registers.axh[r as usize] as i16 as i64) << 16;
             let result = a.wrapping_sub(b);
             ctx.dsp.registers.update_flags_sub(a, b, result);
         }
@@ -267,10 +316,14 @@ pub fn cmp_test<const OP: u32>(
             ctx.dsp.registers.status.set_c(false);
         }
         OP_TSTPROD => {
-            let prod = product(&ctx.dsp.registers);
+            let (pc, po) = ctx.dsp.registers.product_flags();
+            let prod = ctx.dsp.registers.product();
             ctx.dsp.registers.update_flags_ac(prod);
-            ctx.dsp.registers.status.set_o(false);
-            ctx.dsp.registers.status.set_c(false);
+            ctx.dsp.registers.status.set_o(po);
+            if po {
+                ctx.dsp.registers.status.set_os(true);
+            }
+            ctx.dsp.registers.status.set_c(pc);
         }
         OP_TSTAXH => {
             let r = instr.r_7_7() as usize;
@@ -300,15 +353,17 @@ pub fn cmp_test<const OP: u32>(
         OP_CLRL => {
             let r = instr.r_7_7();
             let ac = ctx.dsp.registers.ac(r);
-            let rounded = if (ac & 0x10000) != 0 {
-                (ac.wrapping_add(0x8000)) & !0xFFFF
+            let ac40 = ac as u64 & 0xFF_FFFF_FFFF;
+            let (rounded, carry) = if ac40 & 0x8000 != 0 {
+                let sum = ac40.wrapping_add(0x10000);
+                ((sum & !0xFFFFu64) as i64, sum > 0xFF_FFFF_FFFF)
             } else {
-                (ac.wrapping_add(0x7FFF)) & !0xFFFF
+                ((ac40 & !0xFFFFu64) as i64, false)
             };
             ctx.dsp.registers.set_ac(r, rounded);
             ctx.dsp.registers.update_flags_ac(rounded);
             ctx.dsp.registers.status.set_o(false);
-            ctx.dsp.registers.status.set_c(false);
+            ctx.dsp.registers.status.set_c(carry);
         }
         _ => unreachable!(),
     }
@@ -392,7 +447,7 @@ pub fn imm_alu<const OP: u32>(
             let result = ctx.dsp.registers.ac_mid(d) ^ instr.imm_16_31();
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
             ctx.dsp.registers.status.set_c(false);
         }
@@ -401,7 +456,7 @@ pub fn imm_alu<const OP: u32>(
             let result = ctx.dsp.registers.ac_mid(d) & instr.imm_16_31();
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
             ctx.dsp.registers.status.set_c(false);
         }
@@ -410,8 +465,9 @@ pub fn imm_alu<const OP: u32>(
             let result = ctx.dsp.registers.ac_mid(d) | instr.imm_16_31();
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
         }
         OP_CMPI => {
             let d = instr.d_7_7();
@@ -498,12 +554,17 @@ pub fn inc_dec<const OP: u32>(
         OP_ABS_AC => {
             let d = instr.d_4_4();
             let a = ctx.dsp.registers.ac(d);
-            if a < 0 {
+            let was_negative = a < 0;
+            if was_negative {
                 ctx.dsp.registers.set_ac(d, a.wrapping_neg());
             }
             let ac = ctx.dsp.registers.ac(d);
             ctx.dsp.registers.update_flags_ac(ac);
-            ctx.dsp.registers.status.set_o(false);
+            // Overflow if the value was negative and is still negative
+            ctx.dsp.registers.status.set_o(was_negative && ac < 0);
+            if ctx.dsp.registers.status.o() {
+                ctx.dsp.registers.status.set_os(true);
+            }
             ctx.dsp.registers.status.set_c(false);
         }
         _ => unreachable!(),
@@ -541,9 +602,12 @@ pub fn load_store<const OP: u32>(
             let value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
             ctx.dsp.registers.write::<true>(d, value);
             match OP {
-                OP_LRRD => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_sub(1),
-                OP_LRRI => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(1),
-                OP_LRRN => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]),
+                OP_LRRD => ctx.dsp.registers.ar[s] = ctx.dsp.registers.decrement_ar(s),
+                OP_LRRI => ctx.dsp.registers.ar[s] = ctx.dsp.registers.increment_ar(s),
+                OP_LRRN => {
+                    let ix = ctx.dsp.registers.ix[s] as i16;
+                    ctx.dsp.registers.ar[s] = ctx.dsp.registers.increase_ar(s, ix);
+                }
                 _ => {}
             }
         }
@@ -552,20 +616,23 @@ pub fn load_store<const OP: u32>(
             let value = ctx.dsp.registers.read::<true>(instr.d_11_15());
             ctx.dsp.write_dmem(ctx.dsp.registers.ar[d], value);
             match OP {
-                OP_SRRD => ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_sub(1),
-                OP_SRRI => ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_add(1),
-                OP_SRRN => ctx.dsp.registers.ar[d] = ctx.dsp.registers.ar[d].wrapping_add(ctx.dsp.registers.ix[d]),
+                OP_SRRD => ctx.dsp.registers.ar[d] = ctx.dsp.registers.decrement_ar(d),
+                OP_SRRI => ctx.dsp.registers.ar[d] = ctx.dsp.registers.increment_ar(d),
+                OP_SRRN => {
+                    let ix = ctx.dsp.registers.ix[d] as i16;
+                    ctx.dsp.registers.ar[d] = ctx.dsp.registers.increase_ar(d, ix);
+                }
                 _ => {}
             }
         }
         OP_LRS => {
             let dst = reg::AX0L + instr.reg_5_7();
-            let addr = ((ctx.dsp.registers.config as u16) << 8) | instr.mem_8_15_u16();
+            let addr = (ctx.dsp.registers.config << 8) | instr.mem_8_15_u16();
             let value = ctx.dsp.read_dmem(addr);
             ctx.dsp.registers.write::<true>(dst, value);
         }
         OP_SRSH | OP_SRS => {
-            let addr = ((ctx.dsp.registers.config as u16) << 8) | instr.mem_8_15_u16();
+            let addr = (ctx.dsp.registers.config << 8) | instr.mem_8_15_u16();
             let src = match OP {
                 OP_SRSH => {
                     if instr.s_7_7() != 0 {
@@ -586,10 +653,11 @@ pub fn load_store<const OP: u32>(
             let value = ctx.dsp.read_imem(ctx.dsp.registers.ar[src]);
             ctx.dsp.registers.write::<true>(dst, value);
             match OP {
-                OP_ILRRD => ctx.dsp.registers.ar[src] = ctx.dsp.registers.ar[src].wrapping_sub(1),
-                OP_ILRRI => ctx.dsp.registers.ar[src] = ctx.dsp.registers.ar[src].wrapping_add(1),
+                OP_ILRRD => ctx.dsp.registers.ar[src] = ctx.dsp.registers.decrement_ar(src),
+                OP_ILRRI => ctx.dsp.registers.ar[src] = ctx.dsp.registers.increment_ar(src),
                 OP_ILRRN => {
-                    ctx.dsp.registers.ar[src] = ctx.dsp.registers.ar[src].wrapping_add(ctx.dsp.registers.ix[src])
+                    let ix = ctx.dsp.registers.ix[src] as i16;
+                    ctx.dsp.registers.ar[src] = ctx.dsp.registers.increase_ar(src, ix);
                 }
                 _ => {}
             }
@@ -607,7 +675,7 @@ pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::f
             let result = ctx.dsp.registers.ac_mid(d) ^ ctx.dsp.registers.axh[s];
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
             ctx.dsp.registers.status.set_c(false);
         }
@@ -617,7 +685,7 @@ pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::f
             let result = ctx.dsp.registers.ac_mid(d) & ctx.dsp.registers.axh[s];
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
             ctx.dsp.registers.status.set_c(false);
         }
@@ -627,15 +695,16 @@ pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::f
             let result = ctx.dsp.registers.ac_mid(d) | ctx.dsp.registers.axh[s];
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
         }
         OP_ANDC => {
             let d = instr.d_7_7();
             let result = ctx.dsp.registers.ac_mid(d) & ctx.dsp.registers.ac_mid(1 - d);
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
             ctx.dsp.registers.status.set_c(false);
         }
@@ -643,23 +712,26 @@ pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::f
             let d = instr.d_7_7();
             let result = ctx.dsp.registers.ac_mid(d) | ctx.dsp.registers.ac_mid(1 - d);
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_logic(result, ac);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
         }
         OP_XORC => {
             let d = instr.d_7_7();
             let result = ctx.dsp.registers.ac_mid(d) ^ ctx.dsp.registers.ac_mid(1 - d);
             ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
             ctx.dsp.registers.status.set_c(false);
         }
         OP_NOT_AC => {
             let d = instr.d_7_7();
-            ctx.dsp
-                .registers
-                .write::<false>(reg::AC0M + d, !ctx.dsp.registers.ac_mid(d));
+            let result = !ctx.dsp.registers.ac_mid(d);
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
             let ac = ctx.dsp.registers.ac(d);
-            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.update_flags_logic(result, ac);
             ctx.dsp.registers.status.set_o(false);
             ctx.dsp.registers.status.set_c(false);
         }
@@ -711,7 +783,7 @@ pub fn move_ops<const OP: u32>(
 ) {
     match OP {
         OP_MOVR => {
-            let ss = instr.ss() as u8;
+            let ss = instr.ss();
             let d = instr.d_7_7();
             let val = (ctx.dsp.registers.read::<true>(reg::AX0L + ss) as i16 as i64) << 16;
             ctx.dsp.registers.set_ac(d, val);
@@ -733,7 +805,6 @@ pub fn move_ops<const OP: u32>(
             let val = ctx.dsp.registers.ac(1 - d);
             ctx.dsp.registers.set_ac(d, val);
             ctx.dsp.registers.update_flags_ac(val);
-            ctx.dsp.registers.status.set_as32(false);
             ctx.dsp.registers.status.set_o(false);
             ctx.dsp.registers.status.set_c(false);
         }
@@ -747,10 +818,16 @@ pub fn move_ops<const OP: u32>(
         }
         OP_MOVNP => {
             let d = instr.d_7_7();
-            let val = product(&ctx.dsp.registers).wrapping_neg();
+            let prod = ctx.dsp.registers.product();
+            let (carry, overflow) = ctx.dsp.registers.product_flags();
+            let val = prod.wrapping_neg();
             ctx.dsp.registers.set_ac(d, val);
             ctx.dsp.registers.update_flags_ac(val);
-            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_o(overflow);
+            if overflow {
+                ctx.dsp.registers.status.set_os(true);
+            }
+            ctx.dsp.registers.status.set_c(!carry);
         }
         _ => unreachable!(),
     }
@@ -923,33 +1000,33 @@ pub fn shifts<const OP: u32>(
         }
         OP_LSRN => {
             let sv = ctx.dsp.registers.ac1_mid as i16;
-            dynamic_shift::<true>(&mut ctx.dsp.registers, 0, sv);
+            dynamic_shift::<true, false>(&mut ctx.dsp.registers, 0, sv);
         }
         OP_ASRN => {
             let sv = ctx.dsp.registers.ac1_mid as i16;
-            dynamic_shift::<false>(&mut ctx.dsp.registers, 0, sv);
+            dynamic_shift::<false, false>(&mut ctx.dsp.registers, 0, sv);
         }
         OP_LSRNRX => {
             let s = instr.s_6_6() as usize;
             let d = instr.d_7_7();
             let sv = ctx.dsp.registers.axh[s] as i16;
-            dynamic_shift::<true>(&mut ctx.dsp.registers, d, sv);
+            dynamic_shift::<true, true>(&mut ctx.dsp.registers, d, sv);
         }
         OP_ASRNRX => {
             let s = instr.s_6_6() as usize;
             let d = instr.d_7_7();
             let sv = ctx.dsp.registers.axh[s] as i16;
-            dynamic_shift::<false>(&mut ctx.dsp.registers, d, sv);
+            dynamic_shift::<false, true>(&mut ctx.dsp.registers, d, sv);
         }
         OP_LSRNR => {
             let d = instr.d_7_7();
             let sv = ctx.dsp.registers.ac_mid(1 - d) as i16;
-            dynamic_shift::<true>(&mut ctx.dsp.registers, d, sv);
+            dynamic_shift::<true, true>(&mut ctx.dsp.registers, d, sv);
         }
         OP_ASRNR => {
             let d = instr.d_7_7();
             let sv = ctx.dsp.registers.ac_mid(1 - d) as i16;
-            dynamic_shift::<false>(&mut ctx.dsp.registers, d, sv);
+            dynamic_shift::<false, true>(&mut ctx.dsp.registers, d, sv);
         }
         _ => unreachable!(),
     }
@@ -962,10 +1039,16 @@ pub fn status<const OP: u32>(
 ) {
     match OP {
         OP_SBCLR => {
-            ctx.dsp.registers.status &= !(1 << (6 + instr.bit())) as u16;
+            let idx = 6 + instr.bit();
+            if idx != 13 {
+                ctx.dsp.registers.status &= !(1u16 << idx);
+            }
         }
         OP_SBSET => {
-            ctx.dsp.registers.status |= (1 << (6 + instr.bit())) as u16;
+            let idx = 6 + instr.bit();
+            if idx != 13 && idx != 8 {
+                ctx.dsp.registers.status |= 1u16 << idx;
+            }
         }
         OP_M2 => {
             ctx.dsp.registers.status.set_am(false);
@@ -999,43 +1082,52 @@ pub fn ext_nop(_ctx: &mut crate::gamecube::GameCube, _instr: GcDspExt) {}
 pub fn ext_addr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
     let r = instr.r_6_7() as usize;
     match OP {
-        OP_EXT_DR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.ar[r].wrapping_sub(1),
-        OP_EXT_IR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.ar[r].wrapping_add(1),
-        OP_EXT_NR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.ar[r].wrapping_add(ctx.dsp.registers.ix[r]),
+        OP_EXT_DR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.decrement_ar(r),
+        OP_EXT_IR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.increment_ar(r),
+        OP_EXT_NR => {
+            let ix = ctx.dsp.registers.ix[r] as i16;
+            ctx.dsp.registers.ar[r] = ctx.dsp.registers.increase_ar(r, ix);
+        }
         _ => unreachable!(),
     }
 }
 
 #[inline(always)]
 pub fn ext_mv(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
-    let d = instr.d_4_5() as u8;
-    let s = instr.s_6_7() as u8;
-    let value = ctx.dsp.registers.read::<true>(reg::AX0L + s);
+    let d = instr.d_4_5();
+    let s = instr.s_6_7();
+    let value = ctx.dsp.registers.read::<true>(reg::AC0L + s);
     ctx.dsp.registers.write::<true>(reg::AX0L + d, value);
 }
 
 #[inline(always)]
 pub fn ext_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
     let s = instr.s_3_4() as usize;
-    let d = instr.d_6_7() as u8;
+    let d = instr.d_6_7();
     let value = ctx.dsp.registers.read::<true>(reg::AC0M + d);
     ctx.dsp.write_dmem(ctx.dsp.registers.ar[s], value);
     match OP {
         OP_EXT_S => {}
-        OP_EXT_SN => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]),
+        OP_EXT_SN => {
+            let ix = ctx.dsp.registers.ix[s] as i16;
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increase_ar(s, ix);
+        }
         _ => unreachable!(),
     }
 }
 
 #[inline(always)]
 pub fn ext_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
-    let d = instr.d_2_4() as u8;
+    let d = instr.d_2_4();
     let s = instr.s_6_7() as usize;
     let value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
     ctx.dsp.registers.write::<true>(reg::AX0L + d, value);
     match OP {
         OP_EXT_L => {}
-        OP_EXT_LN => ctx.dsp.registers.ar[s] = ctx.dsp.registers.ar[s].wrapping_add(ctx.dsp.registers.ix[s]),
+        OP_EXT_LN => {
+            let ix = ctx.dsp.registers.ix[s] as i16;
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increase_ar(s, ix);
+        }
         _ => unreachable!(),
     }
 }
@@ -1043,32 +1135,35 @@ pub fn ext_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDsp
 #[inline(always)]
 pub fn ext_load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
     let s = instr.s_7_7() as usize;
-    let d = instr.d_2_3() as u8;
+    let d = instr.d_2_3();
 
-    let store_value = ctx.dsp.registers.read::<true>(reg::AC0M + s as u8);
+    // LS: Load from ar[0], Store ac[s].m to ar[3]
+    let load_value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[0]);
+    ctx.dsp.registers.write::<true>(reg::AX0L + d, load_value);
+
+    let store_value = ctx.dsp.registers.ac_mid(s as u8);
     ctx.dsp.write_dmem(ctx.dsp.registers.ar[3], store_value);
-
-    let load_value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[d as usize]);
-    ctx.dsp.registers.write::<true>(reg::AX0H + d, load_value);
 
     match OP {
         OP_EXT_LS => {
-            ctx.dsp.registers.ar[d as usize] =
-                ctx.dsp.registers.ar[d as usize].wrapping_add(ctx.dsp.registers.ix[d as usize]);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+            ctx.dsp.registers.ar[0] = ctx.dsp.registers.increment_ar(0);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increment_ar(3);
         }
         OP_EXT_LSM => {
-            ctx.dsp.registers.ar[d as usize] =
-                ctx.dsp.registers.ar[d as usize].wrapping_add(ctx.dsp.registers.ix[d as usize]);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_sub(1);
+            ctx.dsp.registers.ar[0] = ctx.dsp.registers.increment_ar(0);
+            let ix3 = ctx.dsp.registers.ix[3] as i16;
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increase_ar(3, ix3);
         }
         OP_EXT_LSN => {
-            ctx.dsp.registers.ar[d as usize] = ctx.dsp.registers.ar[d as usize].wrapping_sub(1);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+            let ix0 = ctx.dsp.registers.ix[0] as i16;
+            ctx.dsp.registers.ar[0] = ctx.dsp.registers.increase_ar(0, ix0);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increment_ar(3);
         }
         OP_EXT_LSNM => {
-            ctx.dsp.registers.ar[d as usize] = ctx.dsp.registers.ar[d as usize].wrapping_sub(1);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_sub(1);
+            let ix0 = ctx.dsp.registers.ix[0] as i16;
+            ctx.dsp.registers.ar[0] = ctx.dsp.registers.increase_ar(0, ix0);
+            let ix3 = ctx.dsp.registers.ix[3] as i16;
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increase_ar(3, ix3);
         }
         _ => unreachable!(),
     }
@@ -1076,73 +1171,82 @@ pub fn ext_load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr:
 
 #[inline(always)]
 pub fn ext_ld<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
-    let d = instr.d_2_2() as u8;
-    let r = instr.r_3_3() as usize;
-    let s = instr.s_6_7();
+    let d = instr.d_2_2();
+    let r = instr.r_3_3();
+    let s = instr.s_6_7() as usize;
 
-    let value0 = ctx.dsp.read_dmem(ctx.dsp.registers.ar[0]);
-    ctx.dsp.registers.write::<true>(reg::AX0L + d * 2, value0);
+    // First load from ar[s] -> AX0 half (d selects low/high)
+    let d_reg = if d != 0 { reg::AX0H } else { reg::AX0L };
+    let value0 = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+    ctx.dsp.registers.write::<true>(d_reg, value0);
 
+    // Second load from ar[3] -> AX1 half (r selects low/high)
+    let r_reg = if r != 0 { reg::AX1H } else { reg::AX1L };
     let value1 = ctx.dsp.read_dmem(ctx.dsp.registers.ar[3]);
-    ctx.dsp.registers.write::<true>(reg::AX0L + d * 2 + 1, value1);
+    ctx.dsp.registers.write::<true>(r_reg, value1);
 
+    // AR increments: "" = +1/+1, "N" = +ix[s]/+1, "M" = +1/+ix[3], "NM" = +ix[s]/+ix[3]
     match OP {
         OP_EXT_LD_00 => {
-            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_add(ctx.dsp.registers.ix[0]);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
-        }
-        OP_EXT_LDM_10 => {
-            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_add(ctx.dsp.registers.ix[0]);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_sub(1);
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increment_ar(s);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increment_ar(3);
         }
         OP_EXT_LDN_01 => {
-            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_sub(1);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+            let ixs = ctx.dsp.registers.ix[s] as i16;
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increase_ar(s, ixs);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increment_ar(3);
+        }
+        OP_EXT_LDM_10 => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increment_ar(s);
+            let ix3 = ctx.dsp.registers.ix[3] as i16;
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increase_ar(3, ix3);
         }
         OP_EXT_LDNM_11 => {
-            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_sub(1);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_sub(1);
+            let ixs = ctx.dsp.registers.ix[s] as i16;
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increase_ar(s, ixs);
+            let ix3 = ctx.dsp.registers.ix[3] as i16;
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increase_ar(3, ix3);
         }
         _ => unreachable!(),
     }
-
-    let _ = (r, s);
 }
 
 #[inline(always)]
 pub fn ext_ldax<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    let s = instr.d_2_2() as usize;
     let r = instr.r_3_3() as usize;
-    let s = instr.s_2_2();
 
-    let value0 = ctx.dsp.read_dmem(ctx.dsp.registers.ar[0]);
-    ctx.dsp
-        .registers
-        .write::<true>(if s != 0 { reg::AX1L } else { reg::AX0L }, value0);
+    // Load high from ar[s]
+    let high = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+    // Load low from ar[3]
+    let low = ctx.dsp.read_dmem(ctx.dsp.registers.ar[3]);
 
-    let value1 = ctx.dsp.read_dmem(ctx.dsp.registers.ar[3]);
-    ctx.dsp
-        .registers
-        .write::<true>(if s != 0 { reg::AX1H } else { reg::AX0H }, value1);
+    // Write to ax[r] (high and low)
+    ctx.dsp.registers.axh[r] = high;
+    ctx.dsp.registers.ax[r] = low;
 
+    // AR increments
     match OP {
         OP_EXT_LDAX => {
-            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_add(ctx.dsp.registers.ix[0]);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
-        }
-        OP_EXT_LDAXM => {
-            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_add(ctx.dsp.registers.ix[0]);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_sub(1);
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increment_ar(s);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increment_ar(3);
         }
         OP_EXT_LDAXN => {
-            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_sub(1);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_add(ctx.dsp.registers.ix[3]);
+            let ixs = ctx.dsp.registers.ix[s] as i16;
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increase_ar(s, ixs);
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increment_ar(3);
+        }
+        OP_EXT_LDAXM => {
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increment_ar(s);
+            let ix3 = ctx.dsp.registers.ix[3] as i16;
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increase_ar(3, ix3);
         }
         OP_EXT_LDAXNM => {
-            ctx.dsp.registers.ar[0] = ctx.dsp.registers.ar[0].wrapping_sub(1);
-            ctx.dsp.registers.ar[3] = ctx.dsp.registers.ar[3].wrapping_sub(1);
+            let ixs = ctx.dsp.registers.ix[s] as i16;
+            ctx.dsp.registers.ar[s] = ctx.dsp.registers.increase_ar(s, ixs);
+            let ix3 = ctx.dsp.registers.ix[3] as i16;
+            ctx.dsp.registers.ar[3] = ctx.dsp.registers.increase_ar(3, ix3);
         }
         _ => unreachable!(),
     }
-
-    let _ = r;
 }

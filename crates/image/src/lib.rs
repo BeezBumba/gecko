@@ -31,7 +31,7 @@ impl Dol {
         let mut data_sections = Vec::new();
 
         for i in 0..=6 {
-            let offset = u32::from_be_bytes(data[0x00 + (i * 4)..0x00 + (i * 4) + 4].try_into().unwrap());
+            let offset = u32::from_be_bytes(data[(i * 4)..(i * 4) + 4].try_into().unwrap());
             let vaddr = u32::from_be_bytes(data[0x48 + (i * 4)..0x48 + (i * 4) + 4].try_into().unwrap());
             let size = u32::from_be_bytes(data[0x90 + (i * 4)..0x90 + (i * 4) + 4].try_into().unwrap());
 

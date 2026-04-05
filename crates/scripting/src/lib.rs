@@ -494,19 +494,19 @@ impl Host for LuaHost {
 
     fn on_cpu_pre(&mut self, emu: &mut GameCube) {
         let pc = emu.cpu.pc;
-        if let Some(callback) = self.cpu_pre.get(&pc) {
-            if let Err(err) = self.call_cpu_hook("cpu_pre", callback, emu) {
-                log_hook_error("cpu_pre", &err);
-            }
+        if let Some(callback) = self.cpu_pre.get(&pc)
+            && let Err(err) = self.call_cpu_hook("cpu_pre", callback, emu)
+        {
+            log_hook_error("cpu_pre", &err);
         }
     }
 
     fn on_cpu_post(&mut self, emu: &mut GameCube) {
         let pc = emu.cpu.cia;
-        if let Some(callback) = self.cpu_post.get(&pc) {
-            if let Err(err) = self.call_cpu_hook("cpu_post", callback, emu) {
-                log_hook_error("cpu_post", &err);
-            }
+        if let Some(callback) = self.cpu_post.get(&pc)
+            && let Err(err) = self.call_cpu_hook("cpu_post", callback, emu)
+        {
+            log_hook_error("cpu_post", &err);
         }
     }
 
@@ -548,12 +548,11 @@ impl Host for LuaHost {
     }
 
     fn on_bus_write_post(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32) {
-        if let Some(callback) = self.bus_write_post.resolve(virt_addr, phys_addr) {
-            if let Err(err) =
+        if let Some(callback) = self.bus_write_post.resolve(virt_addr, phys_addr)
+            && let Err(err) =
                 self.call_bus_write_post_hook("bus_write_post", callback, emu, virt_addr, phys_addr, size, value)
-            {
-                log_hook_error("bus_write_post", &err);
-            }
+        {
+            log_hook_error("bus_write_post", &err);
         }
     }
 }

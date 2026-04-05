@@ -140,12 +140,12 @@ pub fn dsp_reg_comment(text: &str, regs: &gecko::flipper::dsp::core::Registers) 
                 }
                 _ => {
                     // Individual 16-bit registers (reg5 index 0-31)
-                    if let Some(idx) = dsp_reg_index(name) {
-                        if !seen[idx as usize] {
-                            seen[idx as usize] = true;
-                            let val = dsp_reg_read(regs, idx);
-                            parts.push(format!("{}={:04X}", name, val));
-                        }
+                    if let Some(idx) = dsp_reg_index(name)
+                        && !seen[idx as usize]
+                    {
+                        seen[idx as usize] = true;
+                        let val = dsp_reg_read(regs, idx);
+                        parts.push(format!("{}={:04X}", name, val));
                     }
                 }
             }
