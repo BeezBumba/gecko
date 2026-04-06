@@ -248,56 +248,19 @@ impl GameCube {
         self.dsp.registers.nia = natural_nia;
 
         // Save state before main instruction so extensions read pre-instruction values.
-        // Extensions see the old accumulators and status (for saturation/sign-extension).
-        let has_ext = instr.ext_opcode().is_some();
-        let saved = if has_ext {
-            Some((
-                self.dsp.registers.ac0_high,
-                self.dsp.registers.ac0_mid,
-                self.dsp.registers.ac0_low,
-                self.dsp.registers.ac1_high,
-                self.dsp.registers.ac1_mid,
-                self.dsp.registers.ac1_low,
-                self.dsp.registers.status,
-            ))
-        } else {
-            None
-        };
+        let pre_snap = instr
+            .ext_opcode()
+            .map(|_| self.dsp.registers.snapshot());
 
         lut::dispatch(self, instr);
 
-        // Dispatch extension opcode if present.
-        // Extensions read accumulator/status values from BEFORE the main instruction.
+        // Dispatch extension opcode: it reads accumulator/status from before the main instruction
         if let Some(ext) = instr.ext_opcode() {
             let ext = instruction::GcDspExt(ext);
-            if let Some((h0, m0, l0, h1, m1, l1, old_sr)) = saved {
-                let new_ac = (
-                    self.dsp.registers.ac0_high,
-                    self.dsp.registers.ac0_mid,
-                    self.dsp.registers.ac0_low,
-                    self.dsp.registers.ac1_high,
-                    self.dsp.registers.ac1_mid,
-                    self.dsp.registers.ac1_low,
-                );
-                let new_sr = self.dsp.registers.status;
-                self.dsp.registers.ac0_high = h0;
-                self.dsp.registers.ac0_mid = m0;
-                self.dsp.registers.ac0_low = l0;
-                self.dsp.registers.ac1_high = h1;
-                self.dsp.registers.ac1_mid = m1;
-                self.dsp.registers.ac1_low = l1;
-                self.dsp.registers.status = old_sr;
-
-                lut::dispatch_gc_dsp_ext(self, ext);
-
-                self.dsp.registers.ac0_high = new_ac.0;
-                self.dsp.registers.ac0_mid = new_ac.1;
-                self.dsp.registers.ac0_low = new_ac.2;
-                self.dsp.registers.ac1_high = new_ac.3;
-                self.dsp.registers.ac1_mid = new_ac.4;
-                self.dsp.registers.ac1_low = new_ac.5;
-                self.dsp.registers.status = new_sr;
-            }
+            let post_snap = self.dsp.registers.snapshot();
+            self.dsp.registers.restore(&pre_snap.unwrap());
+            lut::dispatch_gc_dsp_ext(self, ext);
+            self.dsp.registers.restore(&post_snap);
         }
 
         // Check if we've reached the end of a loop.

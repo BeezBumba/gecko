@@ -75,7 +75,9 @@ pub(crate) fn triangulate_into(dc: &DrawCall, out: &mut Vec<GpuVertex>) {
                 out.push((&dc.vertices[i]).into());
             }
         }
-        _ => unimplemented!("triangulation for {:?}", dc.primitive),
+        _ => {
+            eprintln!("triangulate: skipping unsupported primitive {:?}", dc.primitive);
+        }
     }
 }
 

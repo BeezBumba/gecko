@@ -87,7 +87,7 @@ impl GraphicsProcessor {
                 FifoCmd::Xf(data) => self.load_xf(&data),
                 FifoCmd::Bp(data) => self.load_bp(&data),
                 FifoCmd::CallDisplayList { phys_addr, nbytes } => {
-                    let addr = phys_addr as usize;
+                    let addr = (phys_addr & 0x3FFFFFFF) as usize;
                     let len = nbytes as usize;
                     self.execute_display_list(mmio, &mmio.ram[addr..addr + len].to_vec());
                 }
