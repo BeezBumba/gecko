@@ -4,7 +4,6 @@ use crate::flipper::pi::InterruptFlag;
 use crate::gamecube::GameCube;
 use crate::mmio::constants::VI_BASE;
 use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
-use crate::scheduler::EventKind;
 
 const CPU_CORE_CLOCK: u64 = 486_000_000;
 const CLOCK_FREQUENCIES: [u64; 2] = [27_000_000, 54_000_000];
@@ -245,7 +244,7 @@ impl GameCube {
             let ticks_per_hl = self.vi.ticks_per_half_line();
             if ticks_per_hl > 0 {
                 self.vi.half_line_scheduled = true;
-                self.scheduler.schedule_in(ticks_per_hl, EventKind::ViHalfLine);
+                self.scheduler.schedule_in(ticks_per_hl, vi_half_line_handler);
             }
         }
     }
@@ -257,7 +256,17 @@ impl GameCube {
             self.pi.clear_interrupt(InterruptFlag::Vi);
         }
     }
+}
 
+/// Scheduler handler: VI half-line. Reschedules the next half-line and refreshes interrupts.
+pub fn vi_half_line_handler(gc: &mut GameCube) {
+    gc.vi.on_half_line(gc.scheduler.cycles);
+    gc.vi.half_line_scheduled = false;
+    gc.maybe_schedule_vi_half_line();
+    gc.check_vi_interrupts();
+}
+
+impl GameCube {
     #[rustfmt::skip]
     pub fn render_xfb(&self) -> Vec<u32> {
         let video_format = self.vi.dcr.video_format();

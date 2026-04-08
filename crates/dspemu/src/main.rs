@@ -111,7 +111,7 @@ fn main() {
             }
         }
 
-        emu.tick_dsp();
+        emu.execute_dsp_batch();
         steps += 1;
     }
 }

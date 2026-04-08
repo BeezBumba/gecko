@@ -17,7 +17,7 @@ use crate::hooks::{HookFilters, HookFlags, HookState, Host};
 #[cfg(feature = "idle-skip")]
 use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
 use crate::mmio::Mmio;
-use crate::scheduler::{CPU_CYCLES_PER_DSP_TICK, CYCLES_PER_VSYNC, DSP_BATCH_SIZE, EventKind, Scheduler};
+use crate::scheduler::Scheduler;
 use image::Executable;
 
 pub struct GameCube {
@@ -156,35 +156,6 @@ impl GameCube {
         emulator
     }
 
-    /// Handle a single scheduler event.
-    #[inline(always)]
-    pub fn process_event(&mut self, event: EventKind) {
-        match event {
-            EventKind::VSync => {
-                self.vsync_pending = true;
-                self.scheduler.schedule_in(CYCLES_PER_VSYNC, EventKind::VSync);
-            }
-            EventKind::ViHalfLine => {
-                self.vi.on_half_line(self.scheduler.cycles);
-                self.vi.half_line_scheduled = false;
-                self.maybe_schedule_vi_half_line();
-                self.check_vi_interrupts();
-            }
-            EventKind::DiTransferComplete => {
-                self.complete_dvd_transfer();
-            }
-            EventKind::DspTick => {
-                self.tick_dsp();
-                self.scheduler
-                    .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, EventKind::DspTick);
-            }
-            EventKind::AramDmaComplete => {
-                self.dsp.process_aram_dma(&mut self.mmio);
-                self.check_dsp_interrupts();
-            }
-        }
-    }
-
     #[inline(always)]
     pub fn step_cpu(&mut self) {
         // Deliver external interrupt when EE=1 and any enabled PI interrupt is pending
@@ -252,8 +223,8 @@ impl GameCube {
     /// Drain pending scheduler events, then execute one CPU instruction.
     #[inline(always)]
     pub fn step(&mut self) {
-        while let Some(event) = self.scheduler.poll() {
-            self.process_event(event);
+        while let Some(f) = self.scheduler.poll() {
+            f(self);
         }
         self.step_cpu();
     }
@@ -274,8 +245,8 @@ impl GameCube {
                 self.step_cpu();
             }
             // Drain all events that are now due
-            while let Some(event) = self.scheduler.poll() {
-                self.process_event(event);
+            while let Some(f) = self.scheduler.poll() {
+                f(self);
             }
         }
     }

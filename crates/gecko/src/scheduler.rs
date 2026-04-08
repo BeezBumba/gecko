@@ -1,25 +1,43 @@
-use std::cmp::Reverse;
+use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::collections::binary_heap::PeekMut;
+
+use crate::gamecube::GameCube;
 
 pub const CYCLES_PER_VSYNC: u64 = 486_000_000 / 60; // TODO: fix
 pub const TIMEBASE_DIVISOR: u64 = 12;
 pub const CPU_CYCLES_PER_DSP_TICK: u64 = 6; // ~486MHz CPU / ~81MHz DSP
 pub const DSP_BATCH_SIZE: u64 = 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum EventKind {
-    VSync,
-    ViHalfLine,
-    DiTransferComplete,
-    DspTick,
-    AramDmaComplete,
+pub type ScheduledFn = fn(&mut GameCube);
+
+#[derive(Clone, Copy, Eq)]
+struct ScheduledEvent {
+    deadline: u64,
+    f: ScheduledFn,
+}
+
+impl PartialEq for ScheduledEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.deadline == other.deadline
+    }
+}
+impl Ord for ScheduledEvent {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.deadline.cmp(&self.deadline)
+    }
+}
+impl PartialOrd for ScheduledEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 pub struct Scheduler {
     pub cycles: u64,
     next_deadline: u64,
     timebase_offset: i64,
-    events: BinaryHeap<Reverse<(u64, EventKind)>>,
+    events: BinaryHeap<ScheduledEvent>,
 }
 
 impl Scheduler {
@@ -30,8 +48,11 @@ impl Scheduler {
             timebase_offset: 0,
             events: BinaryHeap::new(),
         };
-        s.schedule_at(CYCLES_PER_VSYNC, EventKind::VSync);
-        s.schedule_at(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, EventKind::DspTick);
+        s.schedule_at(CYCLES_PER_VSYNC, crate::scheduler::vsync_handler);
+        s.schedule_at(
+            CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE,
+            crate::scheduler::dsp_batch_handler,
+        );
         s
     }
 
@@ -40,7 +61,7 @@ impl Scheduler {
     /// This may later be updated if an event is scheduled sooner than the current target.
     #[inline(always)]
     pub fn update_deadline(&mut self) {
-        self.next_deadline = self.events.peek().map_or(self.cycles, |Reverse((d, _))| *d);
+        self.next_deadline = self.events.peek().map_or(self.cycles, |e| e.deadline);
     }
 
     pub fn timebase(&self) -> u64 {
@@ -67,21 +88,22 @@ impl Scheduler {
         (self.timebase() >> 32) as u32
     }
 
-    pub fn schedule_at(&mut self, deadline: u64, kind: EventKind) {
-        self.events.push(Reverse((deadline, kind)));
+    pub fn schedule_at(&mut self, deadline: u64, f: ScheduledFn) {
+        self.events.push(ScheduledEvent { deadline, f });
         if deadline < self.next_deadline {
             self.next_deadline = deadline;
         }
     }
 
-    pub fn schedule_in(&mut self, delay: u64, kind: EventKind) {
+    pub fn schedule_in(&mut self, delay: u64, f: ScheduledFn) {
         let deadline = self.cycles + delay;
-        self.schedule_at(deadline, kind);
+        self.schedule_at(deadline, f);
     }
 
-    pub fn poll(&mut self) -> Option<EventKind> {
-        if self.events.peek().map_or(false, |Reverse((d, _))| self.cycles >= *d) {
-            Some(self.events.pop().unwrap().0.1)
+    pub fn poll(&mut self) -> Option<ScheduledFn> {
+        let top = self.events.peek_mut()?;
+        if self.cycles >= top.deadline {
+            Some(PeekMut::pop(top).f)
         } else {
             None
         }
@@ -91,4 +113,20 @@ impl Scheduler {
     pub fn next_deadline(&self) -> u64 {
         self.next_deadline
     }
+}
+
+/// Reschedules itself every frame.
+pub fn vsync_handler(gc: &mut GameCube) {
+    gc.vsync_pending = true;
+    gc.scheduler
+        .schedule_in(CYCLES_PER_VSYNC, crate::scheduler::vsync_handler);
+}
+
+/// Reschedules itself every DSP batch.
+pub fn dsp_batch_handler(gc: &mut GameCube) {
+    gc.execute_dsp_batch();
+    gc.scheduler.schedule_in(
+        crate::scheduler::CPU_CYCLES_PER_DSP_TICK * crate::scheduler::DSP_BATCH_SIZE,
+        crate::scheduler::dsp_batch_handler,
+    );
 }

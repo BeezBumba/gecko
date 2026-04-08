@@ -161,8 +161,9 @@ impl GameCube {
         // Else it will get trapped inside restore_irq, right after mtmsr, executing in a loop
         // of the DVD dispatch handler which in turn re-issues the same command...
         const DI_TRANSFER_DELAY: u64 = 10_000; // Based off of vxpm and hazel
-        self.scheduler
-            .schedule_in(DI_TRANSFER_DELAY, crate::scheduler::EventKind::DiTransferComplete);
+        self.scheduler.schedule_in(DI_TRANSFER_DELAY, |gc| {
+            gc.complete_dvd_transfer();
+        });
     }
 
     pub fn complete_dvd_transfer(&mut self) {

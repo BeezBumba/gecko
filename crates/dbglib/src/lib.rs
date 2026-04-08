@@ -5,7 +5,13 @@ pub mod windows;
 use std::io::Write;
 
 use gecko::gamecube::GameCube;
-use gecko::scheduler::{CPU_CYCLES_PER_DSP_TICK, DSP_BATCH_SIZE, EventKind};
+use gecko::scheduler::{CPU_CYCLES_PER_DSP_TICK, DSP_BATCH_SIZE, ScheduledFn, dsp_batch_handler};
+
+/// Identify the DSP batch handler so the debugger can intercept it for per-instruction tracing.
+#[inline(always)]
+fn is_dsp_batch(f: ScheduledFn) -> bool {
+    (f as usize) == (dsp_batch_handler as ScheduledFn as usize)
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum EmulatorState {
@@ -113,8 +119,8 @@ impl Debugger {
     /// Drain and process scheduler events, tracing DSP ticks when active.
     #[inline(always)]
     fn drain_events(&mut self, emulator: &mut GameCube) {
-        while let Some(event) = emulator.scheduler.poll() {
-            if event == EventKind::DspTick && self.is_dsp_tracing() {
+        while let Some(f) = emulator.scheduler.poll() {
+            if is_dsp_batch(f) && self.is_dsp_tracing() {
                 for _ in 0..DSP_BATCH_SIZE {
                     self.dsp_trace_step(emulator);
                     if !emulator.step_dsp_instruction() {
@@ -124,9 +130,9 @@ impl Debugger {
                 emulator.check_dsp_interrupts();
                 emulator
                     .scheduler
-                    .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, EventKind::DspTick);
+                    .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, dsp_batch_handler);
             } else {
-                emulator.process_event(event);
+                f(emulator);
             }
         }
     }
@@ -137,8 +143,8 @@ impl Debugger {
     #[inline(always)]
     fn drain_events_until_dsp(&mut self, emulator: &mut GameCube) -> bool {
         let mut dsp_hit = false;
-        while let Some(event) = emulator.scheduler.poll() {
-            if event == EventKind::DspTick {
+        while let Some(f) = emulator.scheduler.poll() {
+            if is_dsp_batch(f) {
                 if self.is_dsp_tracing() {
                     for _ in 0..DSP_BATCH_SIZE {
                         self.dsp_trace_step(emulator);
@@ -149,13 +155,13 @@ impl Debugger {
                     emulator.check_dsp_interrupts();
                     emulator
                         .scheduler
-                        .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, EventKind::DspTick);
+                        .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, dsp_batch_handler);
                 } else {
-                    emulator.process_event(event);
+                    f(emulator);
                 }
                 dsp_hit = true;
             } else {
-                emulator.process_event(event);
+                f(emulator);
             }
         }
         dsp_hit

@@ -284,7 +284,7 @@ impl GameCube {
 
     /// Execute a batch of DSP instructions (scheduler hot path).
     #[inline(always)]
-    pub fn tick_dsp(&mut self) {
+    pub fn execute_dsp_batch(&mut self) {
         for _ in 0..crate::scheduler::DSP_BATCH_SIZE {
             if !self.step_dsp_instruction() {
                 break;
@@ -428,12 +428,14 @@ impl Dsp {
     }
 }
 
-impl crate::gamecube::GameCube {
+impl GameCube {
     pub fn check_dsp_interrupts(&mut self) {
+        use crate::flipper::pi::InterruptFlag;
+
         if self.dsp.interrupt_active() {
-            self.pi.assert_interrupt(crate::flipper::pi::InterruptFlag::Dsp);
+            self.pi.assert_interrupt(InterruptFlag::Dsp);
         } else {
-            self.pi.clear_interrupt(crate::flipper::pi::InterruptFlag::Dsp);
+            self.pi.clear_interrupt(InterruptFlag::Dsp);
         }
     }
 
@@ -441,8 +443,10 @@ impl crate::gamecube::GameCube {
         if self.dsp.pending_aram_dma {
             self.dsp.pending_aram_dma = false;
             const ARAM_DMA_DELAY: u64 = 10_000;
-            self.scheduler
-                .schedule_in(ARAM_DMA_DELAY, crate::scheduler::EventKind::AramDmaComplete);
+            self.scheduler.schedule_in(ARAM_DMA_DELAY, |gc| {
+                gc.dsp.process_aram_dma(&mut gc.mmio);
+                gc.check_dsp_interrupts();
+            });
         }
     }
 }
