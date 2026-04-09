@@ -201,7 +201,7 @@ impl GameCube {
         #[cfg(feature = "idle-skip")]
         match self.idle.check(self.cpu.cia, self.cpu.nia) {
             IdleCheck::Skip => {
-                if let Some(deadline) = self.scheduler.next_event_deadline() {
+                if let Some(deadline) = self.scheduler.next_deadline() {
                     self.scheduler.cycles = deadline;
                 }
             }
@@ -209,7 +209,7 @@ impl GameCube {
                 let safe = self.is_polling_loop(start, end);
                 self.idle.set_validated(safe);
                 if safe {
-                    if let Some(deadline) = self.scheduler.next_event_deadline() {
+                    if let Some(deadline) = self.scheduler.next_deadline() {
                         self.scheduler.cycles = deadline;
                     }
                 }
