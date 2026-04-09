@@ -426,10 +426,8 @@ fn load_bus_dispatch(lua: &Lua, trap_root: Option<&Table>, trap_name: &str) -> L
 
 fn parse_address_key(value: Value, context: &str) -> LuaResult<u32> {
     match value {
-        Value::Integer(address) if (0..=u32::MAX as i64).contains(&address) => Ok(address as u32),
-        Value::Number(address)
-            if address.is_finite() && address.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&address) =>
-        {
+        Value::Integer(address) if address >= 0 => Ok(address as u32),
+        Value::Number(address) if address.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&address) => {
             Ok(address as u32)
         }
         other => Err(mlua::Error::runtime(format!(

@@ -8,5 +8,5 @@ hooks-mut-traps = ["gecko/hooks-mut-traps"]
 
 [dependencies]
 gecko = { path = "../gecko", features = ["hooks"] }
-mlua = { version = "0.10.5", features = ["lua54", "send"] }
+mlua = { version = "0.10.5", features = ["luau-jit", "send", "vendored"] }
 tracing = "0.1.44"
