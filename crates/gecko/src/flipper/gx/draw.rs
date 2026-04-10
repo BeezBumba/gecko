@@ -38,6 +38,7 @@ impl Primitive {
 pub struct Vertex {
     pub position: [f32; 3],
     pub color0: [f32; 4],
+    pub color1: [f32; 4],
     pub normal: [f32; 3],
     pub pos_view: [f32; 3],
     pub texcoords: [Option<[f32; 2]>; 8],

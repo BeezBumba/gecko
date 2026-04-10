@@ -42,64 +42,70 @@ impl GxRenderer {
                     offset: 0,
                     shader_location: 0,
                 },
-                // color: vec4<f32>
+                // color0: vec4<f32>
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x4,
                     offset: 12,
                     shader_location: 1,
                 },
+                // color1: vec4<f32>
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 28,
+                    shader_location: 2,
+                },
                 // normal: vec3<f32>
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
-                    offset: 28,
-                    shader_location: 2,
+                    offset: 44,
+                    shader_location: 3,
                 },
                 // pos_view: vec3<f32>
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
-                    offset: 40,
-                    shader_location: 3,
+                    offset: 56,
+                    shader_location: 4,
                 },
                 // tex0-tex7: vec2<f32> each
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: 52,
-                    shader_location: 4,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: 60,
+                    offset: 68,
                     shader_location: 5,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: 68,
+                    offset: 76,
                     shader_location: 6,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: 76,
+                    offset: 84,
                     shader_location: 7,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: 84,
+                    offset: 92,
                     shader_location: 8,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: 92,
+                    offset: 100,
                     shader_location: 9,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: 100,
+                    offset: 108,
                     shader_location: 10,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: 108,
+                    offset: 116,
                     shader_location: 11,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 124,
+                    shader_location: 12,
                 },
             ],
         };

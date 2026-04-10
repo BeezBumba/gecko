@@ -5,6 +5,7 @@ use gecko::flipper::gx::draw::{DrawCall, Primitive};
 pub(crate) struct GpuVertex {
     pub position: [f32; 3],
     pub color: [f32; 4],
+    pub color1: [f32; 4],
     pub normal: [f32; 3],
     pub pos_view: [f32; 3],
     pub tex0: [f32; 2],
@@ -23,6 +24,7 @@ impl From<&gecko::flipper::gx::draw::Vertex> for GpuVertex {
         Self {
             position: v.position,
             color: v.color0,
+            color1: v.color1,
             normal: v.normal,
             pos_view: v.pos_view,
             tex0: tc(0),

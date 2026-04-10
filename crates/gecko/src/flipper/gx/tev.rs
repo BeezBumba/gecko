@@ -10,11 +10,13 @@ impl GraphicsProcessor {
             orders[2 * i] = TevStageOrder::default()
                 .with_texmap(reg.texmap0())
                 .with_texcoord(reg.texcoord0())
-                .with_tex_enable(reg.tex_enable0());
+                .with_tex_enable(reg.tex_enable0())
+                .with_channel(reg.channel0());
             orders[2 * i + 1] = TevStageOrder::default()
                 .with_texmap(reg.texmap1())
                 .with_texcoord(reg.texcoord1())
-                .with_tex_enable(reg.tex_enable1());
+                .with_tex_enable(reg.tex_enable1())
+                .with_channel(reg.channel1());
         }
         orders
     }

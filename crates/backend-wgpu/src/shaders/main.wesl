@@ -15,6 +15,7 @@ fn vs_main(in: VsIn) -> VsOut {
         frame.ambient_color, frame.material_color,
         in.color, in.normal, in.pos_view,
     );
+    out.color1 = in.color1;
     out.uv0 = in.tex0;
     out.uv1 = in.tex1;
     out.uv2 = in.tex2;
@@ -35,7 +36,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     regs[2] = frame.tev_color_reg2;
     regs[3] = frame.tev_color_reg3;
 
-    let ras_color = in.color;
+    let color0 = in.color;
     let num_stages = frame.num_tev_stages;
 
     var last_color_dest = 0u;
@@ -47,11 +48,26 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
 
         // Resolve per-stage texture from TevOrder
-        // TevStageOrder bit layout: texmap(0-2), texcoord(3-5), tex_enable(6)
+        // TevStageOrder bit layout: texmap(0-2), texcoord(3-5), tex_enable(6), channel(7-9)
         let order = read_packed(frame.tev_orders, stage);
         let texmap_idx = order & 7u;
         let texcoord_idx = (order >> 3u) & 7u;
         let tex_enabled = ((order >> 6u) & 1u) != 0u;
+        let ras_channel = (order >> 7u) & 7u;
+
+        // Select raster color based on channel:
+        // 0=Color0, 1=Color1, 2=Alpha0, 3=Alpha1, 4=Color0A0, 5=Color1A1, 6=Zero, 7=Bump
+        var ras_color: vec4<f32>;
+        switch ras_channel {
+            case 0u: { ras_color = color0; }                                                    // Color0
+            case 1u: { ras_color = in.color1; }                                                 // Color1
+            case 2u: { ras_color = vec4(color0.a, color0.a, color0.a, color0.a); }              // Alpha0
+            case 3u: { ras_color = vec4(in.color1.a, in.color1.a, in.color1.a, in.color1.a); }  // Alpha1
+            case 4u: { ras_color = color0; }                                                    // Color0A0
+            case 5u: { ras_color = in.color1; }                                                 // Color1A1
+            case 6u: { ras_color = vec4(0.0, 0.0, 0.0, 0.0); }                                  // Zero
+            default: { ras_color = vec4(0.0, 0.0, 0.0, 0.0); }                                  // Bump (TODO: not implemented)
+        }
 
         var tex_color: vec4<f32>;
         if tex_enabled {

@@ -622,6 +622,9 @@ pub struct TevStageOrder {
 
     #[bits(6)]
     pub tex_enable: bool,
+
+    #[bits(7..=9)]
+    pub channel: RasterChannel,
 }
 
 #[chapa::bitfield(u32, order = lsb0)]

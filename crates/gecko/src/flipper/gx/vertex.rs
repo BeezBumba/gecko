@@ -1,6 +1,6 @@
 use super::constants::{
-    ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_NRM, ARRAY_POS, ARRAY_STRIDE_REG, ARRAY_TEX0, VATA_REG, VATB_REG, VATC_REG,
-    VCD_HI_REG, VCD_LO_REG, XF_ALPHA_CTRL0, XF_AMBIENT_COLOR0, XF_COLOR_CTRL0, XF_LIGHT_A0, XF_LIGHT_BASE,
+    ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_CLR1, ARRAY_NRM, ARRAY_POS, ARRAY_STRIDE_REG, ARRAY_TEX0, VATA_REG, VATB_REG,
+    VATC_REG, VCD_HI_REG, VCD_LO_REG, XF_ALPHA_CTRL0, XF_AMBIENT_COLOR0, XF_COLOR_CTRL0, XF_LIGHT_A0, XF_LIGHT_BASE,
     XF_LIGHT_COLOR, XF_LIGHT_K0, XF_LIGHT_NX, XF_LIGHT_PX, XF_LIGHT_STRIDE, XF_MATERIAL_COLOR0, XF_MATRIX_INDEX_A,
     XF_NRM_MTX_BASE, XF_NUM_TEXGENS, XF_POS_MTX_STRIDE,
 };
@@ -16,9 +16,6 @@ struct VertexFormat {
     pos_base: usize,
     pos_stride: usize,
     pos_data_size: usize,
-    clr0_base: usize,
-    clr0_stride: usize,
-    clr0_data_size: usize,
     nrm_base_addr: usize,
     nrm_stride: usize,
     nrm_data_size: usize,
@@ -36,7 +33,13 @@ struct VertexFormat {
     pos_attr: AttributeType,
     nrm_attr: AttributeType,
     clr0_attr: AttributeType,
-    clr1_stream_size: usize,
+    clr0_base: usize,
+    clr0_stride: usize,
+    clr0_data_size: usize,
+    clr1_attr: AttributeType,
+    clr1_base: usize,
+    clr1_stride: usize,
+    clr1_data_size: usize,
 }
 
 impl GraphicsProcessor {
@@ -131,7 +134,9 @@ impl GraphicsProcessor {
         let pos_stream_size = attr_stream_size(pos_attr, pos_data_size);
         let nrm_stream_size = vat_a.nrm_stream_size(nrm_attr);
         let clr0_stream_size = attr_stream_size(clr0_attr, clr0_data_size);
-        let clr1_stream_size = attr_stream_size(vcd_lo.color1(), vat_a.clr1_data_size());
+        let clr1_attr = vcd_lo.color1();
+        let clr1_data_size = vat_a.clr1_data_size();
+        let clr1_stream_size = attr_stream_size(clr1_attr, clr1_data_size);
 
         let tex_attrs = [
             vcd_hi.tex0(),
@@ -225,7 +230,10 @@ impl GraphicsProcessor {
             pos_attr,
             nrm_attr,
             clr0_attr,
-            clr1_stream_size,
+            clr1_attr,
+            clr1_base: self.cp_regs[ARRAY_BASE_REG + ARRAY_CLR1] as usize,
+            clr1_stride: self.cp_regs[ARRAY_STRIDE_REG + ARRAY_CLR1] as usize,
+            clr1_data_size,
         }
     }
 
@@ -292,15 +300,25 @@ impl GraphicsProcessor {
         } else if vf.clr0_attr == AttributeType::Direct {
             let start = cur.position() as usize;
             cur.set_position(cur.position() + vf.clr0_data_size as u64);
-            decode_color(&data[start..start + vf.clr0_data_size], &vf.vat_a)
+            decode_color(&data[start..start + vf.clr0_data_size], vf.vat_a.clr0_fmt(), vf.vat_a.clr0_cnt())
         } else {
             let clr0_index = read_index(cur, vf.clr0_attr);
             let clr0_addr = vf.clr0_base + clr0_index * vf.clr0_stride;
-            decode_color(&ram[clr0_addr..clr0_addr + vf.clr0_data_size], &vf.vat_a)
+            decode_color(&ram[clr0_addr..clr0_addr + vf.clr0_data_size], vf.vat_a.clr0_fmt(), vf.vat_a.clr0_cnt())
         };
 
-        // Skip color1 (TODO: not yet used for rendering)
-        cur.set_position(cur.position() + vf.clr1_stream_size as u64);
+        // Read color1
+        let color1 = if vf.clr1_attr == AttributeType::None {
+            [1.0, 1.0, 1.0, 1.0]
+        } else if vf.clr1_attr == AttributeType::Direct {
+            let start = cur.position() as usize;
+            cur.set_position(cur.position() + vf.clr1_data_size as u64);
+            decode_color(&data[start..start + vf.clr1_data_size], vf.vat_a.clr1_fmt(), vf.vat_a.clr1_cnt())
+        } else {
+            let clr1_index = read_index(cur, vf.clr1_attr);
+            let clr1_addr = vf.clr1_base + clr1_index * vf.clr1_stride;
+            decode_color(&ram[clr1_addr..clr1_addr + vf.clr1_data_size], vf.vat_a.clr1_fmt(), vf.vat_a.clr1_cnt())
+        };
 
         // Read all texcoords (tex0-tex7)
         let mut raw_texcoords: [Option<[f32; 2]>; 8] = [None; 8];
@@ -356,6 +374,7 @@ impl GraphicsProcessor {
         draw::Vertex {
             position,
             color0,
+            color1,
             normal: [normal_view.0, normal_view.1, normal_view.2],
             pos_view: [pos_view.0, pos_view.1, pos_view.2],
             texcoords,
@@ -466,9 +485,9 @@ fn decode_position(data: &[u8], vat: &VatA) -> [f32; 3] {
     result
 }
 
-fn decode_color(data: &[u8], vat: &VatA) -> [f32; 4] {
-    let has_alpha = vat.clr0_cnt() == regs::ColorCount::Rgba;
-    match vat.clr0_fmt() {
+fn decode_color(data: &[u8], fmt: regs::ColorFormat, cnt: regs::ColorCount) -> [f32; 4] {
+    let has_alpha = cnt == regs::ColorCount::Rgba;
+    match fmt {
         regs::ColorFormat::Rgb565 => {
             let raw = u16::from_be_bytes([data[0], data[1]]);
             let r = ((raw >> 11) & 0x1F) as f32 / 31.0;
