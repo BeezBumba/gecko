@@ -38,10 +38,10 @@ jobs:
           restore-keys: wasm-
 
       - name: Build WASM
-        run: wasm-pack build crates/web --target web --out-dir pkg --release
+        run: wasm-pack build crates/web --target web --out-dir pkg --out-name gecko_web --release
 
       - name: Build WASM (debug)
-        run: wasm-pack build crates/web --target web --out-dir pkg-dbg --release -- --features debug
+        run: wasm-pack build crates/web --target web --out-dir pkg-dbg --out-name gecko_web --release -- --features debug
 
       - name: Prepare site
         run: |

@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y clang lld --no-install-recommends && rm
 WORKDIR /app
 COPY . .
 
-RUN wasm-pack build crates/web --target web --out-dir pkg --release \
-    && wasm-pack build crates/web --target web --out-dir pkg-dbg --release -- --features debug
+RUN wasm-pack build crates/web --target web --out-dir pkg --out-name gecko_web --release \
+    && wasm-pack build crates/web --target web --out-dir pkg-dbg --out-name gecko_web --release -- --features debug
 
 RUN mkdir -p /site/dbg /site/pkg /site/pkg-dbg \
     && cp crates/web/index.html /site/ \
