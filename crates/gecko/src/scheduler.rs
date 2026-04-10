@@ -30,7 +30,8 @@ impl Scheduler {
             timebase_offset: 0,
             events: VecDeque::with_capacity(8),
         };
-        s.schedule_at(RefreshRate::Hz60.cycles_per_frame(), crate::scheduler::vsync_handler);
+        let initial_refresh_rate = RefreshRate::Hz60; // TODO: Detect IPL and schedule accordingly
+        s.schedule_at(initial_refresh_rate.cycles_per_frame(), crate::scheduler::vsync_handler);
         s.schedule_at(
             CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE,
             crate::scheduler::dsp_batch_handler,
