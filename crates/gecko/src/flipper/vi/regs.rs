@@ -1,6 +1,6 @@
 use crate::flipper::vi;
 use crate::gamecube::GameCube;
-use crate::mmio::traits::{MmioAccess, MmioRegister, WriteMask};
+use crate::mmio::traits::{MmioAccess, WriteMask};
 use chapa::BitEnum;
 
 // 0xCC002000	2	R/W	VTR (Vertical Timing Register)
@@ -32,7 +32,18 @@ pub enum RefreshRate {
     Hz50,
 }
 
-#[derive(Debug, BitEnum)]
+impl RefreshRate {
+    #[inline(always)]
+    pub fn cycles_per_frame(&self) -> u64 {
+        const CPU_CORE_CLOCK: u64 = 486_000_000;
+        match self {
+            RefreshRate::Hz60 => CPU_CORE_CLOCK / 60,
+            RefreshRate::Hz50 => CPU_CORE_CLOCK / 50,
+        }
+    }
+}
+
+#[derive(Debug, BitEnum, PartialEq, Eq)]
 pub enum VideoFormat {
     Ntsc = 0,
     Pal = 1,
@@ -94,10 +105,11 @@ impl MmioAccess<GameCube> for DisplayConfiguration {
     fn write(self, gc: &mut GameCube, _: WriteMask) {
         // TODO: Rising edge on RST clears the register. Just a test for now.
         if self.reset() && !gc.vi.dcr.reset() {
-            gc.vi.dcr = <DisplayConfiguration as MmioRegister>::from_raw(0);
+            gc.vi.dcr = DisplayConfiguration::from_raw(0);
         } else {
             gc.vi.dcr = self;
         }
+
         vi::ensure_half_line_scheduled(gc);
     }
 }

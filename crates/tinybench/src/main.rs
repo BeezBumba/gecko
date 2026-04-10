@@ -1,10 +1,7 @@
 use clap::Parser;
 use gecko::flipper::si::pad::PadStatus;
 use gecko::gamecube::GameCube;
-use gecko::scheduler::CYCLES_PER_VSYNC;
 use std::time::Instant;
-
-const CPU_CLOCK_HZ: f64 = 486_000_000.0;
 
 #[derive(Parser)]
 #[command(about = "Benchmark tool")]
@@ -113,8 +110,9 @@ fn run_bench(emulator: &mut GameCube, args: &Args) {
 
     let total_elapsed = bench_start.elapsed().as_secs_f64();
     let total_fps = frame_count as f64 / total_elapsed;
-    let emulated_cycles = frame_count * CYCLES_PER_VSYNC;
-    let emulated_seconds = emulated_cycles as f64 / CPU_CLOCK_HZ;
+    let rate = emulator.vi.dcr.video_format().refresh_rate();
+    let emulated_cycles = frame_count * rate.cycles_per_frame();
+    let emulated_seconds = emulated_cycles as f64 / 486_000_000.0;
     let speed_pct = (emulated_seconds / total_elapsed) * 100.0;
 
     println!();

@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
+use crate::flipper::vi::regs::RefreshRate;
 use crate::gamecube::GameCube;
 
-pub const CYCLES_PER_VSYNC: u64 = 486_000_000 / 60; // TODO: fix
 pub const TIMEBASE_DIVISOR: u64 = 12;
 pub const CPU_CYCLES_PER_DSP_TICK: u64 = 6; // ~486MHz CPU / ~81MHz DSP
 pub const DSP_BATCH_SIZE: u64 = 1024;
@@ -30,7 +30,7 @@ impl Scheduler {
             timebase_offset: 0,
             events: VecDeque::with_capacity(8),
         };
-        s.schedule_at(CYCLES_PER_VSYNC, crate::scheduler::vsync_handler);
+        s.schedule_at(RefreshRate::Hz60.cycles_per_frame(), crate::scheduler::vsync_handler);
         s.schedule_at(
             CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE,
             crate::scheduler::dsp_batch_handler,
@@ -108,8 +108,9 @@ impl Scheduler {
 /// Reschedules itself every frame.
 pub fn vsync_handler(gc: &mut GameCube) {
     gc.vsync_pending = true;
+    let rate = gc.vi.dcr.video_format().refresh_rate();
     gc.scheduler
-        .schedule_in(CYCLES_PER_VSYNC, crate::scheduler::vsync_handler);
+        .schedule_in(rate.cycles_per_frame(), crate::scheduler::vsync_handler);
 }
 
 /// Reschedules itself every DSP batch.
