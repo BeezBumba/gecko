@@ -40,7 +40,7 @@ pub struct GameCube {
     idle: IdleDetector,
 
     #[cfg(feature = "hooks")]
-    pub hook_host: Option<Box<dyn Host>>,
+    pub hook_host: Option<Box<dyn Host + Send>>,
     #[cfg(feature = "hooks")]
     pub hook_flags: HookFlags,
     #[cfg(feature = "hooks")]
@@ -265,7 +265,7 @@ impl GameCube {
     }
 
     #[cfg(feature = "hooks")]
-    pub fn set_hook_host(&mut self, host: Box<dyn Host>) {
+    pub fn set_hook_host(&mut self, host: Box<dyn Host + Send>) {
         self.apply_hook_state(host.hook_state());
         self.hook_host = Some(host);
     }

@@ -7,3 +7,6 @@
 [submodule "submodules/gcwii-resources"]
 	path = submodules/gcwii-resources
 	url = https://codeberg.org/hazelwiss/gcwii-resources
+[submodule "submodules/gamecube-examples"]
+	path = submodules/gamecube-examples
+	url = https://github.com/devkitPro/gamecube-examples

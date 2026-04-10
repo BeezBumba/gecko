@@ -38,7 +38,7 @@ pub fn emu_thread(
 
         let data = if !emulator.gx.draw_commands.commands.is_empty() {
             FrameData::Gx {
-                commands: std::mem::take(&mut emulator.gx.draw_commands),
+                commands: emulator.gx.draw_commands.take_for_render(),
                 ram: emulator.mmio.ram.clone(),
             }
         } else {

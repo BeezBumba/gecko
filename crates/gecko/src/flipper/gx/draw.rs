@@ -146,6 +146,20 @@ impl DrawCommands {
         }
     }
 
+    /// Extract draw data for cross-thread rendering.
+    ///
+    /// Moves the accumulated `commands` into a new `DrawCommands` (along with
+    /// a copy(!) of the current projection matrix) while preserving the
+    /// projection matrix and vertex-buffer pool on `self` so the emulator can
+    /// reuse them for the next frame.
+    pub fn take_for_render(&mut self) -> DrawCommands {
+        DrawCommands {
+            projection: self.projection,
+            commands: std::mem::take(&mut self.commands),
+            vertex_pool: Vec::new(),
+        }
+    }
+
     pub fn take_vertex_buf(&mut self, capacity: usize) -> Vec<Vertex> {
         if let Some(mut buf) = self.vertex_pool.pop() {
             buf.reserve(capacity.saturating_sub(buf.capacity()));
