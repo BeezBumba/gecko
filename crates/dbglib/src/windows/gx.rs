@@ -50,7 +50,11 @@ pub fn show_gx(ctx: &Context, open: &mut bool, gx: &GraphicsProcessor, mmio: &Mm
                     .id_salt("draw_calls")
                     .max_height(500.0)
                     .show(ui, |ui| {
-                        for (i, call) in dc.commands.iter().enumerate() {
+                        for (i, cmd) in dc.commands.iter().enumerate() {
+                            let gecko::flipper::gx::draw::GxCommand::Draw(call) = cmd else {
+                                ui.label(format!("[{i:>3}]  EFB Copy"));
+                                continue;
+                            };
                             let has_tex = call.textures[0].is_some();
                             let heading = RichText::new(format!(
                                 "[{i:>3}]  {:?}  x  {} verts  tev={}  {}",

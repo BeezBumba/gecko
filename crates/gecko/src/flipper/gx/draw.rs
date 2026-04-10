@@ -175,19 +175,40 @@ impl std::ops::Mul for Matrix4 {
     }
 }
 
+pub enum GxCommand {
+    Draw(DrawCall),
+    CopyEfb(EfbCopyCmd),
+}
+
+pub struct EfbCopyCmd {
+    pub src_x: u32,
+    pub src_y: u32,
+    pub src_w: u32,
+    pub src_h: u32,
+    pub dest_addr: u32,
+    pub dest_stride: u32,
+    pub copy_to_xfb: bool,
+    pub clear: bool,
+    pub clear_color: [f32; 4],
+    pub clear_z: f32,
+    pub half: bool,
+}
+
 #[derive(Default)]
 pub struct DrawCommands {
     pub projection: Matrix4,
-    pub commands: Vec<DrawCall>,
+    pub commands: Vec<GxCommand>,
     vertex_pool: Vec<Vec<Vertex>>,
 }
 
 impl DrawCommands {
     pub fn recycle(&mut self) {
-        for dc in self.commands.drain(..) {
-            let mut buf = dc.vertices;
-            buf.clear();
-            self.vertex_pool.push(buf);
+        for cmd in self.commands.drain(..) {
+            if let GxCommand::Draw(dc) = cmd {
+                let mut buf = dc.vertices;
+                buf.clear();
+                self.vertex_pool.push(buf);
+            }
         }
     }
 

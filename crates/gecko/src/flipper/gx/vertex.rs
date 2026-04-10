@@ -80,7 +80,7 @@ impl GraphicsProcessor {
         // Resolve TEV color registers to f32 arrays for the snapshot
         let tev_color_regs = self.resolve_tev_color_regs();
 
-        self.draw_commands.commands.push(draw::DrawCall {
+        self.draw_commands.commands.push(draw::GxCommand::Draw(draw::DrawCall {
             primitive,
             vertices,
             modelview,
@@ -105,7 +105,7 @@ impl GraphicsProcessor {
             alpha_ctrl: regs::ChanCtrl::from_raw(self.xf_mem[XF_ALPHA_CTRL0]),
             ambient_color: unpack_rgba(self.xf_mem[XF_AMBIENT_COLOR0]),
             material_color: unpack_rgba(self.xf_mem[XF_MATERIAL_COLOR0]),
-        });
+        }));
     }
 
     fn build_vertex_format(&self, cmd: u8) -> VertexFormat {

@@ -3,7 +3,7 @@ use crate::pipeline::PipelineKey;
 use crate::triangulate::{self, GpuVertex, align_up};
 use crate::{DrawUniforms, FrameUniforms, GxRenderer, helpers, texture};
 use encase::{ShaderType as _, UniformBuffer};
-use gecko::flipper::gx::draw::DrawCommands;
+use gecko::flipper::gx::draw::{DrawCommands, GxCommand};
 use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
 use glam::{Mat4, UVec4, Vec4};
 
@@ -37,7 +37,8 @@ impl GxRenderer {
     }
 
     fn prepare_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, commands: &DrawCommands, ram: &[u8]) {
-        for dc in &commands.commands {
+        for cmd in &commands.commands {
+            let GxCommand::Draw(dc) = cmd else { continue };
             for desc in dc.textures.iter().flatten() {
                 let key = (desc.ram_addr, desc.width, desc.height, desc.format);
                 self.texture_cache.entry(key).or_insert_with(|| {
@@ -87,7 +88,8 @@ impl GxRenderer {
         let mut frame_uniform_bytes: Vec<u8> = Vec::new();
         let mut draw_call_indices: Vec<usize> = Vec::new();
 
-        for (dc_idx, dc) in commands.commands.iter().enumerate() {
+        for (dc_idx, cmd) in commands.commands.iter().enumerate() {
+            let GxCommand::Draw(dc) = cmd else { continue };
             let prev_len = self.scratch_vertices.len();
             triangulate::triangulate_into(dc, &mut self.scratch_vertices);
             let added = self.scratch_vertices.len() - prev_len;
@@ -193,7 +195,7 @@ impl GxRenderer {
 
         // Pre-build bind groups for each unique texture/sampler configuration.
         for &dc_idx in draw_call_indices {
-            let dc = &commands.commands[dc_idx];
+            let GxCommand::Draw(dc) = &commands.commands[dc_idx] else { continue };
             let mut tex_keys: [Option<_>; 8] = [None; 8];
             let mut sampler_keys: [Option<_>; 8] = [None; 8];
 
@@ -279,7 +281,9 @@ impl GxRenderer {
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
             for (index, (first_vertex, vertex_count)) in self.scratch_draws.iter().copied().enumerate() {
-                let dc = &commands.commands[draw_call_indices[index]];
+                let GxCommand::Draw(dc) = &commands.commands[draw_call_indices[index]] else {
+                    continue;
+                };
                 let pipeline_key = PipelineKey::from_draw_call(dc);
                 let pipeline = &self.pipeline_cache[&pipeline_key];
                 rpass.set_pipeline(pipeline);
