@@ -10,7 +10,7 @@ pub mod texture;
 mod vertex;
 mod xf;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, XF_MEM_SIZE};
 use crate::flipper::gx::draw::Matrix4;
@@ -58,6 +58,11 @@ pub struct GraphicsProcessor {
     // Hash of the raw texture data at each RAM address; used to detect when
     // texture content changes and avoid redundant decodes + LoadTexture sends.
     pub texture_hashes: HashMap<u32, u64>,
+    // RAM addresses that hold GPU-side EFB copy textures. When a texture is
+    // bound at one of these addresses, the renderer already has the correct
+    // content, so we skip the hash check and LoadTexture to avoid overwriting
+    // the GPU copy with stale RAM data.
+    pub efb_copy_addrs: HashSet<u32>,
 }
 
 /// A single EFB-to-XFB copy, stored until `present_xfb` computes the layout.
@@ -98,6 +103,7 @@ impl GraphicsProcessor {
             cur_scissor_offset_y: 0,
             xfb_copies: Vec::new(),
             texture_hashes: HashMap::new(),
+            efb_copy_addrs: HashSet::new(),
         }
     }
 
