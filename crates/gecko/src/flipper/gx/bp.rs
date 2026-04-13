@@ -153,7 +153,7 @@ impl GraphicsProcessor {
         let height = (image0.height() + 1) as u32;
         let ram_addr = image3.ram_addr();
         let format = image0.format();
-        let id = TextureId(ram_addr as u32);
+        let id = ram_addr as TextureId;
 
         tracing::debug!(
             slot,
@@ -166,30 +166,25 @@ impl GraphicsProcessor {
             "texture descriptor updated"
         );
 
-        // If the renderer already holds a GPU-side EFB copy for this
-        // address, skip the hash check and LoadTexture so we don't
-        // overwrite it with stale/unwritten RAM data.
-        if !self.efb_copy_addrs.contains(&(ram_addr as u32)) {
-            let changed = self::texture_data_changed(&mut self.texture_hashes, ram, ram_addr, width, height, format);
+        let changed = self::texture_data_changed(&mut self.texture_hashes, ram, ram_addr, width, height, format);
 
-            if changed {
-                let desc = draw::TextureDescriptor {
-                    ram_addr,
-                    width,
-                    height,
-                    format,
-                    wrap_s: mode0.wrap_s(),
-                    wrap_t: mode0.wrap_t(),
-                    mag_filter: mode0.mag_filter(),
-                    min_filter: mode0.min_filter(),
-                };
-                renderer.exec(GxAction::LoadTexture {
-                    id,
-                    width,
-                    height,
-                    rgba: texture::decode_to_rgba(ram, &desc),
-                });
-            }
+        if changed {
+            let desc = draw::TextureDescriptor {
+                ram_addr,
+                width,
+                height,
+                format,
+                wrap_s: mode0.wrap_s(),
+                wrap_t: mode0.wrap_t(),
+                mag_filter: mode0.mag_filter(),
+                min_filter: mode0.min_filter(),
+            };
+            renderer.exec(GxAction::LoadTexture {
+                id,
+                width,
+                height,
+                rgba: texture::decode_to_rgba(ram, &desc),
+            });
         }
 
         self.cur_textures[slot] = Some(draw::TextureDescriptor {
@@ -336,24 +331,7 @@ impl GraphicsProcessor {
                 clear_z,
             });
         } else {
-            // Texture copy (non-XFB). Track the destination so that
-            // snapshot_texture skips the hash check / LoadTexture for
-            // this address (the renderer holds the real content).
-            self.efb_copy_addrs.insert(dest_addr);
-            let efb_cmd = draw::EfbCopyCmd {
-                src_x,
-                src_y,
-                src_w,
-                src_h,
-                dest_addr,
-                dest_stride,
-                copy_to_xfb: false,
-                clear,
-                clear_color: [r, g, b, a],
-                clear_z,
-                half,
-            };
-            renderer.exec(GxAction::CopyEfb(efb_cmd));
+            let _ = (dest_addr, dest_stride, clear, half, r, g, b, a, clear_z);
         }
     }
 

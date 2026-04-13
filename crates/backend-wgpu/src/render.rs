@@ -1,8 +1,7 @@
 use crate::{FrameUniforms, GxRenderer};
 use crate::{GpuVertex, align_up};
 use encase::ShaderType as _;
-use gecko::flipper::gx::draw::EfbCopyCmd;
-use gecko::host::{TextureId, XfbPart};
+use gecko::host::XfbPart;
 
 impl GxRenderer {
     pub(crate) fn upload_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame_uniform_bytes: &[u8]) {
@@ -39,79 +38,6 @@ impl GxRenderer {
         queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.scratch_vertices));
     }
 
-    pub(crate) fn execute_efb_copy(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, copy: &EfbCopyCmd) {
-        // Snapshot the EFB region into texture_cache so that a later
-        // SetTexture referencing dest_addr finds the GPU-side copy
-        // instead of stale/unwritten RAM data.
-        let width = copy.src_w.min(crate::EFB_WIDTH.saturating_sub(copy.src_x));
-        let height = copy.src_h.min(crate::EFB_HEIGHT.saturating_sub(copy.src_y));
-        if width > 0 && height > 0 {
-            let id = TextureId(copy.dest_addr);
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("efb_copy_tex"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: self.surface_format,
-                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let mut encoder = device.create_command_encoder(&Default::default());
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.efb_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: copy.src_x,
-                        y: copy.src_y,
-                        z: 0,
-                    },
-                    aspect: wgpu::TextureAspect::default(),
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &tex,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::default(),
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-            queue.submit([encoder.finish()]);
-
-            let view = tex.create_view(&Default::default());
-            self.bind_group_cache
-                .retain(|key, _| !key.tex_keys.iter().any(|k| *k == Some(id)));
-            self.texture_cache.insert(id, (tex, view));
-        }
-
-        if copy.clear {
-            self.efb_clear.clear_region(
-                device,
-                queue,
-                &self.efb_msaa_view,
-                &self.efb_view,
-                &self.efb_depth_view,
-                crate::EFB_WIDTH,
-                crate::EFB_HEIGHT,
-                copy.src_x,
-                copy.src_y,
-                copy.src_w,
-                copy.src_h,
-                copy.clear_color,
-                copy.clear_z,
-            );
-        }
-    }
-
     pub(crate) fn execute_copy_xfb(
         &mut self,
         device: &wgpu::Device,
@@ -128,9 +54,16 @@ impl GxRenderer {
         let width = src_w.min(crate::EFB_WIDTH.saturating_sub(src_x));
         let height = src_h.min(crate::EFB_HEIGHT.saturating_sub(src_y));
         if width == 0 || height == 0 {
-            tracing::warn!(src_x, src_y, src_w, src_h, "efb_copy: zero-area region after clamping, skipping");
+            tracing::warn!(
+                src_x,
+                src_y,
+                src_w,
+                src_h,
+                "efb_copy: zero-area region after clamping, skipping"
+            );
             return;
         }
+
         let entry = self.xfb_copies.entry(id).or_insert_with(|| {
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("xfb_copy_tmp"),

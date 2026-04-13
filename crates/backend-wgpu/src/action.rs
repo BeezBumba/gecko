@@ -200,11 +200,6 @@ impl GxRenderer {
                 self.scratch_draws.push((prev_len as u32, added as u32));
             }
 
-            GxAction::CopyEfb(copy) => {
-                self.flush_pending_draws(device, queue);
-                self.execute_efb_copy(device, queue, copy);
-            }
-
             GxAction::CopyXfb {
                 id,
                 src_x,
@@ -377,7 +372,13 @@ impl GxRenderer {
                 if vp.x.is_finite() && vp.y.is_finite() && vp_w.is_finite() && vp_h.is_finite() {
                     rpass.set_viewport(vp.x, vp.y, vp_w, vp_h, vp.min_depth, vp.max_depth);
                 } else {
-                    tracing::warn!(x = vp.x, y = vp.y, w = vp_w, h = vp_h, "non-finite viewport, skipping set_viewport");
+                    tracing::warn!(
+                        x = vp.x,
+                        y = vp.y,
+                        w = vp_w,
+                        h = vp_h,
+                        "non-finite viewport, skipping set_viewport"
+                    );
                 }
 
                 let sc = &self.draw_scissors[index];

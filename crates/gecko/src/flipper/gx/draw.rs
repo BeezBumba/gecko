@@ -146,18 +146,3 @@ impl std::ops::Mul for Matrix4 {
         Matrix4(out)
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct EfbCopyCmd {
-    pub src_x: u32,
-    pub src_y: u32,
-    pub src_w: u32,
-    pub src_h: u32,
-    pub dest_addr: u32,
-    pub dest_stride: u32,
-    pub copy_to_xfb: bool,
-    pub clear: bool,
-    pub clear_color: [f32; 4],
-    pub clear_z: f32,
-    pub half: bool,
-}

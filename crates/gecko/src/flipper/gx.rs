@@ -10,8 +10,6 @@ pub mod texture;
 mod vertex;
 mod xf;
 
-use std::collections::{HashMap, HashSet};
-
 use crate::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, XF_MEM_SIZE};
 use crate::flipper::gx::draw::Matrix4;
 use crate::flipper::gx::regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
@@ -19,6 +17,7 @@ use crate::gamecube::GameCube;
 use crate::host::{GxAction, RenderSink, XfbPart};
 use crate::mmio::Mmio;
 use fifo::FifoCmd;
+use std::collections::HashMap;
 
 pub struct GraphicsProcessor {
     pub raise_interrupt: bool,
@@ -58,11 +57,6 @@ pub struct GraphicsProcessor {
     // Hash of the raw texture data at each RAM address; used to detect when
     // texture content changes and avoid redundant decodes + LoadTexture sends.
     pub texture_hashes: HashMap<u32, u64>,
-    // RAM addresses that hold GPU-side EFB copy textures. When a texture is
-    // bound at one of these addresses, the renderer already has the correct
-    // content, so we skip the hash check and LoadTexture to avoid overwriting
-    // the GPU copy with stale RAM data.
-    pub efb_copy_addrs: HashSet<u32>,
 }
 
 /// A single EFB-to-XFB copy, stored until `present_xfb` computes the layout.
@@ -103,7 +97,6 @@ impl GraphicsProcessor {
             cur_scissor_offset_y: 0,
             xfb_copies: Vec::new(),
             texture_hashes: HashMap::new(),
-            efb_copy_addrs: HashSet::new(),
         }
     }
 
@@ -178,12 +171,14 @@ pub fn present_xfb(gc: &mut GameCube) {
             let delta_pixels = (delta_bytes / 2) as u32;
             let offset_x = delta_pixels % stride_in_pixels;
             let offset_y = delta_pixels / stride_in_pixels;
+            
             // Real XFB copies always land at row boundaries (offset_x == 0).
             // A non-zero offset_x means this copy belongs to a different
             // buffer that happens to sit nearby in memory, reject it? TODO
             if offset_x != 0 || offset_y >= frame_h as u32 {
                 continue;
             }
+
             parts.push(XfbPart {
                 id: id as u32,
                 offset_x,

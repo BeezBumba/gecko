@@ -1,9 +1,5 @@
-use crate::flipper::gx::draw::{EfbCopyCmd, Primitive, Scissor, Viewport};
+use crate::flipper::gx::draw::{Primitive, Scissor, Viewport};
 use crate::flipper::gx::regs::{AlphaCompare, BlendMode, ChanCtrl, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
-
-/// Identifies a texture by its RAM base address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TextureId(pub u32);
 
 #[derive(Debug)]
 pub enum GxAction {
@@ -24,7 +20,7 @@ pub enum GxAction {
     /// Upload pre-decoded texture data. Emitted when texture content at a
     /// given address changes (detected by hash).
     LoadTexture {
-        id: TextureId,
+        id: u32,
         width: u32,
         height: u32,
         rgba: Vec<u8>,
@@ -33,7 +29,7 @@ pub enum GxAction {
     /// Bind a previously loaded texture to a TEV texture slot.
     SetTexture {
         slot: usize,
-        id: TextureId,
+        id: u32,
         wrap_s: WrapMode,
         wrap_t: WrapMode,
         mag_filter: MagFilter,
@@ -44,9 +40,6 @@ pub enum GxAction {
     /// viewport, scissor, depth, blend, alpha, textures) plus the per-draw
     /// TEV/lighting snapshot carried here.
     Draw(DrawData),
-
-    /// Trigger an EFB copy.
-    CopyEfb(EfbCopyCmd),
 
     /// Copy the EFB source region to a temporary texture identified by `id`.
     /// The renderer stores this until the next [`PresentXfb`] composites it

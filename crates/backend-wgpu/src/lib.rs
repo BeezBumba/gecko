@@ -323,7 +323,6 @@ impl GxRenderer {
         let efb_depth_view = efb_depth_texture.create_view(&Default::default());
 
         // XFB accumulation texture. Holds the composited output of all
-        // CopyEfb(copy_to_xfb) ops for the current frame.
         let xfb_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("xfb_accum"),
             size: wgpu::Extent3d {
