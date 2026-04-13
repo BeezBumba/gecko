@@ -12,7 +12,7 @@ use super::regs::{
     TevRegisterL, TxSetImage0, TxSetImage3, TxSetMode0, ZMode,
 };
 use super::{GraphicsProcessor, draw, texture};
-use crate::host::{GxAction, RenderSink, TextureId};
+use crate::host::{GxAction, RenderSink};
 
 impl GraphicsProcessor {
     pub fn load_bp(&mut self, renderer: &mut dyn RenderSink, ram: &[u8], data: &[u8]) {
