@@ -19,7 +19,7 @@ use crate::host::EfbWriteback;
 use crate::host::{GxAction, RenderSink, XfbPart};
 use crate::mmio::Mmio;
 use fifo::FifoCmd;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub struct GraphicsProcessor {
     pub raise_interrupt: bool,
@@ -58,7 +58,7 @@ pub struct GraphicsProcessor {
     pub xfb_copies: Vec<XfbCopy>,
     // Hash of the raw texture data at each RAM address; used to detect when
     // texture content changes and avoid redundant decodes + LoadTexture sends.
-    pub texture_hashes: HashMap<u32, u64>,
+    pub texture_hashes: FxHashMap<u32, u64>,
     // Receiver for encoded EFB-to-texture bytes coming back from the
     // renderer worker. `efb_copy` drains this synchronously right after
     // emitting the copy action, so the next FIFO command in the same burst
@@ -105,7 +105,7 @@ impl GraphicsProcessor {
             cur_scissor_offset_x: 0,
             cur_scissor_offset_y: 0,
             xfb_copies: Vec::new(),
-            texture_hashes: HashMap::new(),
+            texture_hashes: FxHashMap::default(),
             #[cfg(feature = "efb-writeback")]
             efb_writeback_rx: None,
         }

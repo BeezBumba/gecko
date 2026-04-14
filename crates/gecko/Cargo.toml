@@ -25,3 +25,4 @@ bytemuck = { version = "1.25.0", features = ["derive"] }
 twox-hash = "2.1.2"
 crossbeam-channel = { version = "0.5.15", optional = true }
 multiversion = "0.8.0"
+rustc-hash = "2.1.2"

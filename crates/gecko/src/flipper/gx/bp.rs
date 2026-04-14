@@ -436,7 +436,7 @@ impl GraphicsProcessor {
 /// Returns `true` when the raw texture data in RAM differs from the last
 /// hash recorded for the given address.
 fn texture_data_changed(
-    hashes: &mut std::collections::HashMap<u32, u64>,
+    hashes: &mut rustc_hash::FxHashMap<u32, u64>,
     ram: &[u8],
     addr: usize,
     width: u32,

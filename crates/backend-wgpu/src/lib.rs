@@ -13,7 +13,7 @@ use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, M
 use gecko::host::EfbWriteback;
 use glam::Mat4;
 use pipeline::PipelineKey;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -85,7 +85,7 @@ pub const EFB_HEIGHT: u32 = 528;
 pub const EFB_SAMPLE_COUNT: u32 = 4;
 
 pub struct GxRenderer {
-    pub(crate) pipeline_cache: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    pub(crate) pipeline_cache: FxHashMap<PipelineKey, wgpu::RenderPipeline>,
     pub(crate) shader: wgpu::ShaderModule,
     pub(crate) pipeline_layout: wgpu::PipelineLayout,
     pub(crate) surface_format: wgpu::TextureFormat,
@@ -105,13 +105,13 @@ pub struct GxRenderer {
     // EFB: multisampled (4x) depth.
     pub(crate) efb_depth_view: wgpu::TextureView,
     pub(crate) efb_needs_clear: bool,
-    pub(crate) sampler_cache: HashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,
-    pub(crate) texture_cache: HashMap<Address, (wgpu::Texture, wgpu::TextureView)>,
+    pub(crate) sampler_cache: FxHashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,
+    pub(crate) texture_cache: FxHashMap<Address, (wgpu::Texture, wgpu::TextureView)>,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
     pub(crate) scratch_draws: Vec<(u32, u32)>,
     pub(crate) scratch_uniform_bytes: Vec<u8>,
-    pub(crate) bind_group_cache: HashMap<BindGroupCacheKey, wgpu::BindGroup>,
+    pub(crate) bind_group_cache: FxHashMap<BindGroupCacheKey, wgpu::BindGroup>,
     // Per-frame draw accumulation (persists across process_action calls,
     // flushed by flush_pending_draws).
     pub(crate) frame_uniform_bytes: Vec<u8>,
@@ -136,7 +136,7 @@ pub struct GxRenderer {
     pub xfb_view: wgpu::TextureView,
     pub(crate) xfb_has_content: bool,
     // Per-copy temporary textures stored by CopyXfb, composited by PresentXfb.
-    pub(crate) xfb_copies: HashMap<u32, (wgpu::Texture, wgpu::TextureView)>,
+    pub(crate) xfb_copies: FxHashMap<u32, (wgpu::Texture, wgpu::TextureView)>,
     // Region-scoped EFB clear.
     pub(crate) efb_clear: clear::EfbClear,
     // EFB-to-texture readback. Only allocated with `efb-writeback`.
@@ -361,7 +361,7 @@ impl GxRenderer {
         );
 
         GxRenderer {
-            pipeline_cache: HashMap::new(),
+            pipeline_cache: FxHashMap::default(),
             shader,
             pipeline_layout,
             surface_format,
@@ -378,16 +378,20 @@ impl GxRenderer {
             efb_msaa_view,
             efb_depth_view,
             efb_needs_clear: true,
-            sampler_cache: HashMap::from([(
-                (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear),
-                sampler,
-            )]),
-            texture_cache: HashMap::new(),
+            sampler_cache: {
+                let mut m = FxHashMap::default();
+                m.insert(
+                    (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear),
+                    sampler,
+                );
+                m
+            },
+            texture_cache: FxHashMap::default(),
             fallback_view,
             scratch_vertices: Vec::new(),
             scratch_draws: Vec::new(),
             scratch_uniform_bytes: Vec::new(),
-            bind_group_cache: HashMap::new(),
+            bind_group_cache: FxHashMap::default(),
             frame_uniform_bytes: Vec::new(),
             draw_pipeline_keys: Vec::new(),
             draw_bg_keys: Vec::new(),
@@ -412,7 +416,7 @@ impl GxRenderer {
             xfb_texture,
             xfb_view,
             xfb_has_content: false,
-            xfb_copies: HashMap::new(),
+            xfb_copies: FxHashMap::default(),
             efb_clear,
             #[cfg(feature = "efb-writeback")]
             efb_readback_staging: None,
