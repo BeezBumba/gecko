@@ -230,13 +230,13 @@ impl GxRenderer {
             }
 
             GxAction::CopyEfbToTexture {
-                dest_addr,
+                dest_addr: _dest_addr,
                 src_x,
                 src_y,
                 src_w,
                 src_h,
-                copy_format,
-                mipmap,
+                copy_format: _copy_format,
+                mipmap: _mipmap,
                 stride: _,
                 clear,
                 clear_color,
@@ -253,20 +253,47 @@ impl GxRenderer {
                 // variants and gate on each mask independently.
                 let effective_clear = *clear && *color_update;
                 self.flush_pending_draws(device, queue);
+
+                // With `efb-writeback`: read the EFB back, encode it in
+                // `copy_format`, ship the bytes to the emu thread so they
+                // land in `Mmio::ram` at `dest_addr`. Expensive (GPU stall).
+                #[cfg(feature = "efb-writeback")]
                 self.execute_copy_efb_to_texture(
                     device,
                     queue,
-                    *dest_addr,
+                    *_dest_addr,
                     *src_x,
                     *src_y,
                     *src_w,
                     *src_h,
-                    *copy_format,
-                    *mipmap,
+                    *_copy_format,
+                    *_mipmap,
                     effective_clear,
                     *clear_color,
                     *clear_z,
                 );
+
+                // Default path: no readback, no encode, no RAM touch. Texture
+                // invalidation happens on the emu side via a `texture_hashes`
+                // drop. We only need to honor the post-copy clear here.
+                #[cfg(not(feature = "efb-writeback"))]
+                if effective_clear {
+                    self.efb_clear.clear_region(
+                        device,
+                        queue,
+                        &self.efb_msaa_view,
+                        &self.efb_view,
+                        &self.efb_depth_view,
+                        crate::EFB_WIDTH,
+                        crate::EFB_HEIGHT,
+                        *src_x,
+                        *src_y,
+                        *src_w,
+                        *src_h,
+                        *clear_color,
+                        *clear_z,
+                    );
+                }
             }
         }
     }

@@ -9,6 +9,7 @@ use encase::ShaderType as _;
 use gecko::common::Address;
 use gecko::flipper::gx::draw::{Scissor, Viewport};
 use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
+#[cfg(feature = "efb-writeback")]
 use gecko::host::EfbWriteback;
 use glam::Mat4;
 use pipeline::PipelineKey;
@@ -138,12 +139,15 @@ pub struct GxRenderer {
     pub(crate) xfb_copies: HashMap<u32, (wgpu::Texture, wgpu::TextureView)>,
     // Region-scoped EFB clear.
     pub(crate) efb_clear: clear::EfbClear,
-    // EFB-to-texture readback.
+    // EFB-to-texture readback. Only allocated with `efb-writeback`.
+    #[cfg(feature = "efb-writeback")]
     pub(crate) efb_readback_staging: Option<wgpu::Buffer>,
+    #[cfg(feature = "efb-writeback")]
     pub(crate) efb_readback_capacity: u64,
     // Sender used to ship encoded EFB-to-texture bytes back to the emu
     // thread. Installed by `sink::Renderer::new` via
     // [`GxRenderer::set_efb_writeback_tx`].
+    #[cfg(feature = "efb-writeback")]
     pub(crate) efb_writeback_tx: Option<crossbeam_channel::Sender<EfbWriteback>>,
 }
 
@@ -410,14 +414,18 @@ impl GxRenderer {
             xfb_has_content: false,
             xfb_copies: HashMap::new(),
             efb_clear,
+            #[cfg(feature = "efb-writeback")]
             efb_readback_staging: None,
+            #[cfg(feature = "efb-writeback")]
             efb_readback_capacity: 0,
+            #[cfg(feature = "efb-writeback")]
             efb_writeback_tx: None,
         }
     }
 
     /// Install the sender used to ship encoded EFB-to-texture bytes back
     /// to the emulator thread. Called by `sink::Renderer` during setup.
+    #[cfg(feature = "efb-writeback")]
     pub fn set_efb_writeback_tx(&mut self, tx: crossbeam_channel::Sender<EfbWriteback>) {
         self.efb_writeback_tx = Some(tx);
     }

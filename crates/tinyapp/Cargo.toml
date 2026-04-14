@@ -7,6 +7,7 @@ edition = "2024"
 idle-skip = ["gecko/idle-skip"]
 scripting = ["gecko/hooks", "dep:scripting"]
 scripting-mut-traps = ["scripting", "gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
+efb-writeback = ["backend-wgpu/efb-writeback", "gecko/efb-writeback"]
 
 [dependencies]
 gecko = { path = "../gecko" }

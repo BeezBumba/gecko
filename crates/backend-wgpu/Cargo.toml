@@ -3,6 +3,9 @@ name = "backend-wgpu"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+efb-writeback = ["gecko/efb-writeback"]
+
 [dependencies]
 wgpu = "28.0.0"
 bytemuck = { version = "1.25.0", features = ["derive"] }

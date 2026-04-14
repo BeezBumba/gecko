@@ -1,6 +1,8 @@
 use crate::GxRenderer;
 use crossbeam_channel::{Receiver, Sender, bounded};
-use gecko::host::{EfbWriteback, GxAction, RenderSink};
+#[cfg(feature = "efb-writeback")]
+use gecko::host::EfbWriteback;
+use gecko::host::{GxAction, RenderSink};
 use std::sync::{Arc, Mutex};
 
 const CHANNEL_CAPACITY: usize = 8192;
@@ -35,7 +37,9 @@ pub struct Renderer {
     /// Receiver end of the EFB-to-texture writeback channel. Taken by the
     /// emulator setup code (via [`Renderer::take_writeback_rx`]) and
     /// installed into `GraphicsProcessor::efb_writeback_rx`. Wrapped in
-    /// `Arc<Mutex<Option<_>>>` so `Renderer` stays `Clone`.
+    /// `Arc<Mutex<Option<_>>>` so `Renderer` stays `Clone`. Only built when
+    /// `efb-writeback` is enabled.
+    #[cfg(feature = "efb-writeback")]
     writeback_rx: Arc<Mutex<Option<Receiver<EfbWriteback>>>>,
 }
 
@@ -43,12 +47,20 @@ impl Renderer {
     /// Create the renderer, spawning the worker thread. The caller must
     /// provide a wgpu device and queue.
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, surface_format: wgpu::TextureFormat) -> Self {
+        #[cfg(feature = "efb-writeback")]
         let mut gx = GxRenderer::new(&device, &queue, surface_format);
+        #[cfg(not(feature = "efb-writeback"))]
+        let gx = GxRenderer::new(&device, &queue, surface_format);
 
         // Writeback channel: GxRenderer sends encoded EFB-to-texture bytes,
         // GraphicsProcessor consumes them synchronously on the emu thread.
-        let (writeback_tx, writeback_rx) = bounded::<EfbWriteback>(CHANNEL_CAPACITY);
-        gx.set_efb_writeback_tx(writeback_tx);
+        // Only created with `efb-writeback`.
+        #[cfg(feature = "efb-writeback")]
+        let writeback_rx = {
+            let (writeback_tx, writeback_rx) = bounded::<EfbWriteback>(CHANNEL_CAPACITY);
+            gx.set_efb_writeback_tx(writeback_tx);
+            writeback_rx
+        };
 
         // Initial shared output: the XFB view (black until first PresentXfb).
         let shared = Arc::new(Shared {
@@ -139,13 +151,16 @@ impl Renderer {
             blit_pipeline,
             blit_bind_group_layout,
             blit_sampler,
+            #[cfg(feature = "efb-writeback")]
             writeback_rx: Arc::new(Mutex::new(Some(writeback_rx))),
         }
     }
 
     /// Take the writeback receiver once. Returns `Some` on the first call,
     /// `None` thereafter. The caller installs it into
-    /// `GraphicsProcessor::efb_writeback_rx`.
+    /// `GraphicsProcessor::efb_writeback_rx`. Only available when the
+    /// `efb-writeback` feature is enabled.
+    #[cfg(feature = "efb-writeback")]
     pub fn take_writeback_rx(&self) -> Option<Receiver<EfbWriteback>> {
         self.writeback_rx.lock().ok()?.take()
     }

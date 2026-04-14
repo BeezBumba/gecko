@@ -1,9 +1,13 @@
 use crate::{FrameUniforms, GxRenderer};
 use crate::{GpuVertex, align_up};
 use encase::ShaderType as _;
+#[cfg(feature = "efb-writeback")]
 use gecko::common::Address;
+#[cfg(feature = "efb-writeback")]
 use gecko::flipper::gx::texture;
-use gecko::host::{EfbWriteback, XfbPart};
+#[cfg(feature = "efb-writeback")]
+use gecko::host::EfbWriteback;
+use gecko::host::XfbPart;
 
 impl GxRenderer {
     pub(crate) fn upload_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame_uniform_bytes: &[u8]) {
@@ -242,6 +246,10 @@ impl GxRenderer {
     /// `effective_clear` is the already-gated clear flag (see the
     /// `CopyEfbToTexture` arm in `action.rs`); this function does not look
     /// at the per-channel write masks itself.
+    ///
+    /// Only compiled with `efb-writeback`. The default no-feature path
+    /// handles CopyEfbToTexture inline in `action.rs` with just a clear.
+    #[cfg(feature = "efb-writeback")]
     pub(crate) fn execute_copy_efb_to_texture(
         &mut self,
         device: &wgpu::Device,

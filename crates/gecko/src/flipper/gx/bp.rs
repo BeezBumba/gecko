@@ -14,6 +14,7 @@ use super::regs::{
 use super::{GraphicsProcessor, draw, texture};
 use crate::common::Address;
 use crate::host::{GxAction, RenderSink};
+#[cfg(feature = "efb-writeback")]
 use std::time::Duration;
 
 impl GraphicsProcessor {
@@ -357,11 +358,21 @@ impl GraphicsProcessor {
                 z_update,
             });
 
-            // Block until the renderer finishes the readback + encode and
-            // ships the encoded bytes back. This preserves ordering with
-            // subsequent FIFO commands (e.g. a TX_SETIMAGE3 at `dest_addr`
-            // immediately after this copy): by the time efb_copy returns,
-            // RAM is up to date and the next texture load re-hashes.
+            // Default path (feature off): the renderer doesn't do a readback
+            // and RAM at `dest_addr` is not modified, so "invalidating" the
+            // texture at that address means dropping the hash so the next
+            // `TX_SETIMAGE3` forces a fresh re-decode + re-upload. That
+            // evicts any stale GPU texture / bind groups tied to the old
+            // cache entry.
+            self.texture_hashes.remove(&dest_addr);
+            let _ = ram;
+
+            // With `efb-writeback`: block until the renderer finishes the
+            // readback + encode and ships the encoded bytes back. This
+            // preserves ordering with subsequent FIFO commands (a
+            // `TX_SETIMAGE3` at `dest_addr` immediately after this copy
+            // sees up-to-date RAM + a freshly re-hashable texture).
+            #[cfg(feature = "efb-writeback")]
             if let Some(rx) = &self.efb_writeback_rx {
                 match rx.recv_timeout(Duration::from_secs(2)) {
                     Ok(wb) => {
@@ -369,7 +380,6 @@ impl GraphicsProcessor {
                         let end = start + wb.bytes.len();
                         if end <= ram.len() {
                             ram[start..end].copy_from_slice(&wb.bytes);
-                            self.texture_hashes.remove(&wb.dest_addr);
                         } else {
                             tracing::warn!(
                                 addr = format!("{:#010X}", wb.dest_addr),

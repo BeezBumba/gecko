@@ -14,7 +14,9 @@ use crate::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, XF_MEM_SIZE};
 use crate::flipper::gx::draw::Matrix4;
 use crate::flipper::gx::regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
 use crate::gamecube::GameCube;
-use crate::host::{EfbWriteback, GxAction, RenderSink, XfbPart};
+#[cfg(feature = "efb-writeback")]
+use crate::host::EfbWriteback;
+use crate::host::{GxAction, RenderSink, XfbPart};
 use crate::mmio::Mmio;
 use fifo::FifoCmd;
 use std::collections::HashMap;
@@ -61,7 +63,8 @@ pub struct GraphicsProcessor {
     // renderer worker. `efb_copy` drains this synchronously right after
     // emitting the copy action, so the next FIFO command in the same burst
     // (usually a `TX_SETIMAGE3` that samples the just-written region)
-    // sees fresh RAM.
+    // sees fresh RAM. Only present when the `efb-writeback` feature is on.
+    #[cfg(feature = "efb-writeback")]
     pub efb_writeback_rx: Option<crossbeam_channel::Receiver<EfbWriteback>>,
 }
 
@@ -103,6 +106,7 @@ impl GraphicsProcessor {
             cur_scissor_offset_y: 0,
             xfb_copies: Vec::new(),
             texture_hashes: HashMap::new(),
+            #[cfg(feature = "efb-writeback")]
             efb_writeback_rx: None,
         }
     }

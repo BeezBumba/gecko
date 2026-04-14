@@ -7,6 +7,11 @@ edition = "2024"
 idle-skip = []
 hooks = []
 hooks-mut-traps = ["hooks"]
+# Full EFB-to-texture writeback: the renderer reads the EFB back, encodes
+# it in the GX copy format, and ships the bytes over a channel to the emu
+# thread which copies them into `Mmio::ram` synchronously. Expensive (GPU
+# stall, encode, RAM copy).
+efb-writeback = ["dep:crossbeam-channel"]
 
 [build-dependencies]
 chipi-build = "0.8.2"
@@ -18,4 +23,4 @@ image = { path = "../image", default-features = false }
 glam = { version = "0.32.1", features = ["bytemuck"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 twox-hash = "2.1.2"
-crossbeam-channel = "0.5.15"
+crossbeam-channel = { version = "0.5.15", optional = true }
