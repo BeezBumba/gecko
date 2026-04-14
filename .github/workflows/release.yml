@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.target }}-
+
+      - name: Patch chipi.toml dispatch mode
+        shell: bash
+        run: sed -i 's/dispatch = "fn_ptr_lut"/dispatch = "jump_table"/g' crates/gecko/chipi.toml
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev
+
+      - name: Build tinyapp
+        run: cargo build --release --package tinyapp --target ${{ matrix.target }}
+
+      - name: Build debugger
+        run: cargo build --release --package debugger --target ${{ matrix.target }}
+
+      - name: Package artifacts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p staging artifacts
+          cp target/${{ matrix.target }}/release/tinyapp staging/
+          cp target/${{ matrix.target }}/release/debugger staging/
+          cd staging && zip ../artifacts/gecko-${{ matrix.suffix }}.zip tinyapp debugger
+
+      - name: Package artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p staging artifacts
+          cp target/${{ matrix.target }}/release/tinyapp.exe staging/
+          cp target/${{ matrix.target }}/release/debugger.exe staging/
+          cd staging && 7z a ../artifacts/gecko-${{ matrix.suffix }}.zip tinyapp.exe debugger.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.suffix }}
+          path: artifacts/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.sha }}
+          name: Build ${{ github.sha }}
+          generate_release_notes: true
+          files: artifacts/*
