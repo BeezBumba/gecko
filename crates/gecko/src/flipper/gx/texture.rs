@@ -1,4 +1,5 @@
 use super::draw::{TextureDescriptor, TextureFormat};
+use multiversion::multiversion;
 
 /// Decode a GX-format texture from RAM into RGBA8 pixels.
 pub fn decode_to_rgba(ram: &[u8], desc: &TextureDescriptor) -> Vec<u8> {
@@ -61,6 +62,7 @@ pub fn raw_data_size(width: u32, height: u32, format: TextureFormat) -> usize {
     block_dims(format).bytes_for(width, height)
 }
 
+#[multiversion(targets = "simd")]
 fn decode_i4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
     const BW: usize = 8;
     const BH: usize = 8;
@@ -101,6 +103,7 @@ fn decode_i4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h:
     }
 }
 
+#[multiversion(targets = "simd")]
 fn decode_i8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
     const BW: usize = 8;
     const BH: usize = 4;
@@ -139,6 +142,7 @@ fn decode_i8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h:
     }
 }
 
+#[multiversion(targets = "simd")]
 fn decode_ia4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
     const BW: usize = 8;
     const BH: usize = 4;
@@ -179,6 +183,7 @@ fn decode_ia4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h
     }
 }
 
+#[multiversion(targets = "simd")]
 fn decode_ia8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
     const BW: usize = 4;
     const BH: usize = 4;
@@ -220,6 +225,7 @@ fn decode_ia8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h
     }
 }
 
+#[multiversion(targets = "simd")]
 fn decode_rgb565(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
     const BW: usize = 4;
     const BH: usize = 4;
@@ -259,6 +265,7 @@ fn decode_rgb565(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize
     }
 }
 
+#[multiversion(targets = "simd")]
 fn decode_rgb5a3(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
     const BW: usize = 4;
     const BH: usize = 4;
@@ -309,6 +316,7 @@ fn decode_rgb5a3(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize
     }
 }
 
+#[multiversion(targets = "simd")]
 fn decode_rgba8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
     const BW: usize = 4;
     const BH: usize = 4;
@@ -353,6 +361,7 @@ fn decode_rgba8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize,
     }
 }
 
+#[multiversion(targets = "simd")]
 fn decode_cmpr(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
     const MW: usize = 8;
     const MH: usize = 8;
@@ -512,6 +521,7 @@ pub fn encoded_size(w: u32, h: u32, format: CopyFormat) -> usize {
 
 // ref downsample_rgba_buffer_by_2 @ beanwii, zayd is smarter than me
 
+#[multiversion(targets = "simd")]
 pub fn downsample_box_2x(src: &[u8], w: u32, h: u32) -> Vec<u8> {
     let nw = (w / 2) as usize;
     let nh = (h / 2) as usize;
@@ -558,6 +568,7 @@ fn luminance(r: u8, g: u8, b: u8) -> u8 {
     ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8
 }
 
+#[multiversion(targets = "simd")]
 fn encode_i8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     const BW: usize = 8;
     const BH: usize = 4;
@@ -596,6 +607,7 @@ fn encode_i8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     }
 }
 
+#[multiversion(targets = "simd")]
 fn encode_a8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     const BW: usize = 8;
     const BH: usize = 4;
@@ -631,6 +643,7 @@ fn encode_a8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     }
 }
 
+#[multiversion(targets = "simd")]
 fn encode_r8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     const BW: usize = 8;
     const BH: usize = 4;
@@ -666,6 +679,7 @@ fn encode_r8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     }
 }
 
+#[multiversion(targets = "simd")]
 fn encode_rg8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     const BW: usize = 4;
     const BH: usize = 4;
@@ -702,6 +716,7 @@ fn encode_rg8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     }
 }
 
+#[multiversion(targets = "simd")]
 fn encode_rgb565(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     const BW: usize = 4;
     const BH: usize = 4;
@@ -745,6 +760,7 @@ fn encode_rgb565(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     }
 }
 
+#[multiversion(targets = "simd")]
 fn encode_rgb5a3(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     const BW: usize = 4;
     const BH: usize = 4;
@@ -798,6 +814,7 @@ fn encode_rgb5a3(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     }
 }
 
+#[multiversion(targets = "simd")]
 fn encode_rgba8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
     const BW: usize = 4;
     const BH: usize = 4;
