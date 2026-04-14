@@ -23,6 +23,16 @@ struct App {
     window: Option<Arc<Window>>,
     state: Option<RenderState>,
     present_mode: wgpu::PresentMode,
+    init: Option<AppInit>,
+}
+
+struct AppInit {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderer: backend_wgpu::sink::Renderer,
+    surface_format: wgpu::TextureFormat,
 }
 
 impl ApplicationHandler for App {
@@ -33,7 +43,35 @@ impl ApplicationHandler for App {
                 .unwrap(),
         );
 
-        let state = RenderState::new(window.clone(), &self.emulator, self.present_mode);
+        let Some(init) = self.init.take() else {
+            self.window = Some(window);
+            return;
+        };
+
+        let surface = init.instance.create_surface(window.clone()).unwrap();
+        let size = window.inner_size();
+        let surface_caps = surface.get_capabilities(&init.adapter);
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+            format: init.surface_format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            present_mode: self.present_mode,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&init.device, &surface_config);
+
+        let state = RenderState::new(
+            window.clone(),
+            init.device,
+            init.queue,
+            surface,
+            surface_config,
+            init.renderer,
+            self.present_mode,
+        );
         window.request_redraw();
         self.window = Some(window);
         self.state = Some(state);
@@ -81,6 +119,10 @@ struct Args {
     #[arg(long)]
     ipl: Option<String>,
 
+    /// Boot from ISO using HLE IPL (requires --iso)
+    #[arg(long)]
+    ipl_hle: bool,
+
     /// Path to a GameCube ISO file
     #[arg(long)]
     iso: Option<String>,
@@ -119,7 +161,15 @@ fn main() {
         wgpu::PresentMode::Fifo
     };
 
-    let mut emulator = if let Some(ref ipl) = args.ipl {
+    let mut emulator = if args.ipl_hle {
+        let Some(ref iso) = args.iso else {
+            eprintln!("--ipl-hle requires --iso");
+            std::process::exit(1);
+        };
+        let iso_data = std::fs::read(iso).expect("failed to read ISO");
+        let dvd = Dvd::parse(iso_data);
+        GameCube::with_ipl_hle(dvd)
+    } else if let Some(ref ipl) = args.ipl {
         let ipl_data = std::fs::read(ipl).expect("failed to read IPL");
         GameCube::with_ipl(&ipl_data)
     } else if let Some(ref path) = args.dol {
@@ -127,19 +177,20 @@ fn main() {
         let dol = Dol::parse(dol_data);
         GameCube::with_image(&dol)
     } else {
-        eprintln!("error: either --ipl or --dol must be provided");
+        eprintln!("error: either --ipl, --ipl-hle, or --dol must be provided");
         std::process::exit(1);
     };
 
-    if let Some(ref iso) = args.iso {
-        if args.ipl.is_none() {
-            eprintln!("--iso requires --ipl");
-            std::process::exit(1);
+    if !args.ipl_hle {
+        if let Some(ref iso) = args.iso {
+            if args.ipl.is_none() {
+                eprintln!("--iso requires --ipl or --ipl-hle");
+                std::process::exit(1);
+            }
+            let iso_data = std::fs::read(iso).expect("failed to read ISO");
+            let dvd = Dvd::parse(iso_data);
+            emulator.insert_dvd(dvd);
         }
-
-        let iso_data = std::fs::read(iso).expect("failed to read ISO");
-        let dvd = Dvd::parse(iso_data);
-        emulator.insert_dvd(dvd);
     }
 
     if let Some(ref dsp_path) = args.dsp {
@@ -162,6 +213,30 @@ fn main() {
         ..PadStatus::default()
     });
 
+    // Create wgpu resources before the event loop (adapter without a surface).
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
+
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::default(),
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
+    .expect("no compatible wgpu adapter");
+
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+        .expect("failed to acquire wgpu device");
+
+    let surface_format = wgpu::TextureFormat::Bgra8Unorm;
+
+    // Create the renderer (spawns the worker thread internally).
+    let renderer = backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format);
+
+    // Install the renderer as the emulator's render sink.
+    emulator.render_sink = Box::new(renderer.clone());
+
     let ui = DebuggerUi {
         symbols,
         ..DebuggerUi::default()
@@ -174,6 +249,14 @@ fn main() {
         window: None,
         state: None,
         present_mode,
+        init: Some(AppInit {
+            instance,
+            adapter,
+            device,
+            queue,
+            renderer,
+            surface_format,
+        }),
     };
     event_loop.run_app(&mut app).unwrap();
 }

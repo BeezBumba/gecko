@@ -36,6 +36,10 @@ struct Args {
     #[arg(long)]
     ipl: Option<String>,
 
+    /// Boot from ISO using HLE IPL (requires --iso)
+    #[arg(long)]
+    ipl_hle: bool,
+
     /// Path to a GameCube ISO file
     #[arg(long)]
     iso: Option<String>,
@@ -90,7 +94,14 @@ fn main() {
         )
         .init();
 
-    let mut emulator = if let Some(dol_path) = &args.dol {
+    let mut emulator = if args.ipl_hle {
+        let Some(iso_path) = &args.iso else {
+            panic!("--ipl-hle requires --iso");
+        };
+        let iso_data = std::fs::read(iso_path).expect("failed to read ISO");
+        let dvd = image::dvd::Dvd::parse(iso_data);
+        gecko::gamecube::GameCube::with_ipl_hle(dvd)
+    } else if let Some(dol_path) = &args.dol {
         let dol_data = std::fs::read(dol_path).expect("failed to read DOL");
         let dol = image::Dol::parse(dol_data);
         gecko::gamecube::GameCube::with_image(&dol)
@@ -98,16 +109,18 @@ fn main() {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
         gecko::gamecube::GameCube::with_ipl(&ipl_data)
     } else {
-        panic!("Either --dol or --ipl must be provided");
+        panic!("Either --dol, --ipl, or --ipl-hle must be provided");
     };
 
-    if let Some(iso_path) = &args.iso {
-        if args.ipl.is_none() {
-            panic!("--iso requires --ipl");
+    if !args.ipl_hle {
+        if let Some(iso_path) = &args.iso {
+            if args.ipl.is_none() {
+                panic!("--iso requires --ipl or --ipl-hle");
+            }
+            let iso_data = std::fs::read(iso_path).expect("failed to read ISO");
+            let dvd = image::dvd::Dvd::parse(iso_data);
+            emulator.insert_dvd(dvd);
         }
-        let iso_data = std::fs::read(iso_path).expect("failed to read ISO");
-        let dvd = image::dvd::Dvd::parse(iso_data);
-        emulator.insert_dvd(dvd);
     }
 
     if let Some(dsp_path) = &args.dsp {

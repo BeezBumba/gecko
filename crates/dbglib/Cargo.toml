@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 gecko = { path = "../gecko" }
 disasm = { path = "../disasm" }
-image = { path = "../image" }
-backend-wgpu = { path = "../backend-wgpu" }
+image = { path = "../image", default-features = false }
 egui = "0.33.3"
 egui-phosphor = "0.11.0"

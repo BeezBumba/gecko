@@ -10,7 +10,7 @@ hooks-mut-traps = ["gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
 [dependencies]
 gecko = { path = "../gecko", features = ["hooks"] }
 scripting = { path = "../scripting" }
-image = { path = "../image" }
+image = { path = "../image", features = ["symbols"] }
 dbglib = { path = "../dbglib" }
 backend-wgpu = { path = "../backend-wgpu" }
 wgpu = "28.0.0"

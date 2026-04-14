@@ -6,130 +6,27 @@ use winit::window::Window;
 
 use crate::debugger::DebuggerUi;
 
-const SHADER: &str = include_str!("xfb.wgsl");
-
 pub struct RenderState {
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    texture: wgpu::Texture,
-    bind_group: wgpu::BindGroup,
-    tex_width: u32,
-    tex_height: u32,
-    gx_renderer: backend_wgpu::GxRenderer,
+    renderer: backend_wgpu::sink::Renderer,
     pub egui_ctx: egui::Context,
     pub egui_renderer: egui_wgpu::Renderer,
     pub egui_winit: egui_winit::State,
 }
 
 impl RenderState {
-    pub fn new(window: Arc<Window>, emulator: &GameCube, present_mode: wgpu::PresentMode) -> Self {
-        let (w, h) = emulator.frame_size();
-        let (w, h) = (w as u32, h as u32);
-
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
-
-        let surface = instance.create_surface(window.clone()).unwrap();
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .unwrap();
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
-
-        let size = window.inner_size();
-        let surface_caps = surface.get_capabilities(&adapter);
-
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
-            format: surface_format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &surface_config);
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[&bind_group_layout],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let (texture, bind_group) = create_xfb_texture(&device, &bind_group_layout, w, h);
-        let gx_renderer = backend_wgpu::GxRenderer::new(&device, &queue, surface_format);
-
+    pub fn new(
+        window: Arc<Window>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface: wgpu::Surface<'static>,
+        surface_config: wgpu::SurfaceConfiguration,
+        renderer: backend_wgpu::sink::Renderer,
+        _present_mode: wgpu::PresentMode,
+    ) -> Self {
         let egui_ctx = egui::Context::default();
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
@@ -138,7 +35,8 @@ impl RenderState {
             let f = &style.visuals.window_fill;
             style.visuals.window_fill = egui::Color32::from_rgba_unmultiplied(f.r(), f.g(), f.b(), 240);
         });
-        let egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, egui_wgpu::RendererOptions::default());
+        let egui_renderer =
+            egui_wgpu::Renderer::new(&device, surface_config.format, egui_wgpu::RendererOptions::default());
         let egui_winit = egui_winit::State::new(egui_ctx.clone(), ViewportId::ROOT, window.as_ref(), None, None, None);
 
         RenderState {
@@ -146,13 +44,7 @@ impl RenderState {
             surface_config,
             device,
             queue,
-            pipeline,
-            bind_group_layout,
-            texture,
-            bind_group,
-            tex_width: w,
-            tex_height: h,
-            gx_renderer,
+            renderer,
             egui_ctx,
             egui_renderer,
             egui_winit,
@@ -209,12 +101,8 @@ impl RenderState {
         };
         let view = frame.texture.create_view(&Default::default());
 
-        let used_gx = !emulator.gx.draw_commands.commands.is_empty();
-        if used_gx {
-            self.render_gx(emulator, &view);
-        } else {
-            self.render_xfb(emulator, &view);
-        }
+        // Blit the latest XFB output from the renderer worker to the swapchain.
+        self.renderer.blit(&self.queue, &view);
 
         let cpu = &emulator.cpu;
         let mmio = &emulator.mmio;
@@ -430,129 +318,5 @@ impl RenderState {
         }
 
         frame.present();
-
-        // Clear after egui so the GX state window can inspect the draw calls from this frame.
-        if used_gx {
-            emulator.gx.draw_commands.recycle();
-        }
     }
-
-    fn render_gx(&mut self, emulator: &mut GameCube, view: &wgpu::TextureView) {
-        self.gx_renderer.render(
-            &self.device,
-            &self.queue,
-            &emulator.gx.draw_commands,
-            &mut emulator.mmio.ram,
-            view,
-        );
-    }
-
-    fn render_xfb(&mut self, emulator: &GameCube, view: &wgpu::TextureView) {
-        let pixels = emulator.render_xfb();
-        let (w, h) = emulator.frame_size();
-        let (w, h) = (w as u32, h as u32);
-
-        if (w, h) != (self.tex_width, self.tex_height) {
-            let (texture, bind_group) = create_xfb_texture(&self.device, &self.bind_group_layout, w, h);
-            self.texture = texture;
-            self.bind_group = bind_group;
-            self.tex_width = w;
-            self.tex_height = h;
-        }
-
-        let rgba: Vec<u8> = pixels
-            .iter()
-            .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, 0xFF])
-            .collect();
-
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(w * 4),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-            rpass.set_pipeline(&self.pipeline);
-            rpass.set_bind_group(0, &self.bind_group, &[]);
-            rpass.draw(0..3, 0..1);
-        }
-        self.queue.submit([encoder.finish()]);
-    }
-}
-
-fn create_xfb_texture(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    w: u32,
-    h: u32,
-) -> (wgpu::Texture, wgpu::BindGroup) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: None,
-        size: wgpu::Extent3d {
-            width: w.max(1),
-            height: h.max(1),
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-
-    let view = texture.create_view(&Default::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        mag_filter: wgpu::FilterMode::Nearest,
-        min_filter: wgpu::FilterMode::Nearest,
-        ..Default::default()
-    });
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
-    });
-
-    (texture, bind_group)
 }

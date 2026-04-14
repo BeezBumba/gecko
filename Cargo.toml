@@ -11,6 +11,8 @@ members = [
     "crates/backend-wgpu",
     "crates/scripting",
     "crates/dspemu",
+    "crates/dbglib",
+    "crates/debugger",
 
     # Stuff we rarely use
     "crates/dsptestrunner",
@@ -28,15 +30,9 @@ default-members = [
     "crates/dspemu",
 ]
 
-# TODO: DO THESE BEFORE MASTER MERGE
 exclude = [
-    # Web targets WebGL; the new renderer uses wgpu features that GLES
-    # does not expose. Needs a separate fallback renderer.
+    # Built separately with wasm-pack for wasm32-unknown-unknown.
     "crates/web",
-
-    # Temporarily excluded. These need a egui/dbglib rewrite.
-    "crates/dbglib",
-    "crates/debugger",
 ]
 
 [patch.crates-io]

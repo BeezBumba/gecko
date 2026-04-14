@@ -22,6 +22,10 @@ struct Args {
     #[arg(long)]
     ipl: Option<String>,
 
+    /// Boot from ISO using HLE IPL (requires --iso)
+    #[arg(long)]
+    ipl_hle: bool,
+
     /// Path to a GameCube ISO file
     #[arg(long)]
     iso: Option<String>,
@@ -62,7 +66,15 @@ fn main() {
         )
         .init();
 
-    let mut emulator = if let Some(ref ipl) = args.ipl {
+    let mut emulator = if args.ipl_hle {
+        let Some(ref iso) = args.iso else {
+            eprintln!("--ipl-hle requires --iso");
+            std::process::exit(1);
+        };
+        let iso_data = std::fs::read(iso).expect("failed to read ISO");
+        let dvd = Dvd::parse(iso_data);
+        GameCube::with_ipl_hle(dvd)
+    } else if let Some(ref ipl) = args.ipl {
         let ipl_data = std::fs::read(ipl).expect("failed to read IPL");
         GameCube::with_ipl(&ipl_data)
     } else if let Some(ref path) = args.dol {
@@ -70,18 +82,20 @@ fn main() {
         let dol = Dol::parse(dol_data);
         GameCube::with_image(&dol)
     } else {
-        eprintln!("error: either --ipl or --dol must be provided");
+        eprintln!("error: either --ipl, --ipl-hle, or --dol must be provided");
         std::process::exit(1);
     };
 
-    if let Some(ref iso) = args.iso {
-        if args.ipl.is_none() {
-            eprintln!("--iso requires --ipl");
-            std::process::exit(1);
+    if !args.ipl_hle {
+        if let Some(ref iso) = args.iso {
+            if args.ipl.is_none() {
+                eprintln!("--iso requires --ipl or --ipl-hle");
+                std::process::exit(1);
+            }
+            let iso_data = std::fs::read(iso).expect("failed to read ISO");
+            let dvd = Dvd::parse(iso_data);
+            emulator.insert_dvd(dvd);
         }
-        let iso_data = std::fs::read(iso).expect("failed to read ISO");
-        let dvd = Dvd::parse(iso_data);
-        emulator.insert_dvd(dvd);
     }
 
     if let Some(ref dsp_path) = args.dsp {

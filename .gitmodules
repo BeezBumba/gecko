@@ -10,3 +10,6 @@
 [submodule "submodules/gamecube-examples"]
 	path = submodules/gamecube-examples
 	url = https://github.com/devkitPro/gamecube-examples
+[submodule "submodules/solstice"]
+	path = submodules/solstice
+	url = https://codeberg.org/hazelwiss/solstice

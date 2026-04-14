@@ -131,7 +131,7 @@ pub struct GxRenderer {
     pub(crate) current_sampler_keys: [Option<SamplerKey>; 8],
     // XFB output texture: composited from per-copy snapshots by PresentXfb.
     pub(crate) xfb_texture: wgpu::Texture,
-    pub(crate) xfb_view: wgpu::TextureView,
+    pub xfb_view: wgpu::TextureView,
     pub(crate) xfb_has_content: bool,
     // Per-copy temporary textures stored by CopyXfb, composited by PresentXfb.
     pub(crate) xfb_copies: HashMap<u32, (wgpu::Texture, wgpu::TextureView)>,

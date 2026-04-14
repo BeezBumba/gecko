@@ -8,11 +8,15 @@ use std::time::Instant;
 struct Args {
     /// Path to IPL ROM
     #[arg(long)]
-    ipl: String,
+    ipl: Option<String>,
+
+    /// Boot from ISO using HLE IPL (requires --iso)
+    #[arg(long)]
+    ipl_hle: bool,
 
     /// Path to DSP IROM binary
     #[arg(long)]
-    dsp: String,
+    dsp: Option<String>,
 
     /// Path to a GameCube ISO
     #[arg(long)]
@@ -30,16 +34,31 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let ipl_data = std::fs::read(&args.ipl).expect("failed to read IPL");
-    let mut emulator = GameCube::with_ipl(&ipl_data);
-
-    let dsp_data = std::fs::read(&args.dsp).expect("failed to read DSP IROM");
-    emulator.dsp.load_irom(&dsp_data);
-
-    if let Some(ref iso_path) = args.iso {
+    let mut emulator = if args.ipl_hle {
+        let Some(ref iso_path) = args.iso else {
+            eprintln!("--ipl-hle requires --iso");
+            std::process::exit(1);
+        };
         let iso_data = std::fs::read(iso_path).expect("failed to read ISO");
         let dvd = image::dvd::Dvd::parse(iso_data);
-        emulator.insert_dvd(dvd);
+        GameCube::with_ipl_hle(dvd)
+    } else if let Some(ref ipl) = args.ipl {
+        let ipl_data = std::fs::read(ipl).expect("failed to read IPL");
+        let mut gc = GameCube::with_ipl(&ipl_data);
+        if let Some(ref iso_path) = args.iso {
+            let iso_data = std::fs::read(iso_path).expect("failed to read ISO");
+            let dvd = image::dvd::Dvd::parse(iso_data);
+            gc.insert_dvd(dvd);
+        }
+        gc
+    } else {
+        eprintln!("error: either --ipl or --ipl-hle must be provided");
+        std::process::exit(1);
+    };
+
+    if let Some(ref dsp_path) = args.dsp {
+        let dsp_data = std::fs::read(dsp_path).expect("failed to read DSP IROM");
+        emulator.dsp.load_irom(&dsp_data);
     }
 
     emulator.add_primary_controller(PadStatus {

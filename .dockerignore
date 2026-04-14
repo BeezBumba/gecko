@@ -1,12 +1,19 @@
 submodules/gcwii-resources/
 submodules/lilyskategc/
+submodules/gamecube-examples/
+submodules/solstice/**
 .claude/
 private/
 target/
+**/target/
+**/pkg/
+**/pkg-dbg/
 _site/
 docs/
+roms/
 .git/
 *.svg
+*.png
 *.iso
 *.gcm
 *.wbfs
@@ -15,4 +22,15 @@ docs/
 *.bin
 *.log
 *.txt
+*.i64
+*.idb
 perf.*
+stdout.txt
+out.txt
+*.pdb
+
+# IPL HLE binary needed at compile time
+!submodules/solstice/ipl/
+!submodules/solstice/ipl/hle/
+!submodules/solstice/ipl/hle/ipl/
+!submodules/solstice/ipl/hle/ipl/gc_custom_ipl.bin

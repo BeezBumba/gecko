@@ -1,7 +1,6 @@
 FROM rust:latest AS builder
 
-RUN apt-get update && apt-get install -y clang lld --no-install-recommends && rm -rf /var/lib/apt/lists/* \
-    && rustup target add wasm32-unknown-unknown \
+RUN rustup target add wasm32-unknown-unknown \
     && curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
 WORKDIR /app

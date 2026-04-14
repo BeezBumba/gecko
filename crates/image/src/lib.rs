@@ -1,6 +1,9 @@
 pub mod dvd;
+#[cfg(feature = "symbols")]
 pub mod elf;
+#[cfg(feature = "symbols")]
 pub mod idb;
+#[cfg(feature = "symbols")]
 pub mod loader;
 pub mod symbols;
 
