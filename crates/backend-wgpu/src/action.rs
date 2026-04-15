@@ -205,9 +205,15 @@ impl GxRenderer {
                 src_y,
                 src_w,
                 src_h,
+                dst_h,
+                gamma,
                 clear,
                 clear_color,
                 clear_z,
+                color_update,
+                alpha_update,
+                z_update,
+                alpha_supported,
             } => {
                 self.flush_pending_draws(device, queue);
                 self.execute_copy_xfb(
@@ -218,9 +224,15 @@ impl GxRenderer {
                     *src_y,
                     *src_w,
                     *src_h,
+                    *dst_h,
+                    *gamma,
                     *clear,
                     *clear_color,
                     *clear_z,
+                    *color_update,
+                    *alpha_update,
+                    *z_update,
+                    *alpha_supported,
                 );
             }
 
@@ -237,21 +249,16 @@ impl GxRenderer {
                 src_h,
                 copy_format: _copy_format,
                 mipmap: _mipmap,
-                stride: _,
+                stride: _stride,
                 clear,
                 clear_color,
                 clear_z,
                 color_update,
-                alpha_update: _,
-                z_update: _,
+                alpha_update,
+                z_update,
+                alpha_supported,
+                depth_copy: _depth_copy,
             } => {
-                // Dolphin (`BPFunctions::ClearScreen`) clears per-channel
-                // using the current blend/depth write masks; if a channel
-                // is not write-enabled it is not cleared. Our
-                // `clear_region` wipes color+depth together.
-                // TODO: split `clear_region` into color- and depth-only
-                // variants and gate on each mask independently.
-                let effective_clear = *clear && *color_update;
                 self.flush_pending_draws(device, queue);
 
                 // With `efb-writeback`: read the EFB back, encode it in
@@ -268,17 +275,23 @@ impl GxRenderer {
                     *src_h,
                     *_copy_format,
                     *_mipmap,
-                    effective_clear,
+                    *_stride,
+                    *_depth_copy,
+                    *clear,
                     *clear_color,
                     *clear_z,
+                    *color_update,
+                    *alpha_update,
+                    *z_update,
+                    *alpha_supported,
                 );
 
                 // Default path: no readback, no encode, no RAM touch. Texture
                 // invalidation happens on the emu side via a `texture_hashes`
                 // drop. We only need to honor the post-copy clear here.
                 #[cfg(not(feature = "efb-writeback"))]
-                if effective_clear {
-                    self.efb_clear.clear_region(
+                if *clear {
+                    self.efb_clear.clear_region_masked(
                         device,
                         queue,
                         &self.efb_msaa_view,
@@ -292,6 +305,9 @@ impl GxRenderer {
                         *src_h,
                         *clear_color,
                         *clear_z,
+                        *color_update,
+                        *alpha_update && *alpha_supported,
+                        *z_update,
                     );
                 }
             }
@@ -397,8 +413,16 @@ impl GxRenderer {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("gx_action_render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.efb_msaa_view,
-                    resolve_target: Some(&self.efb_view),
+                    view: if crate::EFB_SAMPLE_COUNT == 1 {
+                        &self.efb_view
+                    } else {
+                        &self.efb_msaa_view
+                    },
+                    resolve_target: if crate::EFB_SAMPLE_COUNT == 1 {
+                        None
+                    } else {
+                        Some(&self.efb_view)
+                    },
                     ops: wgpu::Operations {
                         load: color_load,
                         store: wgpu::StoreOp::Store,

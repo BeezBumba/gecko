@@ -51,9 +51,15 @@ pub enum GxAction {
         src_y: u32,
         src_w: u32,
         src_h: u32,
+        dst_h: u32,
+        gamma: f32,
         clear: bool,
         clear_color: [f32; 4],
         clear_z: f32,
+        color_update: bool,
+        alpha_update: bool,
+        z_update: bool,
+        alpha_supported: bool,
     },
 
     /// Composite all XFB copies from this frame into the output framebuffer.
@@ -91,6 +97,8 @@ pub enum GxAction {
         color_update: bool,
         alpha_update: bool,
         z_update: bool,
+        alpha_supported: bool,
+        depth_copy: bool,
     },
 }
 
@@ -105,6 +113,9 @@ pub enum GxAction {
 pub struct EfbWriteback {
     pub dest_addr: Address,
     pub bytes: Vec<u8>,
+    pub row_bytes: usize,
+    pub row_count: usize,
+    pub dest_stride_bytes: usize,
 }
 
 /// Identifies one tile in a composited XFB frame. The `id` matches the

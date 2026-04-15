@@ -44,6 +44,7 @@ pub struct GraphicsProcessor {
     pub cur_num_tev_stages: u8,
     pub cur_tev_konst_colors: [[f32; 4]; 16],
     pub cur_zmode: ZMode,
+    pub cur_pe_control: regs::PeControl,
     pub cur_blend_mode: BlendMode,
     pub cur_alpha_compare: AlphaCompare,
     pub cur_viewport: draw::Viewport,
@@ -98,6 +99,7 @@ impl GraphicsProcessor {
             cur_num_tev_stages: 0,
             cur_tev_konst_colors: [[0.0; 4]; 16],
             cur_zmode: Default::default(),
+            cur_pe_control: Default::default(),
             cur_blend_mode: BlendMode::from_raw(0).with_color_update(true).with_alpha_update(true),
             cur_alpha_compare: Default::default(),
             cur_viewport: Default::default(),
@@ -167,8 +169,7 @@ pub fn present_xfb(gc: &mut GameCube) {
     let vi_base = gc.vi.xfb_addr();
 
     // All copies in a frame share the same stride.
-    let stride = gc.gx.xfb_copies[0].dest_stride as u32;
-    let bytes_per_row = stride as u64 * 32;
+    let bytes_per_row = gc.gx.xfb_copies[0].dest_stride as u64;
     if bytes_per_row == 0 {
         tracing::warn!("present_xfb: zero bytes_per_row, dropping XFB copies");
         gc.gx.xfb_copies.clear();

@@ -9,6 +9,15 @@ use gecko::flipper::gx::texture;
 use gecko::host::EfbWriteback;
 use gecko::host::XfbPart;
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct XfbCopyUniforms {
+    src_rect: [f32; 4],
+    dst_size: [f32; 2],
+    gamma: f32,
+    filter_mode: u32,
+}
+
 impl GxRenderer {
     pub(crate) fn upload_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame_uniform_bytes: &[u8]) {
         let num_draws = self.scratch_draws.len();
@@ -53,12 +62,19 @@ impl GxRenderer {
         src_y: u32,
         src_w: u32,
         src_h: u32,
+        dst_h: u32,
+        gamma: f32,
         clear: bool,
         clear_color: [f32; 4],
         clear_z: f32,
+        color_update: bool,
+        alpha_update: bool,
+        z_update: bool,
+        alpha_supported: bool,
     ) {
         let width = src_w.min(crate::EFB_WIDTH.saturating_sub(src_x));
         let height = src_h.min(crate::EFB_HEIGHT.saturating_sub(src_y));
+        let dst_h = dst_h.max(1);
         if width == 0 || height == 0 {
             tracing::warn!(
                 src_x,
@@ -75,14 +91,16 @@ impl GxRenderer {
                 label: Some("xfb_copy_tmp"),
                 size: wgpu::Extent3d {
                     width,
-                    height,
+                    height: dst_h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: self.surface_format,
-                usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+                usage: wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
             let view = tex.create_view(&Default::default());
@@ -91,19 +109,21 @@ impl GxRenderer {
 
         // Recreate if size changed.
         let existing_size = entry.0.size();
-        if existing_size.width != width || existing_size.height != height {
+        if existing_size.width != width || existing_size.height != dst_h {
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("xfb_copy_tmp"),
                 size: wgpu::Extent3d {
                     width,
-                    height,
+                    height: dst_h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: self.surface_format,
-                usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+                usage: wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
 
@@ -112,34 +132,91 @@ impl GxRenderer {
         }
 
         let mut encoder = device.create_command_encoder(&Default::default());
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.efb_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: src_x,
-                    y: src_y,
-                    z: 0,
+        let needs_shader_copy = dst_h != height || (gamma - 1.0).abs() > f32::EPSILON;
+        if needs_shader_copy {
+            let uniforms = XfbCopyUniforms {
+                src_rect: [src_x as f32, src_y as f32, width as f32, height as f32],
+                dst_size: [width as f32, dst_h as f32],
+                gamma,
+                filter_mode: 0,
+            };
+            queue.write_buffer(&self.xfb_copy_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("xfb_copy_bg"),
+                layout: &self.xfb_copy_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.xfb_copy_uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.efb_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.xfb_copy_sampler),
+                    },
+                ],
+            });
+
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("xfb_copy"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &entry.1,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                    multiview_mask: None,
+                });
+                rpass.set_pipeline(&self.xfb_copy_pipeline);
+                rpass.set_bind_group(0, &bind_group, &[]);
+                rpass.draw(0..3, 0..1);
+            }
+        } else {
+            // Keep exact 1:1 XFB copies on the raw copy path. Running them
+            // through the shader would sample with filtering and can soften
+            // the image even when no scaling or gamma is requested.
+            // TODO: We could just call it a trade-off and just have it all go
+            // through? It looks a bit fuzzy, has it's own charm.
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.efb_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: src_x,
+                        y: src_y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::default(),
                 },
-                aspect: wgpu::TextureAspect::default(),
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &entry.0,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::default(),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
+                wgpu::TexelCopyTextureInfo {
+                    texture: &entry.0,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::default(),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         queue.submit([encoder.finish()]);
 
         // Region-scoped EFB clear after copy (if requested).
         if clear {
-            self.efb_clear.clear_region(
+            self.efb_clear.clear_region_masked(
                 device,
                 queue,
                 &self.efb_msaa_view,
@@ -153,6 +230,9 @@ impl GxRenderer {
                 src_h,
                 clear_color,
                 clear_z,
+                color_update,
+                alpha_update && alpha_supported,
+                z_update,
             );
         }
     }
@@ -243,9 +323,8 @@ impl GxRenderer {
     /// optional 2x downsample, encode into the requested GX texture format,
     /// and ship the bytes back to the emu thread via the writeback channel.
     ///
-    /// `effective_clear` is the already-gated clear flag (see the
-    /// `CopyEfbToTexture` arm in `action.rs`); this function does not look
-    /// at the per-channel write masks itself.
+    /// The clear flag and per-channel update masks are applied after the
+    /// copy, matching GX copy-clear ordering.
     ///
     /// Only compiled with `efb-writeback`. The default no-feature path
     /// handles CopyEfbToTexture inline in `action.rs` with just a clear.
@@ -261,9 +340,15 @@ impl GxRenderer {
         src_h: u32,
         copy_format: u8,
         mipmap: bool,
-        effective_clear: bool,
+        stride: u32,
+        depth_copy: bool,
+        clear: bool,
         clear_color: [f32; 4],
         clear_z: f32,
+        color_update: bool,
+        alpha_update: bool,
+        z_update: bool,
+        alpha_supported: bool,
     ) {
         // Clamp the source to EFB bounds (mirrors execute_copy_xfb).
         let width = src_w.min(crate::EFB_WIDTH.saturating_sub(src_x));
@@ -281,13 +366,18 @@ impl GxRenderer {
 
         // Early-out for formats we don't encode: skip the expensive readback
         // but still honor the clear.
-        let Some(copy_format_enum) = texture::CopyFormat::from_u8(copy_format) else {
+        let copy_format_option = if depth_copy {
+            texture::CopyFormat::from_u8_depth(copy_format)
+        } else {
+            texture::CopyFormat::from_u8_color(copy_format)
+        };
+        let Some(copy_format_enum) = copy_format_option else {
             tracing::warn!(
                 copy_format = format!("{copy_format:#x}"),
                 "efb_to_texture: unsupported copy format, skipping readback"
             );
-            if effective_clear {
-                self.efb_clear.clear_region(
+            if clear {
+                self.efb_clear.clear_region_masked(
                     device,
                     queue,
                     &self.efb_msaa_view,
@@ -301,10 +391,41 @@ impl GxRenderer {
                     src_h,
                     clear_color,
                     clear_z,
+                    color_update,
+                    alpha_update && alpha_supported,
+                    z_update,
                 );
             }
             return;
         };
+
+        if depth_copy {
+            tracing::warn!(
+                copy_format = format!("{copy_format:#x}"),
+                "efb_to_texture: depth readback is not implemented yet, skipping readback"
+            );
+            if clear {
+                self.efb_clear.clear_region_masked(
+                    device,
+                    queue,
+                    &self.efb_msaa_view,
+                    &self.efb_view,
+                    &self.efb_depth_view,
+                    crate::EFB_WIDTH,
+                    crate::EFB_HEIGHT,
+                    src_x,
+                    src_y,
+                    src_w,
+                    src_h,
+                    clear_color,
+                    clear_z,
+                    color_update,
+                    alpha_update && alpha_supported,
+                    z_update,
+                );
+            }
+            return;
+        }
 
         // wgpu requires 256-byte row alignment for texture<->buffer copies.
         let bytes_per_row = align_up(width as u64 * 4, 256);
@@ -404,18 +525,24 @@ impl GxRenderer {
 
         // Encode and ship back.
         let encoded = texture::encode_from_rgba(&encode_src, encode_w as usize, encode_h as usize, copy_format_enum);
+        let row_bytes = texture::encoded_row_bytes(encode_w, copy_format_enum);
+        let row_count = texture::encoded_row_count(encode_h, copy_format_enum);
+        let dest_stride_bytes = stride as usize;
 
         if let Some(tx) = &self.efb_writeback_tx {
             if let Err(err) = tx.try_send(EfbWriteback {
                 dest_addr,
                 bytes: encoded,
+                row_bytes,
+                row_count,
+                dest_stride_bytes,
             }) {
                 tracing::warn!(?err, "efb_to_texture: writeback channel send failed");
             }
         }
 
-        if effective_clear {
-            self.efb_clear.clear_region(
+        if clear {
+            self.efb_clear.clear_region_masked(
                 device,
                 queue,
                 &self.efb_msaa_view,
@@ -429,6 +556,9 @@ impl GxRenderer {
                 src_h,
                 clear_color,
                 clear_z,
+                color_update,
+                alpha_update && alpha_supported,
+                z_update,
             );
         }
     }

@@ -1,15 +1,15 @@
 use super::constants::{
     BP_GEN_MODE, BP_PE_ALPHA_COMPARE, BP_PE_CMODE0, BP_PE_COPY_CLEAR_AR, BP_PE_COPY_CLEAR_GB, BP_PE_COPY_CLEAR_Z,
-    BP_PE_COPY_CMD, BP_PE_COPY_DIMS, BP_PE_COPY_DST, BP_PE_COPY_DST_STRIDE, BP_PE_COPY_SRC, BP_PE_DONE,
-    BP_PE_DONE_FINISH_BIT, BP_PE_TOKEN, BP_PE_TOKEN_INT, BP_PE_ZMODE, BP_RAS1_TREF_COUNT, BP_RAS1_TREF0, BP_SU_SCIS_BR,
-    BP_SU_SCIS_OFFSET, BP_SU_SCIS_TL, BP_TEV_COLOR_ENV_0, BP_TEV_KSEL_0, BP_TEV_REGISTERL_0, BP_TX_SETIMAGE0_I0,
-    BP_TX_SETIMAGE0_I4, BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, BP_TX_SETMODE0_I0, BP_TX_SETMODE0_I4, EFB_HEIGHT,
-    EFB_WIDTH,
+    BP_PE_COPY_CMD, BP_PE_COPY_DIMS, BP_PE_COPY_DST, BP_PE_COPY_DST_STRIDE, BP_PE_COPY_SRC, BP_PE_COPY_YSCALE,
+    BP_PE_DONE, BP_PE_DONE_FINISH_BIT, BP_PE_TOKEN, BP_PE_TOKEN_INT, BP_PE_ZCOMPARE, BP_PE_ZMODE, BP_RAS1_TREF_COUNT,
+    BP_RAS1_TREF0, BP_SU_SCIS_BR, BP_SU_SCIS_OFFSET, BP_SU_SCIS_TL, BP_TEV_COLOR_ENV_0, BP_TEV_KSEL_0,
+    BP_TEV_REGISTERL_0, BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4,
+    BP_TX_SETMODE0_I0, BP_TX_SETMODE0_I4, EFB_HEIGHT, EFB_WIDTH,
 };
 use super::regs::{
-    AlphaCompare, BlendMode, EfbCopyDims, EfbCopyDst, EfbCopyDstStride, EfbCopySrc, GenMode, PeClearAr, PeClearGb,
-    PeClearZ, PeCopyCmd, SuScisOffset, SuScisRect, TevAlphaEnv, TevColorEnv, TevOrder, TevRegType, TevRegisterH,
-    TevRegisterL, TxSetImage0, TxSetImage3, TxSetMode0, ZMode,
+    AlphaCompare, BlendMode, DispCopyYScale, EfbCopyDims, EfbCopyDst, EfbCopyDstStride, EfbCopySrc, GenMode, PeClearAr,
+    PeClearGb, PeClearZ, PeControl, PeCopyCmd, SuScisOffset, SuScisRect, TevAlphaEnv, TevColorEnv, TevOrder,
+    TevRegType, TevRegisterH, TevRegisterL, TxSetImage0, TxSetImage3, TxSetMode0, ZMode,
 };
 use super::{GraphicsProcessor, draw, texture};
 use crate::common::Address;
@@ -52,6 +52,9 @@ impl GraphicsProcessor {
             BP_PE_CMODE0 => {
                 self.cur_blend_mode = BlendMode::from_raw(val);
                 renderer.exec(GxAction::SetBlendMode(self.cur_blend_mode));
+            }
+            BP_PE_ZCOMPARE => {
+                self.cur_pe_control = PeControl::from_raw(val);
             }
             BP_PE_ALPHA_COMPARE => {
                 self.cur_alpha_compare = AlphaCompare::from_raw(val);
@@ -285,7 +288,7 @@ impl GraphicsProcessor {
         let src_h = dims.height_minus1() as u32 + 1;
 
         let dest_addr = EfbCopyDst::from_raw(self.bp_regs[BP_PE_COPY_DST]).addr();
-        let dest_stride = EfbCopyDstStride::from_raw(self.bp_regs[BP_PE_COPY_DST_STRIDE]).stride() as u32;
+        let dest_stride = EfbCopyDstStride::from_raw(self.bp_regs[BP_PE_COPY_DST_STRIDE]).stride_bytes();
 
         let cmd = PeCopyCmd::from_raw(trigger);
         let copy_to_xfb = cmd.copy_to_xfb();
@@ -314,6 +317,24 @@ impl GraphicsProcessor {
         );
 
         if copy_to_xfb {
+            let yscale_reg = DispCopyYScale::from_raw(self.bp_regs[BP_PE_COPY_YSCALE]).scale() as f32;
+            let y_scale = if cmd.scale_invert() {
+                if yscale_reg == 0.0 { 1.0 } else { 256.0 / yscale_reg }
+            } else {
+                yscale_reg / 256.0
+            };
+            let y_scale = if y_scale.is_finite() && y_scale > 0.0 {
+                y_scale
+            } else {
+                1.0
+            };
+            let dst_h = (1.0 + dims.height_minus1() as f32 * y_scale).floor().max(1.0) as u32;
+            let gamma = match cmd.gamma() {
+                0 => 1.0,
+                1 => 1.7,
+                2 | 3 => 2.2,
+                _ => 1.0,
+            };
             // XFB copy: queue the copy for present_xfb() to compose at vblank,
             // and tell the renderer to snapshot the EFB region now.
             let id = self.xfb_copies.len() as u32;
@@ -328,9 +349,15 @@ impl GraphicsProcessor {
                 src_y,
                 src_w,
                 src_h,
+                dst_h,
+                gamma,
                 clear,
                 clear_color: [r, g, b, a],
                 clear_z,
+                color_update: self.cur_blend_mode.color_update(),
+                alpha_update: self.cur_blend_mode.alpha_update(),
+                z_update: self.cur_zmode.update_enable(),
+                alpha_supported: self.cur_pe_control.pixel_format().has_alpha(),
             });
         } else {
             let copy_format = cmd.copy_format();
@@ -356,6 +383,8 @@ impl GraphicsProcessor {
                 color_update,
                 alpha_update,
                 z_update,
+                alpha_supported: self.cur_pe_control.pixel_format().has_alpha(),
+                depth_copy: self.cur_pe_control.pixel_format().is_depth_only(),
             });
 
             // Default path (feature off): the renderer doesn't do a readback
@@ -376,17 +405,14 @@ impl GraphicsProcessor {
             if let Some(rx) = &self.efb_writeback_rx {
                 match rx.recv_timeout(Duration::from_secs(2)) {
                     Ok(wb) => {
-                        let start = wb.dest_addr as usize;
-                        let end = start + wb.bytes.len();
-                        if end <= ram.len() {
-                            ram[start..end].copy_from_slice(&wb.bytes);
-                        } else {
-                            tracing::warn!(
-                                addr = format!("{:#010X}", wb.dest_addr),
-                                len = wb.bytes.len(),
-                                "efb writeback OOB, dropping"
-                            );
-                        }
+                        texture::write_strided_copy_to_ram(
+                            ram,
+                            wb.dest_addr,
+                            &wb.bytes,
+                            wb.row_bytes,
+                            wb.row_count,
+                            wb.dest_stride_bytes,
+                        );
                     }
                     Err(err) => {
                         tracing::warn!(?err, "efb writeback recv timed out");

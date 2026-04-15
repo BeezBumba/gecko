@@ -102,6 +102,41 @@ pub struct BlendMode {
     pub logic_op: LogicOp,
 }
 
+#[derive(Debug, PartialEq, BitEnum, Hash, Eq)]
+pub enum PixelFormat {
+    Rgb8Z24 = 0,
+    Rgba6Z24 = 1,
+    Rgb565Z16 = 2,
+    Z24 = 3,
+    Y8 = 4,
+    U8 = 5,
+    V8 = 6,
+    Yuv420 = 7,
+}
+
+impl PixelFormat {
+    pub fn has_alpha(self) -> bool {
+        matches!(self, PixelFormat::Rgba6Z24)
+    }
+
+    pub fn is_depth_only(self) -> bool {
+        matches!(self, PixelFormat::Z24)
+    }
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Default)]
+pub struct PeControl {
+    #[bits(0..=2)]
+    pub pixel_format: PixelFormat,
+
+    #[bits(3..=5)]
+    pub depth_format: u8,
+
+    #[bits(6)]
+    pub early_ztest: bool,
+}
+
 // BP 0xF3 Alpha compare
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -1104,6 +1139,20 @@ pub struct EfbCopyDstStride {
     pub stride: u16,
 }
 
+impl EfbCopyDstStride {
+    pub fn stride_bytes(&self) -> u32 {
+        (self.stride() as u32) << 5
+    }
+}
+
+// BP 0x4E BPMEM_COPYYSCALE (display copy vertical scale)
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DispCopyYScale {
+    #[bits(0..=8)]
+    pub scale: u16,
+}
+
 // BP 0x52 BPMEM_TRIGGER_EFB_COPY (PE copy execute/trigger)
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -1119,6 +1168,9 @@ pub struct PeCopyCmd {
     #[bits(4..=6)]
     pub fmt_lo: u8,
 
+    #[bits(7..=8)]
+    pub gamma: u8,
+
     #[bits(9)]
     pub half: bool,
 
@@ -1133,6 +1185,12 @@ pub struct PeCopyCmd {
 
     #[bits(14)]
     pub copy_to_xfb: bool,
+
+    #[bits(15)]
+    pub intensity_fmt: bool,
+
+    #[bits(16)]
+    pub auto_conv: bool,
 }
 
 impl PeCopyCmd {

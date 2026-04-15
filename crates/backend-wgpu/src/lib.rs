@@ -137,6 +137,10 @@ pub struct GxRenderer {
     pub(crate) xfb_has_content: bool,
     // Per-copy temporary textures stored by CopyXfb, composited by PresentXfb.
     pub(crate) xfb_copies: FxHashMap<u32, (wgpu::Texture, wgpu::TextureView)>,
+    pub(crate) xfb_copy_pipeline: wgpu::RenderPipeline,
+    pub(crate) xfb_copy_bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) xfb_copy_sampler: wgpu::Sampler,
+    pub(crate) xfb_copy_uniform_buffer: wgpu::Buffer,
     // Region-scoped EFB clear.
     pub(crate) efb_clear: clear::EfbClear,
     // EFB-to-texture readback. Only allocated with `efb-writeback`.
@@ -163,6 +167,10 @@ impl GxRenderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gx_shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
+        let xfb_copy_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("xfb_copy_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/xfb_copy.wgsl").into()),
         });
 
         // Bindings: 0=FrameUniforms, 1=DrawUniforms, 2-9=textures 0-7, 10-17=samplers 0-7
@@ -353,6 +361,91 @@ impl GxRenderer {
         });
         let xfb_view = xfb_texture.create_view(&Default::default());
 
+        let xfb_copy_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("xfb_copy_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let xfb_copy_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("xfb_copy_layout"),
+            bind_group_layouts: &[&xfb_copy_bind_group_layout],
+            immediate_size: 0,
+        });
+        let xfb_copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("xfb_copy_pipeline"),
+            layout: Some(&xfb_copy_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &xfb_copy_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &xfb_copy_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        });
+        let xfb_copy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("xfb_copy_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let xfb_copy_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("xfb_copy_uniforms"),
+            size: std::mem::size_of::<render::XfbCopyUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let efb_clear = clear::EfbClear::new(
             device,
             surface_format,
@@ -417,6 +510,10 @@ impl GxRenderer {
             xfb_view,
             xfb_has_content: false,
             xfb_copies: FxHashMap::default(),
+            xfb_copy_pipeline,
+            xfb_copy_bind_group_layout,
+            xfb_copy_sampler,
+            xfb_copy_uniform_buffer,
             efb_clear,
             #[cfg(feature = "efb-writeback")]
             efb_readback_staging: None,

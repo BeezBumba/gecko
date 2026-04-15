@@ -106,6 +106,7 @@ pub const BP_TX_SETIMAGE3_I4: usize = 0xB4; // TX_SETIMAGE3 maps 4-7 (IMAGE_BASE
 // BP PE (Pixel Engine) registers
 pub const BP_PE_ZMODE: usize = 0x40;
 pub const BP_PE_CMODE0: usize = 0x41; // blend mode
+pub const BP_PE_ZCOMPARE: usize = 0x43;
 pub const BP_PE_ALPHA_COMPARE: usize = 0xF3;
 pub const BP_PE_DONE: usize = 0x45;
 pub const BP_PE_DONE_FINISH_BIT: u32 = 0x02;

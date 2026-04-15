@@ -7,10 +7,65 @@ struct ClearUniforms {
 }
 
 pub(crate) struct EfbClear {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
+    pipeline_all_depth: wgpu::RenderPipeline,
+    pipeline_rgb_depth: wgpu::RenderPipeline,
+    pipeline_alpha_depth: wgpu::RenderPipeline,
+    pipeline_none_depth: wgpu::RenderPipeline,
+    pipeline_all: wgpu::RenderPipeline,
+    pipeline_rgb: wgpu::RenderPipeline,
+    pipeline_alpha: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+}
+
+fn create_clear_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    color_format: wgpu::TextureFormat,
+    depth_format: wgpu::TextureFormat,
+    sample_count: u32,
+    color_write_mask: wgpu::ColorWrites,
+    depth_write_enabled: bool,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("efb_clear_pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: None,
+                write_mask: color_write_mask,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: depth_format,
+            depth_write_enabled,
+            depth_compare: wgpu::CompareFunction::Always,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 impl EfbClear {
@@ -45,44 +100,77 @@ impl EfbClear {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("efb_clear_pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: color_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        let rgb = wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::BLUE;
+        let pipeline_all_depth = create_clear_pipeline(
+            device,
+            &shader,
+            &layout,
+            color_format,
+            depth_format,
+            sample_count,
+            wgpu::ColorWrites::ALL,
+            true,
+        );
+        let pipeline_rgb_depth = create_clear_pipeline(
+            device,
+            &shader,
+            &layout,
+            color_format,
+            depth_format,
+            sample_count,
+            rgb,
+            true,
+        );
+        let pipeline_alpha_depth = create_clear_pipeline(
+            device,
+            &shader,
+            &layout,
+            color_format,
+            depth_format,
+            sample_count,
+            wgpu::ColorWrites::ALPHA,
+            true,
+        );
+        let pipeline_none_depth = create_clear_pipeline(
+            device,
+            &shader,
+            &layout,
+            color_format,
+            depth_format,
+            sample_count,
+            wgpu::ColorWrites::empty(),
+            true,
+        );
+        let pipeline_all = create_clear_pipeline(
+            device,
+            &shader,
+            &layout,
+            color_format,
+            depth_format,
+            sample_count,
+            wgpu::ColorWrites::ALL,
+            false,
+        );
+        let pipeline_rgb = create_clear_pipeline(
+            device,
+            &shader,
+            &layout,
+            color_format,
+            depth_format,
+            sample_count,
+            rgb,
+            false,
+        );
+        let pipeline_alpha = create_clear_pipeline(
+            device,
+            &shader,
+            &layout,
+            color_format,
+            depth_format,
+            sample_count,
+            wgpu::ColorWrites::ALPHA,
+            false,
+        );
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("efb_clear_uniforms"),
@@ -101,16 +189,20 @@ impl EfbClear {
         });
 
         EfbClear {
-            pipeline,
-            bind_group_layout,
+            pipeline_all_depth,
+            pipeline_rgb_depth,
+            pipeline_alpha_depth,
+            pipeline_none_depth,
+            pipeline_all,
+            pipeline_rgb,
+            pipeline_alpha,
             uniform_buffer,
             bind_group,
         }
     }
 
-    /// Clear a rectangular region of `(color_view, depth_view)` to the given
-    /// color and depth. Areas outside the rect are preserved.
-    pub fn clear_region(
+    /// Clear a rectangular region with independent RGB, alpha, and depth masks.
+    pub fn clear_region_masked(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -125,7 +217,13 @@ impl EfbClear {
         h: u32,
         color: [f32; 4],
         depth: f32,
+        color_update: bool,
+        alpha_update: bool,
+        z_update: bool,
     ) {
+        if !color_update && !alpha_update && !z_update {
+            return;
+        }
         if w == 0 || h == 0 {
             tracing::warn!(x, y, w, h, "clear: zero-area clear region, skipping");
             return;
@@ -139,6 +237,18 @@ impl EfbClear {
             return;
         }
 
+        // im gonna vomit
+        let pipeline = match (color_update, alpha_update, z_update) {
+            (true, true, true) => &self.pipeline_all_depth,
+            (true, false, true) => &self.pipeline_rgb_depth,
+            (false, true, true) => &self.pipeline_alpha_depth,
+            (false, false, true) => &self.pipeline_none_depth,
+            (true, true, false) => &self.pipeline_all,
+            (true, false, false) => &self.pipeline_rgb,
+            (false, true, false) => &self.pipeline_alpha,
+            (false, false, false) => unreachable!(),
+        };
+
         let uniforms = ClearUniforms {
             color,
             depth,
@@ -151,8 +261,16 @@ impl EfbClear {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("efb_clear_region"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: msaa_color_view,
-                    resolve_target: Some(resolve_color_view),
+                    view: if crate::EFB_SAMPLE_COUNT == 1 {
+                        resolve_color_view
+                    } else {
+                        msaa_color_view
+                    },
+                    resolve_target: if crate::EFB_SAMPLE_COUNT == 1 {
+                        None
+                    } else {
+                        Some(resolve_color_view)
+                    },
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -172,16 +290,11 @@ impl EfbClear {
                 multiview_mask: None,
             });
 
-            rpass.set_pipeline(&self.pipeline);
+            rpass.set_pipeline(pipeline);
             rpass.set_bind_group(0, &self.bind_group, &[]);
             rpass.set_scissor_rect(x, y, w, h);
             rpass.draw(0..3, 0..1);
         }
         queue.submit([encoder.finish()]);
-    }
-
-    #[allow(dead_code)]
-    pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.bind_group_layout
     }
 }
