@@ -39,7 +39,7 @@ pub fn show_cpu(
                     ui.monospace(format!("{:#010X}", cpu.spr.xer.raw()));
                     ui.allocate_space(egui::vec2(16.0, 0.0));
                     ui.label("FPSCR");
-                    ui.monospace(format!("{:#010X}", cpu.fpscr));
+                    ui.monospace(format!("{:#010X}", cpu.fpscr.raw()));
                     ui.end_row();
                 });
 

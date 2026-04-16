@@ -118,6 +118,10 @@ fn psq_store(ctx: &mut crate::gamecube::GameCube, fs: u8, addr: u32, w: bool, gq
 pub fn store_load_psq<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     use crate::cpu::lut::*;
 
+    if !ctx.check_fp_available() {
+        return;
+    }
+
     match OP {
         // D-form loads
         OP_PSQ_L | OP_PSQ_LU => {

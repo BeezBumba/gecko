@@ -210,6 +210,10 @@ pub fn stwcx_dot(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruc
 
 #[inline(always)]
 pub fn store_load_fp<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
+    if !ctx.check_fp_available() {
+        return;
+    }
+
     match OP {
         crate::cpu::lut::OP_LFD | crate::cpu::lut::OP_LFDU => {
             let addr = ctx.cpu.read_gpr_or_zero(instr.ra()).wrapping_add_signed(instr.disp());

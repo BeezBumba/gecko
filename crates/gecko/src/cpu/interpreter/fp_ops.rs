@@ -1,7 +1,12 @@
 use crate::cpu::condition::ConditionField;
+use crate::cpu::fpscr::Fpscr;
 
 #[inline(always)]
 pub fn fp_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
+    if !ctx.check_fp_available() {
+        return;
+    }
+
     match OP {
         crate::cpu::lut::OP_MTFSFX => {
             let fm = instr.fm();
@@ -12,36 +17,42 @@ pub fn fp_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::
                     mask |= 0xF << ((7 - i) * 4);
                 }
             }
-            ctx.cpu.fpscr = (ctx.cpu.fpscr & !mask) | (fb & mask);
+            ctx.cpu.fpscr = Fpscr::from((ctx.cpu.fpscr.raw() & !mask) | (fb & mask));
+            ctx.cpu.recompute_fpscr_summary();
         }
         crate::cpu::lut::OP_MFFSX => {
-            ctx.cpu.write_fpr(instr.rd(), f64::from_bits(ctx.cpu.fpscr as u64));
+            ctx.cpu
+                .write_fpr(instr.rd(), f64::from_bits(ctx.cpu.fpscr.raw() as u64));
             if instr.rc() {
                 ctx.cpu.update_cr1();
             }
         }
         crate::cpu::lut::OP_MTFSB0X => {
-            ctx.cpu.fpscr &= !(1 << (31 - instr.crbd()));
+            ctx.cpu.fpscr = Fpscr::from(ctx.cpu.fpscr.raw() & !(1 << (31 - instr.crbd())));
+            ctx.cpu.recompute_fpscr_summary();
         }
         crate::cpu::lut::OP_MTFSB1X => {
-            ctx.cpu.fpscr |= 1 << (31 - instr.crbd());
+            ctx.cpu.fpscr = Fpscr::from(ctx.cpu.fpscr.raw() | (1 << (31 - instr.crbd())));
+            ctx.cpu.recompute_fpscr_summary();
         }
         crate::cpu::lut::OP_MTFSFIX => {
             let crfd = instr.crfd();
             let imm = (instr.0 >> 12) & 0xF;
             let shift = (7 - crfd) * 4;
             let mask = 0xFu32 << shift;
-            ctx.cpu.fpscr = (ctx.cpu.fpscr & !mask) | (imm << shift);
+            ctx.cpu.fpscr = Fpscr::from((ctx.cpu.fpscr.raw() & !mask) | (imm << shift));
+            ctx.cpu.recompute_fpscr_summary();
         }
         crate::cpu::lut::OP_MCRFS => {
             let src_field = instr.crfs();
             let shift = (7 - src_field) * 4;
-            let fpscr_nibble = (ctx.cpu.fpscr >> shift) & 0xF;
+            let fpscr_nibble = (ctx.cpu.fpscr.raw() >> shift) & 0xF;
             ctx.cpu
                 .cr
                 .set_field(instr.crfd(), ConditionField::from(fpscr_nibble as u8));
             if src_field != 0 && src_field != 1 {
-                ctx.cpu.fpscr &= !(0xF << shift);
+                ctx.cpu.fpscr = Fpscr::from(ctx.cpu.fpscr.raw() & !(0xF << shift));
+                ctx.cpu.recompute_fpscr_summary();
             }
         }
         crate::cpu::lut::OP_FMRX => {
@@ -183,6 +194,8 @@ pub fn fp_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::
 
         _ => todo!("FP instruction with OP = {OP:#x}"),
     }
+
+    ctx.check_fp_program_exception();
 }
 
 /// Write FP result to fD and optionally update CR1

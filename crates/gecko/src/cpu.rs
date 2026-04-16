@@ -1,5 +1,6 @@
 pub mod condition;
 pub mod dec;
+pub mod fpscr;
 #[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
 pub mod instruction;
 pub mod interpreter;
@@ -23,7 +24,7 @@ pub struct Cpu {
     pub ps1s: [f64; 32], // PS1 (paired single slot 1)
     pub pc: u32,
     pub cr: ConditionRegister,
-    pub fpscr: u32, // TODO: FP Status and Control Register
+    pub fpscr: fpscr::Fpscr,
     pub dec: dec::Decrementer,
     pub spr: spr::Spr,
     pub msr: msr::Msr,
@@ -52,7 +53,7 @@ impl Cpu {
             dec: dec::Decrementer::default(),
             spr,
             msr: msr::Msr::default(),
-            fpscr: 0,
+            fpscr: fpscr::Fpscr::default(),
             sr: [sr::Sr::default(); 16],
             reserve_addr: None,
         }
@@ -109,8 +110,33 @@ impl Cpu {
     /// Update CR1 with FPSCR[0:3] (used by Rc=1 FP instructions)
     #[inline(always)]
     pub fn update_cr1(&mut self) {
-        let cr1 = condition::ConditionField::from((self.fpscr >> 28) as u8);
+        let cr1 = condition::ConditionField::from((self.fpscr.raw() >> 28) as u8);
         self.cr.set_field(1, cr1);
+    }
+
+    /// Recompute FPSCR[VX] and FPSCR[FEX] from the underlying bits.
+    ///
+    /// VX  = OR of all VXxxx bits.
+    /// FEX = (VX & VE) | (OX & OE) | (UX & UE) | (ZX & ZE) | (XX & XE).
+    #[inline(always)]
+    pub fn recompute_fpscr_summary(&mut self) {
+        let vx = self.fpscr.vxsnan()
+            || self.fpscr.vxisi()
+            || self.fpscr.vxidi()
+            || self.fpscr.vxzdz()
+            || self.fpscr.vximz()
+            || self.fpscr.vxvc()
+            || self.fpscr.vxsoft()
+            || self.fpscr.vxsqrt()
+            || self.fpscr.vxcvi();
+        self.fpscr = self.fpscr.with_vx(vx);
+
+        let fex = (self.fpscr.vx() && self.fpscr.ve())
+            || (self.fpscr.ox() && self.fpscr.oe())
+            || (self.fpscr.ux() && self.fpscr.ue())
+            || (self.fpscr.zx() && self.fpscr.ze())
+            || (self.fpscr.xx() && self.fpscr.xe());
+        self.fpscr = self.fpscr.with_fex(fex);
     }
 
     /// Read GPR with the PowerPC "rA|0" convention: returns 0 when index is 0

@@ -241,7 +241,7 @@ impl LuaHost {
         methods.add_method("cr", |_, this, ()| Ok(this.cpu.cr.raw()));
         methods.add_method("msr", |_, this, ()| Ok(this.cpu.msr.raw()));
         methods.add_method("xer", |_, this, ()| Ok(this.cpu.spr.xer.raw()));
-        methods.add_method("fpscr", |_, this, ()| Ok(this.cpu.fpscr));
+        methods.add_method("fpscr", |_, this, ()| Ok(this.cpu.fpscr.raw()));
         methods.add_method("cycles", |_, this, ()| Ok(this.scheduler.cycles));
 
         methods.add_method("read_u8", |_, this, addr: u32| Ok(this.mmio.virt_read_u8(addr)));
