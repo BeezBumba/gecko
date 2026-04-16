@@ -98,7 +98,7 @@ impl MmioAccess<GameCube> for ControlStatus {
         let trigger_ucode_upload =
             gc.dsp.csr.reset_vector() == ResetVector::High && self.reset_vector() == ResetVector::Low;
         if trigger_ucode_upload {
-            tracing::info!("ucode upload, PC -> 0x0000 (IRAM)");
+            tracing::debug!("ucode upload, PC -> 0x0000 (IRAM)");
             gc.dsp.registers.pc = 0x0000;
         }
 
@@ -291,8 +291,13 @@ impl MmioAccess<GameCube> for AudioDmaControl {
     }
 
     fn write(self, gc: &mut GameCube, _: WriteMask) {
+        let was_playing = gc.dsp.audio_dma_control.play();
         gc.dsp.audio_dma_control = self;
-        ai::start_audio_dma(gc);
+        match (was_playing, self.play()) {
+            (false, true) => ai::start_audio_dma(gc),
+            (true, false) => ai::stop_audio_dma(gc),
+            _ => {}
+        }
         dsp::refresh_interrupts(gc);
     }
 }

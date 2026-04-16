@@ -293,44 +293,10 @@ impl Dsp {
 pub fn refresh_interrupts(gc: &mut GameCube) {
     use crate::flipper::pi::InterruptFlag;
 
-    let active = gc.dsp.interrupt_active();
-    let intsr_before = gc.pi.intsr.raw();
-    let dsp_pi_pending = intsr_before & InterruptFlag::Dsp as u32 != 0;
-
-    if active {
+    if gc.dsp.interrupt_active() {
         gc.pi.assert_interrupt(InterruptFlag::Dsp);
-        if !dsp_pi_pending {
-            tracing::info!(
-                csr = format!("{:04X}", gc.dsp.csr.raw()),
-                ai_interrupt = gc.dsp.csr.ai_interrupt(),
-                ai_interrupt_mask = gc.dsp.csr.ai_interrupt_mask(),
-                ar_interrupt = gc.dsp.csr.ar_interrupt(),
-                ar_interrupt_mask = gc.dsp.csr.ar_interrupt_mask(),
-                dsp_interrupt = gc.dsp.csr.dsp_interrupt(),
-                dsp_interrupt_mask = gc.dsp.csr.dsp_interrupt_mask(),
-                pi_intsr_before = format!("{intsr_before:08X}"),
-                pi_intsr_after = format!("{:08X}", gc.pi.intsr.raw()),
-                pi_intmr = format!("{:08X}", gc.pi.intmr.raw()),
-                "DSP PI interrupt asserted"
-            );
-        }
     } else {
         gc.pi.clear_interrupt(InterruptFlag::Dsp);
-        if dsp_pi_pending {
-            tracing::info!(
-                csr = format!("{:04X}", gc.dsp.csr.raw()),
-                ai_interrupt = gc.dsp.csr.ai_interrupt(),
-                ai_interrupt_mask = gc.dsp.csr.ai_interrupt_mask(),
-                ar_interrupt = gc.dsp.csr.ar_interrupt(),
-                ar_interrupt_mask = gc.dsp.csr.ar_interrupt_mask(),
-                dsp_interrupt = gc.dsp.csr.dsp_interrupt(),
-                dsp_interrupt_mask = gc.dsp.csr.dsp_interrupt_mask(),
-                pi_intsr_before = format!("{intsr_before:08X}"),
-                pi_intsr_after = format!("{:08X}", gc.pi.intsr.raw()),
-                pi_intmr = format!("{:08X}", gc.pi.intmr.raw()),
-                "DSP PI interrupt cleared"
-            );
-        }
     }
 }
 
@@ -375,7 +341,7 @@ fn read_ifx(gc: &mut GameCube, addr: u16) -> u16 {
         addr::IFX_DSMAH => gc.dsp.dma_ram_addr_hi,
         addr::IFX_DSMAL => gc.dsp.dma_ram_addr_lo,
         _ => {
-            tracing::warn!(addr = format!("{:04X}", addr), "Read from unknown DSP IFX register");
+            tracing::debug!(addr = format!("{:04X}", addr), "Read from unknown DSP IFX register");
             read_word(&*gc.dsp.ifx, addr - 0xFF00)
         }
     }
@@ -413,7 +379,7 @@ fn write_ifx(gc: &mut GameCube, addr: u16, value: u16) {
         addr::IFX_DSMAH => gc.dsp.dma_ram_addr_hi = value,
         addr::IFX_DSMAL => gc.dsp.dma_ram_addr_lo = value,
         _ => {
-            tracing::warn!(
+            tracing::debug!(
                 addr = format!("{:04X}", addr),
                 value = format!("{:04X}", value),
                 "Write to unknown DSP IFX register"
