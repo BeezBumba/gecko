@@ -1,4 +1,5 @@
 mod action;
+pub mod capture;
 mod clear;
 mod helpers;
 mod pipeline;

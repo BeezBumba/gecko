@@ -1,18 +1,16 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-
+use backend_wgpu::capture::{self, CaptureRequest, ScreenshotControl};
 use crossbeam_channel::Receiver;
 use egui::ViewportId;
 use gecko::flipper::si::pad::PadStatus;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
-
 use crate::thread::FrameMessage;
-use crate::update_pad;
 
 pub struct State {
     surface: wgpu::Surface<'static>,
@@ -28,6 +26,7 @@ pub struct State {
     start_time: Instant,
     last_frame: Instant,
     last_native_hz: f64,
+    screenshots: ScreenshotControl,
 }
 
 impl State {
@@ -57,6 +56,7 @@ impl State {
             start_time: Instant::now(),
             last_frame: Instant::now(),
             last_native_hz: 60.0,
+            screenshots: ScreenshotControl::new(),
         }
     }
 
@@ -97,9 +97,19 @@ impl State {
             }
         };
         let view = frame.texture.create_view(&Default::default());
+        let pending_capture = self.screenshots.take_pending();
 
         // Blit the latest XFB output from the renderer worker to the swapchain.
         self.renderer.blit(&self.queue, &view);
+
+        // Capture the game-only screen before the egui overlay is drawn. Reads
+        // the swapchain instead of the XFB directly so the blit's fullscreen
+        // sample resolves any partial-update state in the XFB accumulator.
+        if let CaptureRequest::GameOnly = pending_capture
+            && let Some(cap) = capture::capture_texture(&self.device, &self.queue, &frame.texture)
+        {
+            capture::save_png_async(capture::timestamped_path("game"), cap, true);
+        }
 
         // egui overlay
         let raw_input = self.egui_winit.take_egui_input(window);
@@ -179,6 +189,12 @@ impl State {
             self.egui_renderer.free_texture(&id);
         }
 
+        if let CaptureRequest::FullWindow = pending_capture
+            && let Some(cap) = capture::capture_texture(&self.device, &self.queue, &frame.texture)
+        {
+            capture::save_png_async(capture::timestamped_path("full"), cap, true);
+        }
+
         frame.present();
     }
 }
@@ -218,7 +234,9 @@ impl ApplicationHandler for App {
         let size = window.inner_size();
         let surface_caps = surface.get_capabilities(&init.adapter);
         let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             format: init.surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
@@ -258,8 +276,17 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state.is_pressed();
                 if let PhysicalKey::Code(key) = event.physical_key {
+                    if pressed && !event.repeat {
+                        if let Some(state) = &mut self.state {
+                            match key {
+                                KeyCode::F11 => state.screenshots.request(CaptureRequest::FullWindow),
+                                KeyCode::F12 => state.screenshots.request(CaptureRequest::GameOnly),
+                                _ => {}
+                            }
+                        }
+                    }
                     let mut pad = self.input.lock().unwrap();
-                    update_pad(&mut pad, key, pressed);
+                    crate::update_pad(&mut pad, key, pressed);
                 }
             }
             WindowEvent::RedrawRequested => {

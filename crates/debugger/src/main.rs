@@ -1,3 +1,4 @@
+use backend_wgpu::capture::CaptureRequest;
 use clap::Parser;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
@@ -52,7 +53,9 @@ impl ApplicationHandler for App {
         let size = window.inner_size();
         let surface_caps = surface.get_capabilities(&init.adapter);
         let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             format: init.surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
@@ -91,10 +94,22 @@ impl ApplicationHandler for App {
                     state.resize(size.width, size.height);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } if !egui_consumed => {
+            WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state.is_pressed();
                 if let PhysicalKey::Code(key) = event.physical_key {
-                    update_pad(self.emulator.primary_controller_mut(), key, pressed);
+                    if pressed && !event.repeat {
+                        if let Some(state) = &mut self.state {
+                            match key {
+                                KeyCode::F11 => state.request_screenshot(CaptureRequest::FullWindow),
+                                KeyCode::F12 => state.request_screenshot(CaptureRequest::GameOnly),
+                                _ => {}
+                            }
+                        }
+                    }
+                    
+                    if !egui_consumed {
+                        update_pad(self.emulator.primary_controller_mut(), key, pressed);
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {

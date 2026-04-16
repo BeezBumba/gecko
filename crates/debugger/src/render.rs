@@ -1,3 +1,4 @@
+use backend_wgpu::capture::{self, CaptureRequest, ScreenshotControl};
 use dbglib::EmulatorState;
 use egui::ViewportId;
 use gecko::gamecube::GameCube;
@@ -15,6 +16,7 @@ pub struct RenderState {
     pub egui_ctx: egui::Context,
     pub egui_renderer: egui_wgpu::Renderer,
     pub egui_winit: egui_winit::State,
+    screenshots: ScreenshotControl,
 }
 
 impl RenderState {
@@ -55,7 +57,12 @@ impl RenderState {
             egui_ctx,
             egui_renderer,
             egui_winit,
+            screenshots: ScreenshotControl::new(),
         }
+    }
+
+    pub fn request_screenshot(&mut self, req: CaptureRequest) {
+        self.screenshots.request(req);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -107,9 +114,19 @@ impl RenderState {
             }
         };
         let view = frame.texture.create_view(&Default::default());
+        let pending_capture = self.screenshots.take_pending();
 
         // Blit the latest XFB output from the renderer worker to the swapchain.
         self.renderer.blit(&self.queue, &view);
+
+        // Capture the game-only screen before the egui overlay is drawn. Reads
+        // the swapchain instead of the XFB directly so the blit's fullscreen
+        // sample resolves any partial-update state in the XFB accumulator.
+        if let CaptureRequest::GameOnly = pending_capture
+            && let Some(cap) = capture::capture_texture(&self.device, &self.queue, &frame.texture)
+        {
+            capture::save_png_async(capture::timestamped_path("game"), cap, true);
+        }
 
         let cpu = &emulator.cpu;
         let mmio = &emulator.mmio;
@@ -332,6 +349,12 @@ impl RenderState {
 
         for id in full_output.textures_delta.free {
             self.egui_renderer.free_texture(&id);
+        }
+
+        if let CaptureRequest::FullWindow = pending_capture
+            && let Some(cap) = capture::capture_texture(&self.device, &self.queue, &frame.texture)
+        {
+            capture::save_png_async(capture::timestamped_path("full"), cap, true);
         }
 
         frame.present();

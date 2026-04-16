@@ -16,6 +16,7 @@ glam = { version = "0.32.1", features = ["encase"] }
 crossbeam-channel = "0.5.15"
 tracing = "0.1.44"
 rustc-hash = "2.1.2"
+png = "0.18.1"
 
 [build-dependencies]
 wesl = "0.3.2"

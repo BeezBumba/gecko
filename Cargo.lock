@@ -236,6 +236,7 @@ dependencies = [
  "encase",
  "gecko",
  "glam",
+ "png",
  "rustc-hash 2.1.2",
  "tracing",
  "wesl",
