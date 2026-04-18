@@ -55,17 +55,36 @@ fn take_screenshot(device: &wgpu::Device, queue: &wgpu::Queue, gx: &GxRenderer, 
 }
 
 fn main() {
-    let path = std::env::args()
-        .nth(1)
-        .expect("Please provide a path to a folder of GameCube ISOs/RVZs");
-    let files = std::fs::read_dir(path)
+    let input_dir = std::path::PathBuf::from(
+        std::env::args()
+            .nth(1)
+            .expect("Please provide a path to a folder of GameCube ISOs/RVZs"),
+    );
+    let gamelist = std::path::PathBuf::from(
+        std::env::args()
+            .nth(2)
+            .expect("Please provide a path to a gamelist.txt file"),
+    );
+
+    let whitelist: std::collections::HashSet<String> = std::fs::read_to_string(&gamelist)
+        .expect("Failed to read gamelist.txt")
+        .lines()
+        .map(|l| l.trim().to_owned())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let files = std::fs::read_dir(&input_dir)
         .expect("Failed to read the provided path")
-        .filter(|entry| {
-            let path = entry.as_ref().unwrap().path();
-            matches!(path.extension().and_then(|e| e.to_str()), Some("iso" | "rvz" | "zip"))
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| matches!(path.extension().and_then(|e| e.to_str()), Some("iso" | "rvz" | "zip")))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| whitelist.contains(n))
         })
-        .map(|entry| entry.unwrap().path())
         .collect::<Vec<_>>();
+
     println!("Found {} files to process", files.len());
 
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {

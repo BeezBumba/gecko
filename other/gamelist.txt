@@ -14,7 +14,6 @@ All-Star Baseball 2004 featuring Derek Jeter (USA).zip
 Amazing Island (USA).zip
 American Chopper 2 - Full Throttle (USA).zip
 Animal Crossing (USA).zip
-Animal Crossing (USA, Canada).zip
 Animaniacs - The Great Edgar Hunt (USA).zip
 Ant Bully, The (USA) (En,Fr).zip
 Aquaman - Battle for Atlantis (USA).zip
@@ -30,12 +29,10 @@ Bad Boys - Miami Takedown (USA).zip
 Baldur's Gate - Dark Alliance (USA).zip
 Baten Kaitos - Eternal Wings and the Lost Ocean (USA) (Disc 1).zip
 Baten Kaitos Origins (USA) (Disc 1).zip
-Baten Kaitos Origins (USA, Canada) (Disc 1).zip
 Batman - Rise of Sin Tzu (USA) (En,Fr,Es).zip
 Batman - Vengeance (USA) (En,Fr,Es).zip
 Batman Begins (USA).zip
 Battalion Wars (USA).zip
-Battalion Wars (USA, Canada).zip
 Beach Spikers - Virtua Beach Volleyball (USA).zip
 Beyblade VForce - Super Tournament Battle (USA).zip
 Beyond Good & Evil (USA) (En,Es).zip
@@ -210,12 +207,9 @@ Knockout Kings 2003 (USA).zip
 Lara Croft Tomb Raider - Legend (USA).zip
 Legend of Spyro, The - A New Beginning (USA).zip
 Legend of Zelda, The - Collector's Edition (USA).zip
-Legend of Zelda, The - Collector's Edition (USA, Canada).zip
 Legend of Zelda, The - Four Swords Adventures (USA).zip
 Legend of Zelda, The - Ocarina of Time & Master Quest (USA).zip
-Legend of Zelda, The - Ocarina of Time & Master Quest (USA, Canada).zip
 Legend of Zelda, The - The Wind Waker (USA).zip
-Legend of Zelda, The - The Wind Waker (USA, Canada).zip
 Legend of Zelda, The - Twilight Princess (USA).zip
 Legends of Wrestling (USA).zip
 Legends of Wrestling II (USA).zip
@@ -230,7 +224,6 @@ Lost Kingdoms (USA).zip
 Lost Kingdoms II (USA).zip
 Lotus Challenge (USA).zip
 Luigi's Mansion (USA).zip
-Luigi's Mansion (USA, Canada).zip
 Madden NFL 06 (USA).zip
 Madden NFL 07 (USA).zip
 Madden NFL 08 (USA).zip
@@ -253,7 +246,6 @@ Marvel Nemesis - Rise of the Imperfects (USA).zip
 Mary-Kate and Ashley - Sweet 16 - Licensed to Drive (USA).zip
 Mat Hoffman's Pro BMX 2 (USA).zip
 MC Groovz Dance Craze (USA).zip
-MC Groovz Dance Craze (USA, Canada).zip
 Medabots Infinity (USA).zip
 Medal of Honor - European Assault (USA).zip
 Medal of Honor - Frontline (USA).zip
@@ -267,7 +259,6 @@ Metal Gear Solid - The Twin Snakes (USA) (Disc 1).zip
 Metroid Prime (USA).zip
 Metroid Prime 2 - Echoes (USA) (Bonus Disc).zip
 Metroid Prime 2 - Echoes (USA).zip
-Metroid Prime 2 - Echoes (USA, Canada) (Bonus Disc).zip
 Midway Arcade Treasures (USA).zip
 Midway Arcade Treasures 2 (USA).zip
 Midway Arcade Treasures 3 (USA).zip
@@ -346,7 +337,6 @@ Nickelodeon The Adventures of Jimmy Neutron - Boy Genius - Jet Fusion (USA).zip
 Nicktoons - Battle for Volcano Island (USA).zip
 Nicktoons Unite! (USA).zip
 Nintendo GameCube Preview Disc - May 2003 (USA).zip
-Nintendo GameCube Preview Disc - May 2003 (USA, Canada).zip
 Nintendo GameCube Service Disc Version 1.0-03 (USA).zip
 Open Season (USA) (En,Fr,Es).zip
 Outlaw Golf (USA).zip
@@ -445,7 +435,6 @@ Spirits & Spells (USA).zip
 SpyHunter (USA).zip
 Spyro - A Hero's Tail (USA).zip
 Spyro - Enter the Dragonfly (USA).zip
-Spyro - Enter the Dragonfly (USA, Canada).zip
 SRS - Street Racing Syndicate (USA).zip
 SSX 3 (USA).zip
 SSX on Tour (USA).zip
@@ -467,7 +456,6 @@ Summoner - A Goddess Reborn (USA).zip
 Super Bubble Pop (USA).zip
 Super Mario Strikers (USA).zip
 Super Mario Sunshine (USA).zip
-Super Mario Sunshine (USA, Canada).zip
 Super Monkey Ball (USA).zip
 Super Monkey Ball 2 (USA).zip
 Super Monkey Ball Adventure (USA).zip
