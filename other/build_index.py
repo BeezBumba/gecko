@@ -3,6 +3,7 @@ import zipfile
 from pathlib import Path
 
 OUTPUT_PATH = Path(__file__).with_name("game_index.json")
+OUTPUT_TXT_PATH = Path(__file__).with_name("game_index.txt")
 
 ROMS_PATH = Path("\\\\VIBRATOR\\Roms\\Nintendo - GameCube")
 
@@ -81,6 +82,10 @@ def main() -> None:
     }
     OUTPUT_PATH.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nwrote {OUTPUT_PATH}")
+
+    lines = [f"{code}={entries[0][1]}" for code, entries in sorted(collisions.items())]
+    OUTPUT_TXT_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"wrote {OUTPUT_TXT_PATH}")
 
 
 if __name__ == "__main__":
