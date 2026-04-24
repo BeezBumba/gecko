@@ -31,7 +31,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let tex_size = vec2<f32>(textureDimensions(efb_tex));
     let dst_size = max(u.dst_size, vec2<f32>(1.0, 1.0));
     let src_pixel = u.src_rect.xy + (position.xy / dst_size) * u.src_rect.zw;
-    let uv = (src_pixel + vec2<f32>(0.5, 0.5)) / tex_size;
+    let uv = src_pixel / tex_size;
 
     var color = textureSample(efb_tex, efb_sampler, uv);
     if (abs(u.gamma - 1.0) > 0.001) {
