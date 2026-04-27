@@ -141,8 +141,8 @@ fn main() {
 }
 
 fn run_emulator(emulator: &mut gecko::gamecube::GameCube, args: &Args, symbols: Option<&image::symbols::SymbolTable>) {
-    let mut prev_snapshot = CpuSnapshot::from_cpu(&emulator.cpu);
-    let mut prev_pc = emulator.cpu.pc;
+    let mut prev_snapshot = CpuSnapshot::from_cpu(&emulator.gekko);
+    let mut prev_pc = emulator.gekko.pc;
     let mut prev_dsp_pc = emulator.dsp.registers.pc;
     let mut in_busyloop = false;
     let mut current_func: Option<String> = None;
@@ -153,7 +153,7 @@ fn run_emulator(emulator: &mut gecko::gamecube::GameCube, args: &Args, symbols: 
     loop {
         if !in_busyloop && !args.quiet && trace_cpu {
             if let Some(symbols) = symbols
-                && let Some(sym) = symbols.lookup_exact(emulator.cpu.pc)
+                && let Some(sym) = symbols.lookup_exact(emulator.gekko.pc)
                 && sym.kind == image::symbols::SymbolKind::Func
             {
                 let name = &sym.name;
@@ -169,8 +169,8 @@ fn run_emulator(emulator: &mut gecko::gamecube::GameCube, args: &Args, symbols: 
         emulator.step();
 
         // CPU trace
-        let curr_snapshot = CpuSnapshot::from_cpu(&emulator.cpu);
-        let curr_pc = emulator.cpu.pc;
+        let curr_snapshot = CpuSnapshot::from_cpu(&emulator.gekko);
+        let curr_pc = emulator.gekko.pc;
 
         if trace_cpu {
             if curr_pc == prev_pc {
@@ -211,14 +211,14 @@ fn print_cpu_instruction(
     debug: bool,
     prefix_tag: bool,
 ) {
-    let instr = GekkoInstruction::decode(emulator.mmio.virt_slice(emulator.cpu.pc, 4))
+    let instr = GekkoInstruction::decode(emulator.mmio.virt_slice(emulator.gekko.pc, 4))
         .unwrap_or_else(|| {
             dump::registers(prev_snapshot, prev_snapshot);
-            dump::memory(&emulator.mmio, emulator.cpu.read_gpr(1));
+            dump::memory(&emulator.mmio, emulator.gekko.read_gpr(1));
             panic!(
                 "Failed to decode instruction at {:08X} => {:08X}",
-                emulator.cpu.pc,
-                emulator.mmio.virt_read_u32(emulator.cpu.pc)
+                emulator.gekko.pc,
+                emulator.mmio.virt_read_u32(emulator.gekko.pc)
             );
         })
         .0;
@@ -238,7 +238,7 @@ fn print_cpu_instruction(
     let prefix = format!(
         "{}{}: {}",
         tag,
-        format!("{:08X}", emulator.cpu.pc).bold(),
+        format!("{:08X}", emulator.gekko.pc).bold(),
         fmt::colorize_instr(&instr)
     );
 

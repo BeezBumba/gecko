@@ -118,8 +118,8 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
             self::dsp_batch_handler::<SYSTEM>,
         );
         s.schedule_at(
-            crate::cpu::dec::cycles_until_underflow(u32::MAX),
-            crate::cpu::dec::underflow_handler::<SYSTEM>,
+            crate::gekko::dec::cycles_until_underflow(u32::MAX),
+            crate::gekko::dec::underflow_handler::<SYSTEM>,
         );
         s
     }

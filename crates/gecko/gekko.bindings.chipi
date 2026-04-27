@@ -5,12 +5,12 @@ target rust {
         output "$OUT_DIR/gekko_lut.rs"
 
         context crate::gamecube::GameCube
-        handlers crate::cpu::interpreter
+        handlers crate::gekko::interpreter
         strategy fn_ptr_lut
 
-        invalid_handler crate::cpu::interpreter::invalid
+        invalid_handler crate::gekko::interpreter::invalid
 
-        instruction_type crate::cpu::instruction::Instruction {
+        instruction_type crate::gekko::instruction::Instruction {
             output "$OUT_DIR/gekko_instr.rs"
         }
 

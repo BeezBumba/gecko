@@ -1,4 +1,4 @@
-use crate::cpu::IPL_RESET_VECTOR;
+use crate::gekko::IPL_RESET_VECTOR;
 use crate::flipper::exi::macronix::ExiMacronix;
 use crate::ipl::IPL_HLE;
 use crate::scheduler::Scheduler;
@@ -34,20 +34,20 @@ impl GameCube {
         let mut emulator = Self::new(IPL_ENTRY);
 
         // BATs
-        emulator.cpu.spr.dbat0u = 0x8000_1FFF;
-        emulator.cpu.spr.dbat0l = 0x0000_0002;
-        emulator.cpu.spr.dbat1u = 0xC000_1FFF;
-        emulator.cpu.spr.dbat1l = 0x0000_002A;
-        emulator.cpu.spr.dbat2u = 0x0000_1FFF;
-        emulator.cpu.spr.dbat2l = 0x0000_0002;
-        emulator.cpu.spr.dbat3u = 0xFFF0_001F;
-        emulator.cpu.spr.dbat3l = 0xFFF0_0001;
-        emulator.cpu.spr.ibat0u = 0x8000_1FFF;
-        emulator.cpu.spr.ibat0l = 0x0000_0002;
-        emulator.cpu.spr.ibat2u = 0x0000_1FFF;
-        emulator.cpu.spr.ibat2l = 0x0000_0002;
-        emulator.cpu.spr.ibat3u = 0xFFF0_001F;
-        emulator.cpu.spr.ibat3l = 0xFFF0_0001;
+        emulator.gekko.spr.dbat0u = 0x8000_1FFF;
+        emulator.gekko.spr.dbat0l = 0x0000_0002;
+        emulator.gekko.spr.dbat1u = 0xC000_1FFF;
+        emulator.gekko.spr.dbat1l = 0x0000_002A;
+        emulator.gekko.spr.dbat2u = 0x0000_1FFF;
+        emulator.gekko.spr.dbat2l = 0x0000_0002;
+        emulator.gekko.spr.dbat3u = 0xFFF0_001F;
+        emulator.gekko.spr.dbat3l = 0xFFF0_0001;
+        emulator.gekko.spr.ibat0u = 0x8000_1FFF;
+        emulator.gekko.spr.ibat0l = 0x0000_0002;
+        emulator.gekko.spr.ibat2u = 0x0000_1FFF;
+        emulator.gekko.spr.ibat2l = 0x0000_0002;
+        emulator.gekko.spr.ibat3u = 0xFFF0_001F;
+        emulator.gekko.spr.ibat3l = 0xFFF0_0001;
 
         // DVD header fields to low memory
         emulator.mmio.ram[0x00..0x04].copy_from_slice(&dvd.header().game_code);
@@ -68,12 +68,12 @@ impl GameCube {
         emulator.mmio.phys_write_u32(0x0C00, 0x4C00_0064);
 
         // MSR: FP + address translation
-        emulator.cpu.msr.set_floating_point_available(true);
-        emulator.cpu.msr.set_data_address_translation(true);
-        emulator.cpu.msr.set_instruction_address_translation(true);
+        emulator.gekko.msr.set_floating_point_available(true);
+        emulator.gekko.msr.set_data_address_translation(true);
+        emulator.gekko.msr.set_instruction_address_translation(true);
 
         // ???
-        emulator.cpu.spr.hid0 = 0x0011_C464;
+        emulator.gekko.spr.hid0 = 0x0011_C464;
 
         // Load apploader code into RAM
         let apploader_code_start = image::dvd::DVD_APPLOADER_OFFSET + 0x20;
@@ -88,7 +88,7 @@ impl GameCube {
         emulator.mmio.ram[IPL_LOAD as usize..][..IPL_HLE.len()].copy_from_slice(IPL_HLE);
 
         // R0 = apploader entry (read by IPL)
-        emulator.cpu.gprs[0] = apploader_entry;
+        emulator.gekko.gprs[0] = apploader_entry;
 
         // Insert the DVD
         emulator.insert_dvd(dvd);
@@ -114,7 +114,7 @@ impl GameCube {
         }
 
         let mut emulator = GameCube::new(IPL_RESET_VECTOR);
-        emulator.cpu.msr.set_ip(true);
+        emulator.gekko.msr.set_ip(true);
         emulator.mmio.ipl = ipl.clone();
         emulator.exi.attach_device(
             ExiMacronix::CHANNEL,

@@ -11,12 +11,12 @@ const COMMENT_COL: usize = 50;
 ///
 /// Returns a string like `80003100  4E800020  blr                           ; lr=80001234`
 pub fn format_trace_line(emulator: &GameCube) -> String {
-    let pc = emulator.cpu.pc;
+    let pc = emulator.gekko.pc;
     let raw = emulator.mmio.virt_read_u32(pc);
 
     if let Some((instr, _)) = GekkoInstruction::decode(emulator.mmio.virt_slice(pc, 4)) {
         let text = format!("{}", instr);
-        let comment = reg_comment(&text, &emulator.cpu.gprs, &emulator.cpu.fprs);
+        let comment = reg_comment(&text, &emulator.gekko.gprs, &emulator.gekko.fprs);
         let pad = COMMENT_COL.saturating_sub(DISASM_COL + text.len());
         if comment.is_empty() {
             format!("{:08X}  {:08X}  {}", pc, raw, text)

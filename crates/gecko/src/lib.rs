@@ -1,5 +1,5 @@
 pub mod common;
-pub mod cpu;
+pub mod gekko;
 pub mod dvd;
 pub mod flipper;
 pub mod gamecube;

@@ -45,7 +45,7 @@ pub fn registers(curr: &CpuSnapshot, prev: &CpuSnapshot) {
     ];
 
     let fmt_cr_field =
-        |label: &str, val: gecko::cpu::condition::ConditionField, prev_val: gecko::cpu::condition::ConditionField| {
+        |label: &str, val: gecko::gekko::condition::ConditionField, prev_val: gecko::gekko::condition::ConditionField| {
             let flags = format!(
                 "{}{}{}{}",
                 if val.lt() { "L" } else { "·" },

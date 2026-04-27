@@ -1,4 +1,4 @@
-use crate::cpu::Cpu;
+use crate::gekko::Gekko;
 use crate::dvd::DvdInterface;
 use crate::flipper::ai::AudioInterface;
 use crate::flipper::cp::CommandProcessor;
@@ -26,7 +26,7 @@ pub const WII: SystemId = 1;
 
 pub struct System<const SYSTEM: SystemId> {
     pub vsync_pending: bool,
-    pub cpu: Cpu,
+    pub gekko: Gekko,
     pub scheduler: Scheduler<SYSTEM>,
     pub mmio: Mmio,
     pub vi: VideoInterface,
@@ -59,7 +59,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     pub(crate) fn with_scheduler(entrypoint: u32, scheduler: Scheduler<SYSTEM>) -> Self {
         System {
             vsync_pending: false,
-            cpu: Cpu::new(entrypoint),
+            gekko: Gekko::new(entrypoint),
             scheduler,
             mmio: Mmio::new(),
             vi: VideoInterface::new(),
@@ -90,7 +90,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     pub fn step_cpu(&mut self) {
-        if self.cpu.msr.external_interrupt_enable() {
+        if self.gekko.msr.external_interrupt_enable() {
             // Deliver external interrupt when EE=1 and any enabled PI interrupt is pending
             if self.pi.interrupt_pending() {
                 self.cause_external_interrupt();
@@ -98,7 +98,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 return;
             }
 
-            if self.cpu.dec.interrupt_pending() {
+            if self.gekko.dec.interrupt_pending() {
                 self.cause_decrementer_interrupt();
                 self.scheduler.cycles += 2;
                 return;
@@ -108,7 +108,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         // CPU pre-hook
         #[cfg(feature = "hooks")]
         if self.hook_flags.contains(HookFlags::CPU_PRE) {
-            let pc = self.cpu.pc;
+            let pc = self.gekko.pc;
             if self.hook_filters.cpu_pre.matches(pc) {
                 if let Some(mut host) = self.hook_host.take() {
                     host.on_cpu_pre(self);
@@ -119,16 +119,16 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
 
         // Fetch and execute next instruction
-        self.cpu.cia = self.cpu.pc;
-        self.cpu.nia = self.cpu.cia.wrapping_add(4);
-        let instr = crate::cpu::instruction::Instruction(self.mmio.fetch_instruction(self.cpu.cia));
-        crate::cpu::dispatch(self, instr);
+        self.gekko.cia = self.gekko.pc;
+        self.gekko.nia = self.gekko.cia.wrapping_add(4);
+        let instr = crate::gekko::instruction::Instruction(self.mmio.fetch_instruction(self.gekko.cia));
+        crate::gekko::dispatch(self, instr);
         self.scheduler.cycles += 2; // TODO: Track properly?
 
         // CPU post-hook
         #[cfg(feature = "hooks")]
         if self.hook_flags.contains(HookFlags::CPU_POST) {
-            let pc = self.cpu.cia;
+            let pc = self.gekko.cia;
             if self.hook_filters.cpu_post.matches(pc) {
                 if let Some(mut host) = self.hook_host.take() {
                     host.on_cpu_post(self);
@@ -139,7 +139,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
 
         #[cfg(feature = "idle-skip")]
-        match self.idle.check(self.cpu.cia, self.cpu.nia) {
+        match self.idle.check(self.gekko.cia, self.gekko.nia) {
             IdleCheck::Skip => {
                 self.scheduler.cycles = self.scheduler.next_deadline();
             }
@@ -153,7 +153,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             IdleCheck::Continue => {}
         }
 
-        self.cpu.pc = self.cpu.nia;
+        self.gekko.pc = self.gekko.nia;
     }
 
     /// Drain pending scheduler events, then execute one CPU instruction.
@@ -192,7 +192,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         for i in 0..count.min(buf.len()) {
             buf[i] = self.mmio.fetch_instruction(start + (i as u32) * 4);
         }
-        crate::idle::validate_polling_loop(&buf[..count.min(buf.len())], &self.cpu.gprs)
+        crate::idle::validate_polling_loop(&buf[..count.min(buf.len())], &self.gekko.gprs)
     }
 
     pub fn frame_size(&self) -> (usize, usize) {

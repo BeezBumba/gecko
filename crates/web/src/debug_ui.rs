@@ -96,7 +96,7 @@ impl DebugState {
             dbglib::windows::cpu::show_cpu(
                 ctx,
                 &mut self.show_cpu,
-                &emulator.cpu,
+                &emulator.gekko,
                 &emulator.mmio,
                 self.symbols.as_ref(),
                 self.debugger.breakpoints(),
@@ -106,7 +106,7 @@ impl DebugState {
             dbglib::windows::callstack::show_callstack(
                 ctx,
                 &mut self.show_callstack,
-                &emulator.cpu,
+                &emulator.gekko,
                 &emulator.mmio,
                 self.symbols.as_ref(),
             );
@@ -163,7 +163,7 @@ impl DebugState {
             dbglib::windows::exi::show_exi(ctx, &mut self.show_exi, &emulator.exi);
         }
         if self.show_irqs {
-            dbglib::windows::irq::show_irq(ctx, &mut self.show_irqs, &emulator.cpu, &emulator.pi);
+            dbglib::windows::irq::show_irq(ctx, &mut self.show_irqs, &emulator.gekko, &emulator.pi);
         }
         if self.show_breakpoints {
             dbglib::windows::breakpoints::show_breakpoints(

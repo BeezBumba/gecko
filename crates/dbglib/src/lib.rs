@@ -223,7 +223,7 @@ impl Debugger {
                         self.drain_events(emulator);
                         self.trace_step(emulator);
                         emulator.step_cpu();
-                        if self.breakpoint_hit(emulator.cpu.pc) {
+                        if self.breakpoint_hit(emulator.gekko.pc) {
                             self.state = EmulatorState::Paused;
                             return;
                         }
@@ -244,7 +244,7 @@ impl Debugger {
                         self.drain_events(emulator);
                         self.trace_step(emulator);
                         emulator.step_cpu();
-                        if self.breakpoint_hit(emulator.cpu.pc) {
+                        if self.breakpoint_hit(emulator.gekko.pc) {
                             self.state = EmulatorState::Paused;
                             return;
                         }
@@ -255,11 +255,11 @@ impl Debugger {
                 self.state = EmulatorState::Paused;
             }
             EmulatorState::RunUntilAddress(addr) => {
-                while emulator.cpu.pc != addr {
+                while emulator.gekko.pc != addr {
                     self.drain_events(emulator);
                     self.trace_step(emulator);
                     emulator.step_cpu();
-                    if self.breakpoint_hit(emulator.cpu.pc) {
+                    if self.breakpoint_hit(emulator.gekko.pc) {
                         self.state = EmulatorState::Paused;
                         return;
                     }
@@ -274,7 +274,7 @@ impl Debugger {
                     }
                     self.trace_step(emulator);
                     emulator.step_cpu();
-                    if self.breakpoint_hit(emulator.cpu.pc) {
+                    if self.breakpoint_hit(emulator.gekko.pc) {
                         self.state = EmulatorState::Paused;
                         return;
                     }

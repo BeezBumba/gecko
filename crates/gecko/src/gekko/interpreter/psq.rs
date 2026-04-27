@@ -98,25 +98,25 @@ fn psq_load(ctx: &mut crate::gamecube::GameCube, fd: u8, addr: u32, w: bool, gqr
         let elem_size = quant_element_size(ld_type);
         dequantize(ctx, addr.wrapping_add(elem_size), ld_type, ld_scale)
     };
-    ctx.cpu.write_fpr(fd, ps0);
-    ctx.cpu.write_ps1(fd, ps1);
+    ctx.gekko.write_fpr(fd, ps0);
+    ctx.gekko.write_ps1(fd, ps1);
 }
 
 fn psq_store(ctx: &mut crate::gamecube::GameCube, fs: u8, addr: u32, w: bool, gqr: u32) {
     let st_type = gqr_st_type(gqr);
     let st_scale = gqr_st_scale(gqr);
-    let ps0 = ctx.cpu.read_fpr(fs);
+    let ps0 = ctx.gekko.read_fpr(fs);
     quantize(ctx, addr, ps0, st_type, st_scale);
     if !w {
-        let ps1 = ctx.cpu.read_ps1(fs);
+        let ps1 = ctx.gekko.read_ps1(fs);
         let elem_size = quant_element_size(st_type);
         quantize(ctx, addr.wrapping_add(elem_size), ps1, st_type, st_scale);
     }
 }
 
 #[inline(always)]
-pub fn store_load_psq<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
-    use crate::cpu::lut::*;
+pub fn store_load_psq<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::gekko::instruction::Instruction) {
+    use crate::gekko::lut::*;
 
     if !ctx.check_fp_available() {
         return;
@@ -126,49 +126,49 @@ pub fn store_load_psq<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr:
         // D-form loads
         OP_PSQ_L | OP_PSQ_LU => {
             let ea = ctx
-                .cpu
+                .gekko
                 .read_gpr_or_zero(instr.ra())
                 .wrapping_add_signed(instr.disp_psq());
-            let gqr = ctx.cpu.spr.read_gqr(instr.psq_i());
+            let gqr = ctx.gekko.spr.read_gqr(instr.psq_i());
             psq_load(ctx, instr.fd(), ea, instr.psq_w(), gqr);
             if OP == OP_PSQ_LU {
-                ctx.cpu.write_gpr(instr.ra(), ea);
+                ctx.gekko.write_gpr(instr.ra(), ea);
             }
         }
         // D-form stores
         OP_PSQ_ST | OP_PSQ_STU => {
             let ea = ctx
-                .cpu
+                .gekko
                 .read_gpr_or_zero(instr.ra())
                 .wrapping_add_signed(instr.disp_psq());
-            let gqr = ctx.cpu.spr.read_gqr(instr.psq_i());
+            let gqr = ctx.gekko.spr.read_gqr(instr.psq_i());
             psq_store(ctx, instr.fs(), ea, instr.psq_w(), gqr);
             if OP == OP_PSQ_STU {
-                ctx.cpu.write_gpr(instr.ra(), ea);
+                ctx.gekko.write_gpr(instr.ra(), ea);
             }
         }
         // X-form loads
         OP_PSQ_LX | OP_PSQ_LUX => {
             let ea = ctx
-                .cpu
+                .gekko
                 .read_gpr_or_zero(instr.ra())
-                .wrapping_add(ctx.cpu.read_gpr(instr.rb()));
-            let gqr = ctx.cpu.spr.read_gqr(instr.psq_ix());
+                .wrapping_add(ctx.gekko.read_gpr(instr.rb()));
+            let gqr = ctx.gekko.spr.read_gqr(instr.psq_ix());
             psq_load(ctx, instr.fd(), ea, instr.psq_wx(), gqr);
             if OP == OP_PSQ_LUX {
-                ctx.cpu.write_gpr(instr.ra(), ea);
+                ctx.gekko.write_gpr(instr.ra(), ea);
             }
         }
         // X-form stores
         OP_PSQ_STX | OP_PSQ_STUX => {
             let ea = ctx
-                .cpu
+                .gekko
                 .read_gpr_or_zero(instr.ra())
-                .wrapping_add(ctx.cpu.read_gpr(instr.rb()));
-            let gqr = ctx.cpu.spr.read_gqr(instr.psq_ix());
+                .wrapping_add(ctx.gekko.read_gpr(instr.rb()));
+            let gqr = ctx.gekko.spr.read_gqr(instr.psq_ix());
             psq_store(ctx, instr.fs(), ea, instr.psq_wx(), gqr);
             if OP == OP_PSQ_STUX {
-                ctx.cpu.write_gpr(instr.ra(), ea);
+                ctx.gekko.write_gpr(instr.ra(), ea);
             }
         }
         _ => unreachable!(),

@@ -9,7 +9,7 @@ pub mod msr;
 pub mod spr;
 pub mod sr;
 
-use crate::cpu::condition::ConditionRegister;
+use crate::gekko::condition::ConditionRegister;
 
 #[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
 pub mod lut {
@@ -18,7 +18,7 @@ pub mod lut {
 
 pub const IPL_RESET_VECTOR: u32 = 0xFFF0_0100;
 
-pub struct Cpu {
+pub struct Gekko {
     pub gprs: [u32; 32],
     pub fprs: [f64; 32], // PS0
     pub ps1s: [f64; 32], // PS1 (paired single slot 1)
@@ -37,12 +37,12 @@ pub struct Cpu {
     pub reserve_addr: Option<u32>, // lwarx/stwcx. reservation address
 }
 
-impl Cpu {
+impl Gekko {
     pub fn new(initial_pc: u32) -> Self {
         let mut spr = spr::Spr::default();
         spr.dec = u32::MAX;
 
-        Cpu {
+        Gekko {
             gprs: [0; 32],
             fprs: [0.0; 32],
             ps1s: [1.0; 32],

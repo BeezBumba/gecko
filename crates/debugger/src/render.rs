@@ -128,7 +128,7 @@ impl RenderState {
             capture::save_png_async(capture::timestamped_path("game"), cap, true);
         }
 
-        let cpu = &emulator.cpu;
+        let cpu = &emulator.gekko;
         let mmio = &emulator.mmio;
         let gx = &emulator.gx;
 
@@ -282,7 +282,7 @@ impl RenderState {
                 dbglib::windows::exi::show_exi(&ctx, &mut debugger_ui.show_exi, &emulator.exi);
             }
             if debugger_ui.show_irqs {
-                dbglib::windows::irq::show_irq(&ctx, &mut debugger_ui.show_irqs, &emulator.cpu, &emulator.pi);
+                dbglib::windows::irq::show_irq(&ctx, &mut debugger_ui.show_irqs, &emulator.gekko, &emulator.pi);
             }
             if debugger_ui.show_breakpoints {
                 dbglib::windows::breakpoints::show_breakpoints(

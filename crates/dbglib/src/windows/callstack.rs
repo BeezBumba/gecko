@@ -1,5 +1,5 @@
 use egui::{Color32, Context, RichText, ScrollArea};
-use gecko::cpu::Cpu;
+use gecko::gekko::Gekko;
 use gecko::mmio::Mmio;
 use image::symbols::SymbolTable;
 
@@ -25,7 +25,7 @@ pub struct CallFrame {
 ///
 /// We emit the current PC, then LR (handles leaf functions that never save
 /// LR to the stack), then walk back-chain pointers reading saved LRs.
-pub fn walk_callstack(cpu: &Cpu, mmio: &Mmio, symbols: Option<&SymbolTable>) -> Vec<CallFrame> {
+pub fn walk_callstack(cpu: &Gekko, mmio: &Mmio, symbols: Option<&SymbolTable>) -> Vec<CallFrame> {
     let mut frames = Vec::new();
 
     let resolve = |addr: u32| -> (Option<String>, u32) {
@@ -93,7 +93,7 @@ pub fn walk_callstack(cpu: &Cpu, mmio: &Mmio, symbols: Option<&SymbolTable>) -> 
     frames
 }
 
-pub fn show_callstack(ctx: &Context, open: &mut bool, cpu: &Cpu, mmio: &Mmio, symbols: Option<&SymbolTable>) {
+pub fn show_callstack(ctx: &Context, open: &mut bool, cpu: &Gekko, mmio: &Mmio, symbols: Option<&SymbolTable>) {
     let frames = walk_callstack(cpu, mmio, symbols);
 
     egui::Window::new("Call Stack").open(open).show(ctx, |ui| {

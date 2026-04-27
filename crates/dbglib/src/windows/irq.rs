@@ -1,5 +1,5 @@
 use egui::{Align, Color32, Context, Grid, Layout, RichText};
-use gecko::cpu::Cpu;
+use gecko::gekko::Gekko;
 use gecko::flipper::pi::ProcessorInterface;
 
 fn centered_icon(ui: &mut egui::Ui, icon: &str, color: Color32) {
@@ -33,7 +33,7 @@ fn interrupt_row(ui: &mut egui::Ui, name: &str, pending: bool, masked: bool) {
     ui.end_row();
 }
 
-pub fn show_irq(ctx: &Context, open: &mut bool, cpu: &Cpu, pi: &ProcessorInterface) {
+pub fn show_irq(ctx: &Context, open: &mut bool, cpu: &Gekko, pi: &ProcessorInterface) {
     egui::Window::new("IRQ").open(open).show(ctx, |ui| {
         let msr = &cpu.msr;
         let spr = &cpu.spr;

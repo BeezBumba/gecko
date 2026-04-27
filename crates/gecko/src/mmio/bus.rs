@@ -90,10 +90,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
         // Check all 4 DBATs
         let dbats = [
-            (self.cpu.spr.dbat0u, self.cpu.spr.dbat0l),
-            (self.cpu.spr.dbat1u, self.cpu.spr.dbat1l),
-            (self.cpu.spr.dbat2u, self.cpu.spr.dbat2l),
-            (self.cpu.spr.dbat3u, self.cpu.spr.dbat3l),
+            (self.gekko.spr.dbat0u, self.gekko.spr.dbat0l),
+            (self.gekko.spr.dbat1u, self.gekko.spr.dbat1l),
+            (self.gekko.spr.dbat2u, self.gekko.spr.dbat2l),
+            (self.gekko.spr.dbat3u, self.gekko.spr.dbat3l),
         ];
 
         for (batu, batl) in dbats {

@@ -215,7 +215,7 @@ impl Mmio {
     }
 
     /// Process a locked cache DMA transfer triggered by writing to SPR DMAL (923).
-    pub fn process_locked_cache_dma(&mut self, dmau: &crate::cpu::spr::DmaUpper, dmal: &crate::cpu::spr::DmaLower) {
+    pub fn process_locked_cache_dma(&mut self, dmau: &crate::gekko::spr::DmaUpper, dmal: &crate::gekko::spr::DmaLower) {
         let ram_addr = dmau.ram_addr() << 5;
         let lcache_vaddr = dmal.lcache_addr() << 5;
         let lcache_paddr = (lcache_vaddr - LCACHE_BASE) as usize;

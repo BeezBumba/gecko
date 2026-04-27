@@ -208,40 +208,40 @@ impl LuaHost {
     }
 
     fn register_emu_methods(methods: &mut impl UserDataMethods<GameCubeRef>) {
-        methods.add_method("gpr", |_, this, i: u8| Ok(this.cpu.read_gpr(i)));
+        methods.add_method("gpr", |_, this, i: u8| Ok(this.gekko.read_gpr(i)));
         methods.add_method_mut("set_gpr", |_, this, (i, val): (u8, u32)| {
-            this.cpu.write_gpr(i, val);
+            this.gekko.write_gpr(i, val);
             Ok(())
         });
-        methods.add_method("fpr", |_, this, i: u8| Ok(this.cpu.read_fpr(i)));
+        methods.add_method("fpr", |_, this, i: u8| Ok(this.gekko.read_fpr(i)));
         methods.add_method_mut("set_fpr", |_, this, (i, val): (u8, f64)| {
-            this.cpu.write_fpr(i, val);
+            this.gekko.write_fpr(i, val);
             Ok(())
         });
-        methods.add_method("ps1", |_, this, i: u8| Ok(this.cpu.read_ps1(i)));
+        methods.add_method("ps1", |_, this, i: u8| Ok(this.gekko.read_ps1(i)));
         methods.add_method_mut("set_ps1", |_, this, (i, val): (u8, f64)| {
-            this.cpu.write_ps1(i, val);
+            this.gekko.write_ps1(i, val);
             Ok(())
         });
-        methods.add_method("pc", |_, this, ()| Ok(this.cpu.pc));
+        methods.add_method("pc", |_, this, ()| Ok(this.gekko.pc));
         methods.add_method_mut("set_pc", |_, this, val: u32| {
-            this.cpu.nia = val;
+            this.gekko.nia = val;
             Ok(())
         });
-        methods.add_method("lr", |_, this, ()| Ok(this.cpu.spr.lr));
+        methods.add_method("lr", |_, this, ()| Ok(this.gekko.spr.lr));
         methods.add_method_mut("set_lr", |_, this, val: u32| {
-            this.cpu.spr.lr = val;
+            this.gekko.spr.lr = val;
             Ok(())
         });
-        methods.add_method("ctr", |_, this, ()| Ok(this.cpu.spr.ctr));
+        methods.add_method("ctr", |_, this, ()| Ok(this.gekko.spr.ctr));
         methods.add_method_mut("set_ctr", |_, this, val: u32| {
-            this.cpu.spr.ctr = val;
+            this.gekko.spr.ctr = val;
             Ok(())
         });
-        methods.add_method("cr", |_, this, ()| Ok(this.cpu.cr.raw()));
-        methods.add_method("msr", |_, this, ()| Ok(this.cpu.msr.raw()));
-        methods.add_method("xer", |_, this, ()| Ok(this.cpu.spr.xer.raw()));
-        methods.add_method("fpscr", |_, this, ()| Ok(this.cpu.fpscr.raw()));
+        methods.add_method("cr", |_, this, ()| Ok(this.gekko.cr.raw()));
+        methods.add_method("msr", |_, this, ()| Ok(this.gekko.msr.raw()));
+        methods.add_method("xer", |_, this, ()| Ok(this.gekko.spr.xer.raw()));
+        methods.add_method("fpscr", |_, this, ()| Ok(this.gekko.fpscr.raw()));
         methods.add_method("cycles", |_, this, ()| Ok(this.scheduler.cycles));
 
         methods.add_method("read_u8", |_, this, addr: u32| Ok(this.mmio.virt_read_u8(addr)));
@@ -491,7 +491,7 @@ impl Host<{ gecko::system::GC }> for LuaHost {
     }
 
     fn on_cpu_pre(&mut self, emu: &mut GameCube) {
-        let pc = emu.cpu.pc;
+        let pc = emu.gekko.pc;
         if let Some(callback) = self.cpu_pre.get(&pc)
             && let Err(err) = self.call_cpu_hook("cpu_pre", callback, emu)
         {
@@ -500,7 +500,7 @@ impl Host<{ gecko::system::GC }> for LuaHost {
     }
 
     fn on_cpu_post(&mut self, emu: &mut GameCube) {
-        let pc = emu.cpu.cia;
+        let pc = emu.gekko.cia;
         if let Some(callback) = self.cpu_post.get(&pc)
             && let Err(err) = self.call_cpu_hook("cpu_post", callback, emu)
         {
