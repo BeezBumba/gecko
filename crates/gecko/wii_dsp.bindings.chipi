@@ -2,17 +2,17 @@ include "../../submodules/chipi-spec/gamecube/dsp.chipi"
 
 target rust {
     dispatch GcDsp {
-        output "$OUT_DIR/dsp_lut.rs"
+        output "$OUT_DIR/dsp_lut_wii.rs"
 
-        context crate::gamecube::GameCube
+        context crate::wii::Wii
         handlers crate::flipper::dsp::interpreter
-        handler_const crate::system::GC
+        handler_const crate::system::WII
         strategy fn_ptr_lut
 
         invalid_handler crate::flipper::dsp::interpreter::invalid
 
         instruction_type crate::flipper::dsp::instruction::Instruction {
-            output "$OUT_DIR/dsp_instr.rs"
+            output "$OUT_DIR/dsp_instr_wii.rs"
         }
 
         handler control {
@@ -184,7 +184,7 @@ target rust {
             invalid_handler crate::flipper::dsp::interpreter::invalid_ext
 
             instruction_type crate::flipper::dsp::instruction::GcDspExt {
-                output "$OUT_DIR/dsp_ext_instr.rs"
+                output "$OUT_DIR/dsp_ext_instr_wii.rs"
             }
 
             handler ext_addr {

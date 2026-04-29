@@ -11,9 +11,14 @@ pub mod lut {
     include!(concat!(env!("OUT_DIR"), "/dsp_lut.rs"));
 }
 
+#[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
+pub mod lut_wii {
+    include!(concat!(env!("OUT_DIR"), "/dsp_lut_wii.rs"));
+}
+
 use crate::flipper::dsp::instruction::Instruction;
 use crate::mmio::Mmio;
-use crate::system::{GC, System, SystemId};
+use crate::system::{System, SystemId};
 
 pub struct Dsp {
     // Registers
@@ -405,20 +410,22 @@ fn write_word(mem: &mut [u8], word_addr: u16, value: u16) {
 
 #[inline(always)]
 pub fn dispatch<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
-    if SYSTEM == GC {
-        let ctx: &mut System<{ GC }> = unsafe { ::core::mem::transmute(ctx) };
+    if SYSTEM == crate::system::GC {
+        let ctx: &mut crate::gamecube::GameCube = unsafe { ::core::mem::transmute(ctx) };
         self::lut::dispatch(ctx, instr);
     } else {
-        todo!()
+        let ctx: &mut crate::wii::Wii = unsafe { ::core::mem::transmute(ctx) };
+        self::lut_wii::dispatch(ctx, instr);
     }
 }
 
 #[inline(always)]
 pub fn dispatch_gc_dsp_ext<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: instruction::GcDspExt) {
-    if SYSTEM == GC {
-        let ctx: &mut System<{ GC }> = unsafe { ::core::mem::transmute(ctx) };
+    if SYSTEM == crate::system::GC {
+        let ctx: &mut crate::gamecube::GameCube = unsafe { ::core::mem::transmute(ctx) };
         self::lut::dispatch_gc_dsp_ext(ctx, instr);
     } else {
-        todo!()
+        let ctx: &mut crate::wii::Wii = unsafe { ::core::mem::transmute(ctx) };
+        self::lut_wii::dispatch_gc_dsp_ext(ctx, instr);
     }
 }

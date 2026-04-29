@@ -44,9 +44,9 @@ jobs:
           key: ${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ matrix.target }}-
 
-      - name: Patch chipi.toml dispatch mode
+      - name: Patch chipi dispatch strategy
         shell: bash
-        run: sed -i 's/dispatch = "fn_ptr_lut"/dispatch = "jump_table"/g' crates/gecko/chipi.toml
+        run: sed -i 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/*.bindings.chipi
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'

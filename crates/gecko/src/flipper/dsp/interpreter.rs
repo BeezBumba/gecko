@@ -4,16 +4,17 @@ use crate::flipper::dsp::core::regs::{SignExtensionMode, StatusRegister};
 use crate::flipper::dsp::core::{Registers, reg};
 use crate::flipper::dsp::instruction::{GcDspExt, Instruction};
 use crate::flipper::dsp::lut::*;
+use crate::system::{System, SystemId};
 
 #[cold]
 #[inline(never)]
-pub fn invalid(_ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn invalid<const SYSTEM: SystemId>(_ctx: &mut System<SYSTEM>, instr: Instruction) {
     panic!("unimplemented DSP opcode {:#06x}", instr.0);
 }
 
 #[cold]
 #[inline(never)]
-pub fn invalid_ext(_ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn invalid_ext<const SYSTEM: SystemId>(_ctx: &mut System<SYSTEM>, instr: GcDspExt) {
     panic!("unimplemented DSP ext opcode {:#04x}", instr.0);
 }
 
@@ -96,7 +97,7 @@ fn apply_combined_add_product_oc(regs: &mut Registers, pc: bool, po: bool, os_be
 }
 
 #[inline(always)]
-fn move_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
+fn move_prod_to_ac<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, r: u8) {
     let prod = ctx.dsp.registers.product();
     let (carry, overflow) = ctx.dsp.registers.product_flags();
     ctx.dsp.registers.set_ac(r, prod);
@@ -105,7 +106,7 @@ fn move_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
 }
 
 #[inline(always)]
-fn move_prod_to_ac_zero(ctx: &mut crate::gamecube::GameCube, r: u8) {
+fn move_prod_to_ac_zero<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, r: u8) {
     let (carry, overflow) = ctx.dsp.registers.product_flags();
     let raw = ctx.dsp.registers.product();
     let (prod, rounding_carry) = round_half_to_even(raw);
@@ -115,7 +116,7 @@ fn move_prod_to_ac_zero(ctx: &mut crate::gamecube::GameCube, r: u8) {
 }
 
 #[inline(always)]
-fn add_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
+fn add_prod_to_ac<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, r: u8) {
     let a = ctx.dsp.registers.ac(r);
     let (pc, po) = ctx.dsp.registers.product_flags();
     let b = ctx.dsp.registers.product();
@@ -192,7 +193,7 @@ fn mulc_operands(regs: &Registers, s: u8, t: u8) -> (i16, i16) {
 }
 
 #[inline(always)]
-pub fn add_sub<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn add_sub<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_ADDR => {
             let ss = instr.ss() as usize;
@@ -303,7 +304,7 @@ pub fn add_sub<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instru
 }
 
 #[inline(always)]
-pub fn addr_reg<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn addr_reg<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_DAR => {
             let d = instr.d_14_15() as usize;
@@ -329,7 +330,7 @@ pub fn addr_reg<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instr
 }
 
 #[inline(always)]
-pub fn cmp_test<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn cmp_test<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_CMP => {
             let a = ctx.dsp.registers.ac(0);
@@ -401,7 +402,7 @@ pub fn cmp_test<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instr
 }
 
 #[inline(always)]
-pub fn control<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn control<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_JCC => {
             let branch_control = BranchControl::from(instr.cond());
@@ -457,7 +458,7 @@ pub fn control<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instru
 }
 
 #[inline(always)]
-pub fn imm_alu<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn imm_alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_ADDI => {
             let d = instr.d_7_7();
@@ -536,7 +537,7 @@ pub fn imm_alu<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instru
 }
 
 #[inline(always)]
-pub fn inc_dec<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn inc_dec<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_INCM => {
             let d = instr.d_7_7();
@@ -594,7 +595,7 @@ pub fn inc_dec<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instru
 }
 
 #[inline(always)]
-pub fn load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn load_store<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_LRI => {
             ctx.dsp.registers.write::<true>(instr.d_11_15(), instr.imm_16_31());
@@ -699,7 +700,7 @@ pub fn load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Ins
 }
 
 #[inline(always)]
-pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn logic<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_XORR => {
             let s = instr.s_6_6() as usize;
@@ -772,7 +773,7 @@ pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruct
 }
 
 #[inline(always)]
-pub fn loops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn loops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_LOOP_REG | OP_LOOPI => {
             let counter = match OP {
@@ -809,7 +810,7 @@ pub fn loops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruct
 }
 
 #[inline(always)]
-pub fn move_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn move_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_MOVR => {
             let ss = instr.ss();
@@ -864,7 +865,7 @@ pub fn move_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instr
 }
 
 #[inline(always)]
-pub fn mul<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn mul<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_MUL => {
             let s = instr.r_4_4() as usize;
@@ -961,7 +962,7 @@ pub fn mul<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instructio
 }
 
 #[inline(always)]
-pub fn shifts<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn shifts<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_LSL | OP_ASL => {
             let r = instr.r_7_7();
@@ -1059,7 +1060,7 @@ pub fn shifts<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruc
 }
 
 #[inline(always)]
-pub fn status<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+pub fn status<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_SBCLR => {
             let idx = 6 + instr.bit();
@@ -1097,10 +1098,10 @@ pub fn status<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruc
 
 // Extension opcode handlers
 #[inline(always)]
-pub fn ext_nop(_ctx: &mut crate::gamecube::GameCube, _instr: GcDspExt) {}
+pub fn ext_nop<const SYSTEM: SystemId>(_ctx: &mut System<SYSTEM>, _instr: GcDspExt) {}
 
 #[inline(always)]
-pub fn ext_addr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_addr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: GcDspExt) {
     let r = instr.r_6_7() as usize;
     match OP {
         OP_EXT_DR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.decrement_ar(r),
@@ -1114,7 +1115,7 @@ pub fn ext_addr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDsp
 }
 
 #[inline(always)]
-pub fn ext_mv(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_mv<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: GcDspExt) {
     let d = instr.d_4_5();
     let s = instr.s_6_7();
     let value = ctx.dsp.registers.ext_ac_cache[s as usize];
@@ -1122,7 +1123,7 @@ pub fn ext_mv(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
 }
 
 #[inline(always)]
-pub fn ext_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_store<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: GcDspExt) {
     let d = instr.d_6_7() as usize;
     let s = instr.s_3_4();
     let value = ctx.dsp.registers.ext_ac_cache[s as usize];
@@ -1141,7 +1142,7 @@ pub fn ext_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDs
 }
 
 #[inline(always)]
-pub fn ext_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: GcDspExt) {
     let d = instr.d_2_4();
     let s = instr.s_6_7() as usize;
     let addr = ctx.dsp.registers.ar[s];
@@ -1160,7 +1161,7 @@ pub fn ext_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDsp
 }
 
 #[inline(always)]
-pub fn ext_load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_load_store<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: GcDspExt) {
     let s = instr.s_7_7() as usize;
     let d = instr.d_2_3();
 
@@ -1215,7 +1216,7 @@ pub fn ext_load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr:
 }
 
 #[inline(always)]
-pub fn ext_ld<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_ld<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: GcDspExt) {
     let d = instr.d_2_2();
     let r = instr.r_3_3();
     let s = instr.s_6_7() as usize;
@@ -1258,7 +1259,7 @@ pub fn ext_ld<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspEx
 }
 
 #[inline(always)]
-pub fn ext_ldax<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_ldax<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: GcDspExt) {
     let s = instr.d_2_2() as usize;
     let r = instr.r_3_3() as usize;
 
