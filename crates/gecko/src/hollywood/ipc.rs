@@ -104,7 +104,9 @@ crate::mmio_device_dispatch! {
 }
 
 pub fn deliver_response<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: u32, result: i32) {
+    let cmd_type = sys.mmio.phys_read_u32(cmd_paddr);
     sys.mmio.phys_write_u32(cmd_paddr + 0x04, result as u32);
+    sys.mmio.phys_write_u32(cmd_paddr + 0x08, cmd_type);
     sys.hollywood.ipc.armmsg = ArmMsg::from_raw(cmd_paddr);
     sys.hollywood.ipc.ppcctrl = sys
         .hollywood
@@ -112,5 +114,12 @@ pub fn deliver_response<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_pa
         .ppcctrl
         .with_arm_response(true)
         .with_arm_post_ack(true);
+    tracing::debug!(
+        cmd_paddr = format!("{cmd_paddr:#010X}"),
+        cmd_type,
+        result,
+        irq_mask = sys.hollywood.irq.mask.raw(),
+        "deliver_response: posting reply"
+    );
     crate::hollywood::irq::assert_ipc(sys);
 }

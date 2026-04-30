@@ -233,7 +233,15 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let out_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
             let out_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x1C);
 
-            tracing::info!(fd, ioctl_cmd = format!("{ioctl_cmd:#010X}"), "IOS_Ioctl");
+            tracing::info!(
+                fd,
+                ioctl_cmd = format!("{ioctl_cmd:#010X}"),
+                in_ptr = format!("{in_ptr:#010X}"),
+                in_len,
+                out_ptr = format!("{out_ptr:#010X}"),
+                out_len,
+                "IOS_Ioctl"
+            );
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.ioctl(&mut ctx, ioctl_cmd, in_ptr, in_len, out_ptr, out_len),
@@ -277,12 +285,22 @@ fn read_c_string(ctx: &mut DeviceContext<'_>, paddr: u32) -> String {
 
 fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     if sys.hollywood.ipc.ppcctrl.arm_response() {
-        // PPC slot still occupied. Wait for the ack.
+        tracing::debug!(
+            queue_len = sys.starlet.pending.len(),
+            "deliver_pending: arm_response still set, skipping"
+        );
         return;
     }
 
     let Some(p) = sys.starlet.pending.pop_front() else {
+        tracing::debug!("deliver_pending: queue empty");
         return;
     };
+    tracing::debug!(
+        cmd_paddr = format!("{:#010X}", p.cmd_paddr),
+        result = p.result,
+        remaining = sys.starlet.pending.len(),
+        "deliver_pending: delivering"
+    );
     crate::hollywood::ipc::deliver_response(sys, p.cmd_paddr, p.result);
 }

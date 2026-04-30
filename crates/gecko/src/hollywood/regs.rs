@@ -55,6 +55,13 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for PpcCtrl {
             .with_arm_post_ack(current.arm_post_ack() && !incoming.arm_post_ack())
             .with_arm_response(current.arm_response() && !incoming.arm_response());
 
+        tracing::debug!(
+            incoming = format!("{:#010X}", incoming.raw()),
+            current = format!("{:#010X}", current.raw()),
+            after = format!("{:#010X}", sys.hollywood.ipc.ppcctrl.raw()),
+            "PPCCTRL write"
+        );
+
         // dispatch via starlet
         if sys.hollywood.ipc.ppcctrl.execute() {
             let cmd_paddr = sys.hollywood.ipc.ppcmsg.raw();
@@ -68,6 +75,11 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for PpcCtrl {
         let ack_happened =
             (current.arm_post_ack() && incoming.arm_post_ack()) || (current.arm_response() && incoming.arm_response());
         if ack_happened {
+            tracing::debug!(
+                cleared_y2 = current.arm_post_ack() && incoming.arm_post_ack(),
+                cleared_y1 = current.arm_response() && incoming.arm_response(),
+                "PPC acked"
+            );
             crate::hollywood::irq::ack_ipc(sys);
             crate::starlet::schedule_drain(sys);
         }
