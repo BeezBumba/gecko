@@ -1,0 +1,96 @@
+use crate::hollywood::ipc::IosDevice;
+
+pub const IOCTL_GET_DATA_DIR: u32 = 0x1D;
+pub const IOCTL_GET_TITLE_ID: u32 = 0x20;
+
+pub const ES_EINVAL: i32 = -1017;
+pub const ES_ENOMEM: i32 = -1024;
+pub const ES_NO_TICKET: i32 = -1028;
+pub const ES_INVALID_TICKET: i32 = -1029;
+
+pub struct ETicketServices;
+
+impl IosDevice for ETicketServices {
+    fn ioctlv(
+        &mut self,
+        ctx: &mut super::DeviceContext<'_>,
+        cmd: u32,
+        in_count: u32,
+        io_count: u32,
+        vec_ptr: u32,
+    ) -> i32 {
+        match cmd {
+            IOCTL_GET_TITLE_ID => {
+                if in_count != 0 || io_count != 1 {
+                    tracing::warn!(in_count, io_count, "ES_GetTitleID: unexpected vector counts");
+                    return ES_EINVAL;
+                }
+
+                let out_buf = ctx.mmio.phys_read_u32(vec_ptr);
+                let Some(dvd) = ctx.di.dvd.as_ref() else {
+                    return ES_EINVAL;
+                };
+
+                ctx.mmio.phys_write_u32(out_buf, (dvd.tmd_title_id() >> 32) as u32);
+                ctx.mmio.phys_write_u32(out_buf + 4, dvd.tmd_title_id() as u32);
+
+                tracing::debug!(
+                    title_id = format!("{:016X}", dvd.tmd_title_id()),
+                    out_buf = format!("{out_buf:#010X}"),
+                    "ES_GetTitleID"
+                );
+                0
+            }
+            IOCTL_GET_DATA_DIR => {
+                if in_count != 1 || io_count != 1 {
+                    tracing::warn!(in_count, io_count, "ES_GetDataDir: unexpected vector counts");
+                    return ES_EINVAL;
+                }
+
+                let in_buf = ctx.mmio.phys_read_u32(vec_ptr);
+                let requested_title_id =
+                    ((ctx.mmio.phys_read_u32(in_buf) as u64) << 32) | (ctx.mmio.phys_read_u32(in_buf + 4) as u64);
+
+                let path = format!(
+                    "/title/{:08x}/{:08x}/data",
+                    (requested_title_id >> 32) as u32,
+                    requested_title_id as u32
+                );
+
+                let out_buf = ctx.mmio.phys_read_u32(vec_ptr + 8);
+                let out_len = ctx.mmio.phys_read_u32(vec_ptr + 12);
+                if (path.len() as u32) + 1 > out_len {
+                    tracing::warn!(
+                        out_len,
+                        needed = path.len() + 1,
+                        "ES_GetDataDir: output buffer too small"
+                    );
+                    return ES_EINVAL;
+                }
+
+                for (i, b) in path.bytes().enumerate() {
+                    ctx.mmio.phys_write_u8(out_buf + i as u32, b);
+                }
+                ctx.mmio.phys_write_u8(out_buf + path.len() as u32, 0);
+
+                tracing::debug!(
+                    title_id = format!("{requested_title_id:016X}"),
+                    %path,
+                    out_buf = format!("{out_buf:#010X}"),
+                    "ES_GetDataDir"
+                );
+                0
+            }
+            _ => {
+                tracing::warn!(
+                    cmd = format!("{cmd:#010X}"),
+                    in_count,
+                    io_count,
+                    vec_ptr = format!("{vec_ptr:#010X}"),
+                    "ETicketServices: unimplemented ioctlv"
+                );
+                ES_EINVAL
+            }
+        }
+    }
+}

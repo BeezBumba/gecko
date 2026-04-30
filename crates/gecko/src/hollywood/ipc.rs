@@ -1,4 +1,5 @@
 pub mod di;
+pub mod es;
 pub mod fs;
 pub mod stm;
 

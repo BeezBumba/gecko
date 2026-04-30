@@ -16,6 +16,9 @@ pub const PARTITION_TMD_SIZE_OFFSET: usize = 0x2A4;
 /// Offset of the `ios_title_id` field within the TMD body.
 pub const TMD_IOS_TITLE_ID_OFFSET: usize = 0x184;
 
+/// Offset of the `title_id` field within the TMD body.
+pub const TMD_TITLE_ID_OFFSET: usize = 0x18C;
+
 #[repr(C, packed)]
 #[derive(FromBytes, IntoBytes, Immutable, KnownLayout, Debug, Clone, Copy)]
 pub struct Header {

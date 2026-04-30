@@ -68,6 +68,7 @@ impl System<{ crate::WII }> {
         self.starlet.register("/dev/fs", Box::new(ipc::fs::FileSystem));
         self.starlet
             .register("/dev/di", Box::new(ipc::di::DiskInterface::new()));
+        self.starlet.register("/dev/es", Box::new(ipc::es::ETicketServices));
     }
 
     pub fn create_device_context(&mut self) -> (&mut Starlet, DeviceContext<'_>) {
