@@ -2,6 +2,7 @@ pub mod di;
 pub mod es;
 pub mod fs;
 pub mod stm;
+pub mod usb;
 
 use crate::dvd::DvdInterface;
 use crate::hollywood::regs::{ArmCtrl, ArmMsg, PpcCtrl, PpcMsg};
