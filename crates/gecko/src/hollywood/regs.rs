@@ -66,7 +66,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for PpcCtrl {
         if sys.hollywood.ipc.ppcctrl.execute() {
             let cmd_paddr = sys.hollywood.ipc.ppcmsg.raw();
             sys.hollywood.ipc.ppcctrl = sys.hollywood.ipc.ppcctrl.with_execute(false);
-            tracing::info!(cmd_paddr = format!("{cmd_paddr:#010X}"), "PPC launched IPC command");
+            tracing::debug!(cmd_paddr = format!("{cmd_paddr:#010X}"), "PPC launched IPC command");
 
             crate::starlet::dispatch_command(sys, cmd_paddr);
         }

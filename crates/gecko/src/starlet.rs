@@ -8,7 +8,10 @@ use std::path::PathBuf;
 
 // As per zayd
 const FINALIZE_DELAY_CYCLES: u64 = 10_000;
-const ACK_TO_NEXT_DELAY_CYCLES: u64 = 500;
+// Give the CPU breathing room between back-to-back IPC IRQs so other interrupt
+// sources (DSP) actually get serviced. The BT stub's "no events" replies
+// would otherwise hammer the IPC handler nonstop and starve the DSP IRQ.
+const ACK_TO_NEXT_DELAY_CYCLES: u64 = 50_000;
 
 pub struct PendingResponse {
     pub cmd_paddr: u32,
@@ -186,19 +189,19 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
                 tracing::error!(%path, "IOS_Open: no device registered");
                 IPC_ENOENT
             };
-            tracing::info!(%path, mode, fd, "IOS_Open");
+            tracing::debug!(%path, mode, fd, "IOS_Open");
 
             fd
         }
         IOS_CLOSE => {
-            tracing::info!(fd, "IOS_Close");
+            tracing::debug!(fd, "IOS_Close");
             starlet.close_fd(fd, &mut ctx)
         }
         IOS_READ => {
             let out_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
             let out_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
 
-            tracing::info!(fd, out_ptr = format!("{out_ptr:#010X}"), out_len, "IOS_Read");
+            tracing::debug!(fd, out_ptr = format!("{out_ptr:#010X}"), out_len, "IOS_Read");
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.read(&mut ctx, out_ptr, out_len),
@@ -209,7 +212,7 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let in_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
             let in_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
 
-            tracing::info!(fd, in_ptr = format!("{in_ptr:#010X}"), in_len, "IOS_Write");
+            tracing::debug!(fd, in_ptr = format!("{in_ptr:#010X}"), in_len, "IOS_Write");
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.write(&mut ctx, in_ptr, in_len),
@@ -220,7 +223,7 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let offset = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C) as i32;
             let whence = ctx.mmio.phys_read_u32(cmd_paddr + 0x10) as i32;
 
-            tracing::info!(fd, offset, whence, "IOS_Seek");
+            tracing::debug!(fd, offset, whence, "IOS_Seek");
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.seek(&mut ctx, offset, whence),
@@ -234,7 +237,7 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let out_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
             let out_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x1C);
 
-            tracing::info!(
+            tracing::debug!(
                 fd,
                 ioctl_cmd = format!("{ioctl_cmd:#010X}"),
                 in_ptr = format!("{in_ptr:#010X}"),
@@ -255,7 +258,7 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let io_count = ctx.mmio.phys_read_u32(cmd_paddr + 0x14);
             let vec_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
 
-            tracing::info!(fd, ioctl_cmd = format!("{ioctl_cmd:#010X}"), "IOS_Ioctlv");
+            tracing::debug!(fd, ioctl_cmd = format!("{ioctl_cmd:#010X}"), "IOS_Ioctlv");
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.ioctlv(&mut ctx, ioctl_cmd, in_count, io_count, vec_ptr),
@@ -301,7 +304,7 @@ fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         cmd_paddr = format!("{:#010X}", p.cmd_paddr),
         result = p.result,
         remaining = sys.starlet.pending.len(),
-        "deliver_pending: delivering"
+        "deliver_pending"
     );
     crate::hollywood::ipc::deliver_response(sys, p.cmd_paddr, p.result);
 }

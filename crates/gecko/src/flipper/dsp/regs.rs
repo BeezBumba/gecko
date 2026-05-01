@@ -93,16 +93,10 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
             .with_dma_status(self.dma_status())
             .with_reset_vector(self.reset_vector());
 
-        // reset vector falling edge (bit 11: 1->0) triggers DMA of stub from main RAM into IRAM
-        // and resets the PC to 0x0000 (IRAM) so the uploaded stub executes
-        let trigger_ucode_upload =
-            gc.dsp.csr.reset_vector() == ResetVector::High && self.reset_vector() == ResetVector::Low;
-        if trigger_ucode_upload {
-            tracing::debug!("ucode upload, PC -> 0x0000 (IRAM)");
-            gc.dsp.registers.pc = 0x0000;
-        }
-
-        // On reset, set PC to the address indicated by the reset vector
+        // On reset, set PC to the address indicated by the reset vector. After
+        // reset the DSP executes from IROM (0x8000) when reset_vector=High; the
+        // SDK then drives the boot mailbox protocol with the IROM, which in
+        // turn DMAs the AX firmware into IRAM and jumps to it.
         if self.reset() {
             let addr = self.reset_vector().address();
             tracing::debug!(reset_vector = ?self.reset_vector(), pc = format!("{addr:04X}"), "DSP reset, executing from reset vector");
@@ -112,10 +106,6 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
 
         gc.dsp.csr = csr;
 
-        // Side effects after CSR is committed
-        if trigger_ucode_upload {
-            gc.dsp.process_ucode_upload(&mut gc.mmio);
-        }
         dsp::refresh_interrupts(gc);
     }
 }
