@@ -1,10 +1,13 @@
+use crate::flipper::pi::InterruptFlag;
 use crate::hollywood::ipc::{DeviceContext, IPC_EINVAL, IosDevice};
 use zerocopy::byteorder::big_endian::U32;
 use zerocopy::{FromBytes, Immutable, KnownLayout};
 
+pub const IOCTL_DVD_LOW_READ: u32 = 0x71;
+pub const IOCTL_DVD_LOW_CLEAR_COVER_INTERRUPT: u32 = 0x86;
 pub const IOCTL_DVD_LOW_UNENCRYPTED_READ: u32 = 0x8D;
-pub const IOCTL_DVD_LOW_REQUEST_ERROR: u32 = 0xE0;
 pub const IOCTL_DVD_LOW_REPORT_KEY: u32 = 0xA4;
+pub const IOCTL_DVD_LOW_REQUEST_ERROR: u32 = 0xE0;
 
 const DI_RET_OK: i32 = 1;
 const DI_RET_ERROR: i32 = 2;
@@ -41,6 +44,8 @@ impl IosDevice for DiskInterface {
             IOCTL_DVD_LOW_UNENCRYPTED_READ => self.dvd_low_unencrypted_read(ctx, in_ptr, out_ptr, out_len),
             IOCTL_DVD_LOW_REQUEST_ERROR => self.dvd_low_request_error(ctx, in_ptr, out_ptr, out_len),
             IOCTL_DVD_LOW_REPORT_KEY => self.dvd_low_report_key(ctx, in_ptr, out_ptr, out_len),
+            IOCTL_DVD_LOW_CLEAR_COVER_INTERRUPT => self.dvd_low_clear_cover_interrupt(ctx, in_ptr, out_ptr, out_len),
+            IOCTL_DVD_LOW_READ => self.dvd_low_read(ctx, in_ptr, out_ptr, out_len),
             _ => {
                 tracing::warn!(
                     cmd = format!("{cmd:08X}"),
@@ -143,6 +148,52 @@ impl DiskInterface {
 
         DI_RET_ERROR
     }
+
+    #[inline(always)]
+    fn dvd_low_clear_cover_interrupt(
+        &mut self,
+        ctx: &mut DeviceContext<'_>,
+        _in_ptr: u32,
+        _out_ptr: u32,
+        _out_len: u32,
+    ) -> i32 {
+        ctx.di.cover = ctx.di.cover.with_cover_interrupt(false);
+        if ctx.di.interrupt_active() {
+            ctx.pi.assert_interrupt(InterruptFlag::Di);
+        } else {
+            ctx.pi.clear_interrupt(InterruptFlag::Di);
+        }
+        DI_RET_OK
+    }
+
+    #[inline(always)]
+    fn dvd_low_read(&mut self, ctx: &mut DeviceContext<'_>, in_ptr: u32, out_ptr: u32, out_len: u32) -> i32 {
+        let input = ctx.mmio.phys_read_struct::<DvdLowRead>(in_ptr);
+        let size = input.size.get();
+        let pos_bytes = input.position_bytes();
+
+        if out_len < size {
+            return DI_RET_INVALID_RANGE;
+        }
+
+        let Some(dvd) = ctx.di.dvd.as_ref() else {
+            self.last_error = DI_ERROR_LBA_OUT_OF_RANGE;
+            return DI_RET_ERROR;
+        };
+
+        let dst = ctx.mmio.phys_slice_mut(out_ptr, size as usize);
+        dvd.read_disc_into(pos_bytes as usize, dst);
+        self.last_error = DI_ERROR_OK;
+
+        tracing::debug!(
+            pos = format!("{pos_bytes:#011X}"),
+            len = format!("{size:#X}"),
+            dst = format!("{out_ptr:#010X}"),
+            "DVDLowRead"
+        );
+
+        DI_RET_OK
+    }
 }
 
 #[repr(C, packed)]
@@ -167,6 +218,21 @@ struct DvdLowReportKey {
     _pad: [u8; 6],
     pub param1: u8,
     pub param2: U32,
+}
+
+#[repr(C, packed)]
+#[derive(FromBytes, KnownLayout, Immutable)]
+struct DvdLowRead {
+    pub cmd: u8,
+    _pad: [u8; 3],
+    pub size: U32,
+    pub position: U32,
+}
+
+impl DvdLowRead {
+    fn position_bytes(&self) -> u64 {
+        (self.position.get() as u64) << 2
+    }
 }
 
 struct UnencryptedRange {

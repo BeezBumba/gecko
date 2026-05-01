@@ -6,6 +6,7 @@ pub mod stm;
 pub mod usb;
 
 use crate::dvd::DvdInterface;
+use crate::flipper::pi::ProcessorInterface;
 use crate::hollywood::regs::{ArmCtrl, ArmMsg, PpcCtrl, PpcMsg};
 use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
@@ -18,6 +19,7 @@ pub struct DeviceContext<'a> {
     pub mmio: &'a mut Mmio<{ WII }>,
     pub scheduler: &'a mut Scheduler<{ WII }>,
     pub di: &'a mut DvdInterface,
+    pub pi: &'a mut ProcessorInterface,
 }
 
 pub trait IosDevice: Send {

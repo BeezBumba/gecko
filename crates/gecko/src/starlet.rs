@@ -137,6 +137,7 @@ impl System<{ crate::WII }> {
                 mmio: &mut self.mmio,
                 scheduler: &mut self.scheduler,
                 di: &mut self.di,
+                pi: &mut self.pi,
             },
         )
     }
