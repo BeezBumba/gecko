@@ -122,7 +122,8 @@ impl System<{ crate::WII }> {
         self.starlet
             .register("/dev/di", Box::new(ipc::di::DiskInterface::new()));
         self.starlet.register("/dev/es", Box::new(ipc::es::ETicketServices));
-        self.starlet.register("/dev/usb/oh1/57e/305", Box::new(ipc::usb::Usb));
+        self.starlet
+            .register("/dev/usb/oh1/57e/305", Box::new(ipc::usb::Bluetooth::new()));
     }
 
     pub fn create_device_context(&mut self) -> (&mut Starlet, DeviceContext<'_>) {
@@ -139,7 +140,6 @@ impl System<{ crate::WII }> {
 
 pub fn dispatch_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: u32) {
     let result = self::process_command(sys, cmd_paddr);
-
     sys.starlet.pending.push_back(PendingResponse { cmd_paddr, result });
     sys.scheduler
         .schedule_in(FINALIZE_DELAY_CYCLES, self::deliver_pending::<SYSTEM>);

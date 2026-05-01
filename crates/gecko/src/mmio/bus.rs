@@ -771,8 +771,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 self.mmio.phys_write_u8(phys, val);
             }
             GX_FIFO_BASE..=GX_FIFO_END => {
-                let wptr = self.pi.fifo_wptr as usize;
-                self.mmio.ram[wptr] = val;
+                let wptr = self.pi.fifo_wptr;
+                self.mmio.phys_write_u8(wptr, val);
                 self.pi.advance_fifo_wptr(1);
                 if self.cp.control.gp_link_enable() {
                     self.gx.mmio_write_u8(&mut self.mmio, self.render_sink.as_mut(), val);
@@ -936,9 +936,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 self.mmio.phys_write_u16(phys, val);
             }
             GX_FIFO_BASE..=GX_FIFO_END => {
-                let wptr = self.pi.fifo_wptr as usize;
-                let bytes = val.to_be_bytes();
-                self.mmio.ram[wptr..wptr + 2].copy_from_slice(&bytes);
+                let wptr = self.pi.fifo_wptr;
+                self.mmio.phys_write_u16(wptr, val);
                 self.pi.advance_fifo_wptr(2);
                 if self.cp.control.gp_link_enable() {
                     self.gx.mmio_write_u16(&mut self.mmio, self.render_sink.as_mut(), val);
@@ -1101,9 +1100,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 self.mmio.phys_write_u32(phys, val);
             }
             GX_FIFO_BASE..=GX_FIFO_END => {
-                let wptr = self.pi.fifo_wptr as usize;
-                let bytes = val.to_be_bytes();
-                self.mmio.ram[wptr..wptr + 4].copy_from_slice(&bytes);
+                let wptr = self.pi.fifo_wptr;
+                self.mmio.phys_write_u32(wptr, val);
                 self.pi.advance_fifo_wptr(4);
                 if self.cp.control.gp_link_enable() {
                     self.gx.mmio_write_u32(&mut self.mmio, self.render_sink.as_mut(), val);
