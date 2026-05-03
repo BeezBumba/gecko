@@ -4,6 +4,8 @@
 
 A WIP GameCube/Wii emulator and debugger written in Rust.
 
+<img src="images/ffcccb.png" width="50%">
+
 <img src="images/wario.png" width="30%"> <img src="images/sunshine.png" width="30%"> <img src="images/windwaker.png" width="30%">
 <img src="images/luigi.png" width="30%"> <img src="images/re4.png" width="30%"> <img src="images/debugger.png" width="30%">
 
@@ -11,7 +13,7 @@ A WIP GameCube/Wii emulator and debugger written in Rust.
 
 ## Status
 
-Gecko is in early development. The IPL works flawlessly as far as I can tell. Many homebrew demos work, but game compatibility is still low. Some games may get to menu, some ingame but most will likely not do anything (or crash). Gecko is made with homebrew development and reverse engineering in mind. It currently supports:
+Gecko is still in development. Support may vary, while many games work perfectly (to my estimation at least), most will likely have varying degrees of visual glitches or be outright broken. Refer to the [screenshot database](https://emu.layle.dev/gecko/) to gauge compatiblity.
 
 - PowerPC interpreter
 - DSP LLE interpreter
@@ -21,9 +23,13 @@ Gecko is in early development. The IPL works flawlessly as far as I can tell. Ma
 - LUA scripting/hooks system for runtime introspection
 - Probably the prettiest egui-based debugging UI for GameCube and Wii
 - Symbol parsing from ELFs and IDA Pro databases
+- RenderDoc captures with all sorts of debug markers
+- ISO and RVZ support; also supports either packed as a ZIP
 - [Support for web browser](https://gecko.layle.dev)
   - [incl. debugging capabilities](https://gecko.layle.dev/dbg)
 - Terrible idle skipping :^)
+
+Gecko currently does **not** implement sound and does **not** support Wii controls.
 
 ## Projects
 
@@ -43,7 +49,7 @@ cargo build -p debugger --release                                # debugger
 wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 ```
 
-Certain features require certain feature flags such as `scripting` and `scripting-mut-traps`, however, the debugger has them all enabled.  
+Certain features require certain feature flags such as `scripting` and `scripting-mut-traps`, however, the debugger has them all enabled (except `renderdoc-capture`).  
 For more information refer to the GitHub CI actions file. PGO optimized compilation is supported, refer to the `Justfile`.
 
 ## Usage
