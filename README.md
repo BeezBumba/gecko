@@ -21,7 +21,7 @@ Gecko is still in development. Support may vary, while many games work perfectly
 - `wgpu` based renderer backend
 - `wesl` based shader compiler
 - LUA scripting/hooks system for runtime introspection
-- Probably the prettiest egui-based debugging UI for GameCube and Wii
+- A beautiful yet advanced egui-based debugging UI
 - Symbol parsing from ELFs and IDA Pro databases
 - RenderDoc captures with all sorts of debug markers
 - ISO and RVZ support; also supports either packed as a ZIP
