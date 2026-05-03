@@ -59,7 +59,11 @@ pub enum Command {
 }
 
 #[derive(Parser)]
-#[command(about = "GameCube/Wii multi-tool", long_about = None)]
+#[command(
+    about = "GameCube/Wii multitool",
+    long_about = None,
+    after_help = "Repository: https://github.com/ioncodes/gecko",
+)]
 pub struct Args {
     #[command(subcommand)]
     pub command: Command,

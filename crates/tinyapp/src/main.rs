@@ -14,7 +14,10 @@ use winit::event_loop::EventLoop;
 use winit::keyboard::KeyCode;
 
 #[derive(Parser)]
-#[command(about = "GameCube/Wii emulator")]
+#[command(
+    about = "GameCube/Wii emulator",
+    after_help = "Repository: https://github.com/ioncodes/gecko"
+)]
 struct Args {
     /// Path to the DOL file (GameCube homebrew by default)
     #[arg(long)]
@@ -50,7 +53,7 @@ struct Args {
     dsp: Option<String>,
 
     /// Path to a Lua script for scripting hooks
-    #[cfg(feature = "scripting")]
+    #[cfg(feature = "hooks")]
     #[arg(long)]
     script: Option<String>,
 
@@ -123,7 +126,7 @@ fn main() {
         if dvd.header().is_wii() {
             println!("Detected Wii disc, booting via apploader HLE");
             let builder = Wii::apploader_hle(dvd);
-            #[cfg(feature = "scripting")]
+            #[cfg(feature = "hooks")]
             let builder = if let Some(ref path) = args.script {
                 let host = scripting::LuaHost::from_file(path).expect("failed to load script");
                 builder.lua_host(Box::new(host))
@@ -150,7 +153,7 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
         emulator.dsp.load_irom(&dsp_data);
     }
 
-    #[cfg(feature = "scripting")]
+    #[cfg(feature = "hooks")]
     if let Some(ref path) = args.script {
         // Already attached for Wii apploader HLE; only attach here for other
         // boot paths.

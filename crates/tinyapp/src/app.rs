@@ -239,7 +239,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Gecko")
+                        .with_title("Tiny Gecko")
                         .with_inner_size(winit::dpi::PhysicalSize::new(initial_size.0, initial_size.1)),
                 )
                 .unwrap(),

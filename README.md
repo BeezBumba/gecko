@@ -2,7 +2,7 @@
 
 # Gecko
 
-A WIP GameCube/Wii emulator and debugger written in Rust.
+A cross-platform GameCube/Wii emulator and debugger written in Rust.
 
 <img src="images/ffcccb.png" width="50%">
 
@@ -17,6 +17,7 @@ Gecko is still in development. Support may vary, while many games work perfectly
 
 - PowerPC interpreter
 - DSP LLE interpreter
+- Starlet HLE
 - IPL skip patches for NTSC and PAL
 - `wgpu` based renderer backend
 - `wesl` based shader compiler
@@ -25,13 +26,21 @@ Gecko is still in development. Support may vary, while many games work perfectly
 - Symbol parsing from ELFs and IDA Pro databases
 - RenderDoc captures with all sorts of debug markers
 - ISO and RVZ support; also supports either packed as a ZIP
+- Included multitool, supports:
+  - IPL decode/encode
+  - DVD filesystem extraction
+  - Disassembler for PPC and DSP
 - [Support for web browser](https://gecko.layle.dev)
   - [incl. debugging capabilities](https://gecko.layle.dev/dbg)
-- Terrible idle skipping :^)
+
+WIP features:
+- IPL HLE backed by [solstice](https://codeberg.org/hazelwiss/solstice)
+- Idle skipping
 
 Gecko currently does **not** implement sound and does **not** support Wii controls.
 
 ## Projects
+This is a table of the main projects. Refer to `crates/` to find out about all available projects.
 
 | Crate       | Description                                                                                                                     |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -43,21 +52,69 @@ Gecko currently does **not** implement sound and does **not** support Wii contro
 ## Building
 
 ```sh
-cargo build -p multitool --release                               # multi-tool
+git submodule init && git submodule update
+
+cargo build -p multitool --release                               # multitool
 cargo build -p tinyapp --release                                 # main application
 cargo build -p debugger --release                                # debugger
 wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 ```
 
-Certain features require certain feature flags such as `scripting` and `scripting-mut-traps`, however, the debugger has them all enabled (except `renderdoc-capture`).  
-For more information refer to the GitHub CI actions file. PGO optimized compilation is supported, refer to the `Justfile`.
+> Release builds compile out all tracing output (the `gecko` crate pins `tracing` with `release_max_level_off`), so `--release` binaries are silent. Build with `--profile dev` if you want log messages.
+
+### Features
+
+| Flag                | Crates                                                    | Description                                             |
+| ------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
+| `hooks`             | `tinyapp` (off), `debugger` (on)                          | Lua scripting and hooks                                 |
+| `hooks-mut-traps`   | `tinyapp` (off), `debugger` (off)                         | Let hooks re-register themselves at runtime             |
+| `idle-skip`         | `tinyapp` (off), `debugger` (off)                         | Skip idle PPC polling loops                             |
+| `efb-writeback`     | `tinyapp` (off), `debugger` (off)                         | EFB-to-texture writeback (needed by some games)         |
+| `renderdoc-capture` | `debugger` (off)                                          | RenderDoc captures with debug markers, triggered by F10 |
+| `debug`             | `web` (off, on for [`/dbg`](https://gecko.layle.dev/dbg)) | Bundle the in-browser debugger UI                       |
+
+For exact build invocations refer to the GitHub CI actions file. PGO optimized compilation is supported, refer to the `Justfile`.
+
+## Required files
+
+Gecko does not ship any system files.
+
+### GameCube
+- IPL (NTSC and PAL tested)
+- DSP IROM (may not be required if running homebrew DOLs)
+
+If you only have an encoded IPL, decode it first with multitool:
+
+```sh
+multitool ipl --action decode private/IPL.bin private/IPL.decoded.bin
+```
+
+### Wii
+NAND filesystem dump from Dolphin. Place it under `./fs/` or point `GECKO_FS_ROOT` at the directory:
+
+```sh
+GECKO_FS_ROOT=/path/to/dolphin-nand tinyapp --dvd wii_game.rvz
+```
+
+Reference SHA-256 hashes (these are the files the project is developed against):
+
+| File                         | SHA-256                                                            |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `IPL.bin` (NTSC, encoded)    | `7228bd8f0171008e71c48788eef5e0fd5abce8ef85f1d00327c6f3368113d2a5` |
+| `IPL.decoded.bin` (NTSC)     | `31e9aa82d972a423d9b7ea7bdbdcff0aff86c3ed953600ca841fe24f3f577051` |
+| `PAL_IPL.bin` (PAL, encoded) | `a5fd3ab0ed3d63ad365990cbf522f9f175e01d3b37e5f30a8e5a103cbbc749fd` |
+| `PAL_IPL.decoded.bin` (PAL)  | `011b66ce68d8dcb4f37460fcb322215bcda7df79072aeca22fdc690499deabac` |
+| `dsp_rom.bin`                | `49d987ee1eab29a157425b82d54516957a81e1bac247c8834e494642605c3e8c` |
 
 ## Usage
+Example invocations:
 
 ```sh
 multitool ipl --action decode ipl.encoded.bin ipl.decoded.bin
+multitool dvd --extract game.rvz
 tinyapp --dol homebrew.dol  # may also require a DSP depending on the DOL
-tinyapp --dvd game.iso --ipl ipl.decoded.bin --dsp dsp_rom.bin
+tinyapp --dvd game.iso --ipl ipl.decoded.bin --dsp dsp_rom.bin --skip-ipl
+debugger --dvd game.rvz --ipl ipl.decoded.bin --dsp dsp_rom.bin --script example.lua
 ```
 
 The CLI options are largely the same across the sub projects (such as the debugger). For more options, see `--help`.

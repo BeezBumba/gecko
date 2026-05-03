@@ -73,7 +73,7 @@ struct Args {
     dsp: Option<String>,
 
     /// Path to a Lua script for scripting hooks
-    #[cfg(feature = "scripting")]
+    #[cfg(feature = "hooks")]
     #[arg(long)]
     script: Option<String>,
 }
@@ -116,7 +116,7 @@ fn main() {
         emulator.dsp.load_irom(&dsp_data);
     }
 
-    #[cfg(feature = "scripting")]
+    #[cfg(feature = "hooks")]
     if let Some(path) = &args.script {
         let host = scripting::LuaHost::from_file(path).expect("failed to load script");
         emulator.set_hook_host(Box::new(host));

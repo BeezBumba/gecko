@@ -17,9 +17,15 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             suffix: linux-x86_64
+            dbg_suffix: linux-dbg-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: windows-x86_64
+            dbg_suffix: windows-dbg-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: macos-arm64
+            dbg_suffix: macos-dbg-arm64
 
     runs-on: ${{ matrix.os }}
 
@@ -46,7 +52,7 @@ jobs:
 
       - name: Patch chipi dispatch strategy
         shell: bash
-        run: sed -i 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/*.bindings.chipi
+        run: perl -pi -e 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/*.bindings.chipi
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -54,33 +60,56 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev
 
-      - name: Build tinyapp
+      - name: Build tinyapp (release)
         run: cargo build --release --package tinyapp --target ${{ matrix.target }}
 
-      - name: Build debugger
+      - name: Build debugger (release)
         run: cargo build --release --package debugger --target ${{ matrix.target }}
 
-      - name: Build multitool
+      - name: Build multitool (release)
         run: cargo build --release --package multitool --target ${{ matrix.target }}
 
-      - name: Package artifacts (Linux)
-        if: runner.os == 'Linux'
+      - name: Build binaries (dev profile, with tracing output)
+        run: cargo build --profile dev --target ${{ matrix.target }} -p tinyapp -p debugger -p multitool
+
+      - name: Package artifacts (Unix)
+        if: runner.os != 'Windows'
         run: |
-          mkdir -p staging artifacts
-          cp target/${{ matrix.target }}/release/tinyapp staging/
-          cp target/${{ matrix.target }}/release/debugger staging/
-          cp target/${{ matrix.target }}/release/multitool staging/
-          cd staging && zip ../artifacts/gecko-${{ matrix.suffix }}.zip tinyapp debugger multitool
+          mkdir -p artifacts
+
+          mkdir -p staging-rel
+          cp target/${{ matrix.target }}/release/tinyapp staging-rel/
+          cp target/${{ matrix.target }}/release/debugger staging-rel/
+          cp target/${{ matrix.target }}/release/multitool staging-rel/
+          cp LICENSE README.md staging-rel/
+          (cd staging-rel && zip ../artifacts/gecko-${{ matrix.suffix }}.zip tinyapp debugger multitool LICENSE README.md)
+
+          mkdir -p staging-dbg
+          cp target/${{ matrix.target }}/debug/tinyapp staging-dbg/
+          cp target/${{ matrix.target }}/debug/debugger staging-dbg/
+          cp target/${{ matrix.target }}/debug/multitool staging-dbg/
+          cp LICENSE README.md staging-dbg/
+          (cd staging-dbg && zip ../artifacts/gecko-${{ matrix.dbg_suffix }}.zip tinyapp debugger multitool LICENSE README.md)
 
       - name: Package artifacts (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          mkdir -p staging artifacts
-          cp target/${{ matrix.target }}/release/tinyapp.exe staging/
-          cp target/${{ matrix.target }}/release/debugger.exe staging/
-          cp target/${{ matrix.target }}/release/multitool.exe staging/
-          cd staging && 7z a ../artifacts/gecko-${{ matrix.suffix }}.zip tinyapp.exe debugger.exe multitool.exe
+          mkdir -p artifacts
+
+          mkdir -p staging-rel
+          cp target/${{ matrix.target }}/release/tinyapp.exe staging-rel/
+          cp target/${{ matrix.target }}/release/debugger.exe staging-rel/
+          cp target/${{ matrix.target }}/release/multitool.exe staging-rel/
+          cp LICENSE README.md staging-rel/
+          (cd staging-rel && 7z a ../artifacts/gecko-${{ matrix.suffix }}.zip tinyapp.exe debugger.exe multitool.exe LICENSE README.md)
+
+          mkdir -p staging-dbg
+          cp target/${{ matrix.target }}/debug/tinyapp.exe staging-dbg/
+          cp target/${{ matrix.target }}/debug/debugger.exe staging-dbg/
+          cp target/${{ matrix.target }}/debug/multitool.exe staging-dbg/
+          cp LICENSE README.md staging-dbg/
+          (cd staging-dbg && 7z a ../artifacts/gecko-${{ matrix.dbg_suffix }}.zip tinyapp.exe debugger.exe multitool.exe LICENSE README.md)
 
       - uses: actions/upload-artifact@v4
         with:

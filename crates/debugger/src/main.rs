@@ -129,7 +129,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Gecko")
+                        .with_title("Gecko Debugger")
                         .with_inner_size(winit::dpi::PhysicalSize::new(initial_size.0, initial_size.1)),
                 )
                 .unwrap(),
@@ -223,7 +223,10 @@ impl ApplicationHandler for App {
 }
 
 #[derive(Parser)]
-#[command(about = "GameCube/Wii debugger")]
+#[command(
+    about = "GameCube/Wii debugger",
+    after_help = "Repository: https://github.com/ioncodes/gecko"
+)]
 struct Args {
     /// Path to the DOL file (GameCube homebrew by default)
     #[arg(long)]
