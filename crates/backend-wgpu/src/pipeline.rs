@@ -135,6 +135,14 @@ impl GxRenderer {
             })
         };
 
+        let mut write_mask = wgpu::ColorWrites::empty();
+        if key.color_update {
+            write_mask |= wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::BLUE;
+        }
+        if key.alpha_update {
+            write_mask |= wgpu::ColorWrites::ALPHA;
+        }
+
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("gx_pipeline"),
             layout: Some(&self.pipeline_layout),
@@ -150,7 +158,7 @@ impl GxRenderer {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: self.surface_format,
                     blend,
-                    write_mask: wgpu::ColorWrites::ALL, // TODO: re-enable color_update/alpha_update masking
+                    write_mask,
                 })],
                 compilation_options: Default::default(),
             }),
