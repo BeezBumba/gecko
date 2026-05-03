@@ -60,12 +60,19 @@ impl State {
         }
     }
 
-    fn resize(&mut self, width: u32, height: u32) {
+    fn resize(&mut self, window: &Window, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
-        self.surface_config.width = width;
-        self.surface_config.height = height;
+        // Snap so the OS window matches the target aspect ratio (no bars).
+        // Skip when already matching to avoid feedback from the next Resized
+        // event triggered by request_inner_size.
+        let (sw, sh) = backend_wgpu::sink::snap_size_to_aspect((width, height), self.renderer.target_aspect());
+        if (sw, sh) != (width, height) {
+            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(sw, sh));
+        }
+        self.surface_config.width = sw;
+        self.surface_config.height = sh;
         self.surface.configure(&self.device, &self.surface_config);
     }
 
@@ -100,7 +107,11 @@ impl State {
         let pending_capture = self.screenshots.take_pending();
 
         // Blit the latest XFB output from the renderer worker to the swapchain.
-        self.renderer.blit(&self.queue, &view);
+        self.renderer.blit(
+            &self.queue,
+            &view,
+            (self.surface_config.width, self.surface_config.height),
+        );
 
         // Capture the game-only screen before the egui overlay is drawn. Reads
         // the swapchain instead of the XFB directly so the blit's fullscreen
@@ -219,9 +230,18 @@ pub struct AppInit {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let initial_size = self
+            .init
+            .as_ref()
+            .map(|i| initial_window_size(i.renderer.target_aspect()))
+            .unwrap_or((1280, 720));
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("Gecko"))
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("Gecko")
+                        .with_inner_size(winit::dpi::PhysicalSize::new(initial_size.0, initial_size.1)),
+                )
                 .unwrap(),
         );
 
@@ -231,7 +251,13 @@ impl ApplicationHandler for App {
         };
 
         let surface = init.instance.create_surface(window.clone()).unwrap();
-        let size = window.inner_size();
+        let actual = window.inner_size();
+        let (sw, sh) =
+            backend_wgpu::sink::snap_size_to_aspect((actual.width, actual.height), init.renderer.target_aspect());
+        if (sw, sh) != (actual.width, actual.height) {
+            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(sw, sh));
+        }
+        let size = winit::dpi::PhysicalSize::new(sw, sh);
         let surface_caps = surface.get_capabilities(&init.adapter);
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
@@ -269,8 +295,8 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                if let Some(state) = &mut self.state {
-                    state.resize(size.width, size.height);
+                if let (Some(state), Some(window)) = (&mut self.state, &self.window) {
+                    state.resize(window, size.width, size.height);
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -301,6 +327,20 @@ impl ApplicationHandler for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
         if let Some(window) = &self.window {
             window.request_redraw();
+        }
+    }
+}
+
+/// Pick a sensible initial window size for the given target aspect.
+fn initial_window_size(target_aspect: backend_wgpu::sink::TargetAspect) -> (u32, u32) {
+    use backend_wgpu::sink::TargetAspect;
+    match target_aspect {
+        TargetAspect::Stretch => (1280, 720),
+        TargetAspect::Ratio(ar) => {
+            // 720 lines tall, width derived from AR.
+            let h: u32 = 720;
+            let w = ((h as f32) * ar).round() as u32;
+            (w, h)
         }
     }
 }

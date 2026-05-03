@@ -1,4 +1,5 @@
 use backend_wgpu::capture::CaptureRequest;
+use backend_wgpu::sink::TargetAspect;
 use clap::Parser;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
@@ -119,9 +120,18 @@ fn try_load_lua<const SYSTEM: gecko::SystemId>(emu: &mut gecko::System<SYSTEM>, 
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let initial_size = self
+            .init
+            .as_ref()
+            .map(|i| initial_window_size(i.renderer.target_aspect()))
+            .unwrap_or((1280, 720));
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("Gecko"))
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("Gecko")
+                        .with_inner_size(winit::dpi::PhysicalSize::new(initial_size.0, initial_size.1)),
+                )
                 .unwrap(),
         );
 
@@ -131,7 +141,13 @@ impl ApplicationHandler for App {
         };
 
         let surface = init.instance.create_surface(window.clone()).unwrap();
-        let size = window.inner_size();
+        let actual = window.inner_size();
+        let (sw, sh) =
+            backend_wgpu::sink::snap_size_to_aspect((actual.width, actual.height), init.renderer.target_aspect());
+        if (sw, sh) != (actual.width, actual.height) {
+            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(sw, sh));
+        }
+        let size = winit::dpi::PhysicalSize::new(sw, sh);
         let surface_caps = surface.get_capabilities(&init.adapter);
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
@@ -171,8 +187,8 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                if let Some(state) = &mut self.state {
-                    state.resize(size.width, size.height);
+                if let (Some(state), Some(window)) = (&mut self.state, &self.window) {
+                    state.resize(window, size.width, size.height);
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -181,6 +197,8 @@ impl ApplicationHandler for App {
                     if pressed && !event.repeat {
                         if let Some(state) = &mut self.state {
                             match key {
+                                #[cfg(feature = "renderdoc-capture")]
+                                KeyCode::F10 => state.request_renderdoc_capture(),
                                 KeyCode::F11 => state.request_screenshot(CaptureRequest::FullWindow),
                                 KeyCode::F12 => state.request_screenshot(CaptureRequest::GameOnly),
                                 _ => {}
@@ -243,6 +261,37 @@ struct Args {
     /// Path to a Lua script for scripting hooks
     #[arg(long)]
     script: Option<String>,
+
+    /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch
+    #[arg(long, default_value = "auto")]
+    aspect: String,
+}
+
+fn initial_window_size(target_aspect: TargetAspect) -> (u32, u32) {
+    match target_aspect {
+        TargetAspect::Stretch => (1280, 720),
+        TargetAspect::Ratio(ar) => {
+            let h: u32 = 720;
+            let w = ((h as f32) * ar).round() as u32;
+            (w, h)
+        }
+    }
+}
+
+fn resolve_aspect(arg: &str, is_wii: bool) -> TargetAspect {
+    match arg {
+        "auto" => {
+            if is_wii {
+                TargetAspect::Ratio(16.0 / 9.0)
+            } else {
+                TargetAspect::Ratio(4.0 / 3.0)
+            }
+        }
+        "4:3" => TargetAspect::Ratio(4.0 / 3.0),
+        "16:9" => TargetAspect::Ratio(16.0 / 9.0),
+        "stretch" => TargetAspect::Stretch,
+        other => panic!("--aspect must be auto|4:3|16:9|stretch, got {other:?}"),
+    }
 }
 
 fn main() {
@@ -330,7 +379,8 @@ fn main() {
 
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
-    let renderer = backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format);
+    let target_aspect = resolve_aspect(&args.aspect, matches!(emulator, EmulatorVariant::Wii(_)));
+    let renderer = backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
 
     emulator.install_render_sink(Box::new(renderer.clone()));
 

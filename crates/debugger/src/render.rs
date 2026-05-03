@@ -65,12 +65,21 @@ impl RenderState {
         self.screenshots.request(req);
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    #[cfg(feature = "renderdoc-capture")]
+    pub fn request_renderdoc_capture(&self) {
+        self.renderer.capture_next_renderdoc_emulated_frame();
+    }
+
+    pub fn resize(&mut self, window: &Window, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
-        self.surface_config.width = width;
-        self.surface_config.height = height;
+        let (sw, sh) = backend_wgpu::sink::snap_size_to_aspect((width, height), self.renderer.target_aspect());
+        if (sw, sh) != (width, height) {
+            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(sw, sh));
+        }
+        self.surface_config.width = sw;
+        self.surface_config.height = sh;
         self.surface.configure(&self.device, &self.surface_config);
     }
 
@@ -98,12 +107,17 @@ impl RenderState {
             debugger_ui.lua_log.extend(host.drain_logs());
         }
 
+        #[cfg(feature = "renderdoc-capture")]
+        self.renderer.begin_renderdoc_emulated_frame();
+
         debugger_ui.debugger.tick(emulator);
 
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
             Err(e) => {
                 eprintln!("surface error: {e}");
+                #[cfg(feature = "renderdoc-capture")]
+                self.renderer.end_renderdoc_emulated_frame();
                 return;
             }
         };
@@ -111,7 +125,11 @@ impl RenderState {
         let pending_capture = self.screenshots.take_pending();
 
         // Blit the latest XFB output from the renderer worker to the swapchain.
-        self.renderer.blit(&self.queue, &view);
+        self.renderer.blit(
+            &self.queue,
+            &view,
+            (self.surface_config.width, self.surface_config.height),
+        );
 
         // Capture the game-only screen before the egui overlay is drawn. Reads
         // the swapchain instead of the XFB directly so the blit's fullscreen
@@ -369,6 +387,22 @@ impl RenderState {
             capture::save_png_async(capture::timestamped_path("full"), cap, true);
         }
 
+        #[cfg(feature = "renderdoc-capture")]
+        self.submit_swapchain_present_marker();
         frame.present();
+
+        #[cfg(feature = "renderdoc-capture")]
+        self.renderer.end_renderdoc_emulated_frame();
+    }
+
+    #[cfg(feature = "renderdoc-capture")]
+    fn submit_swapchain_present_marker(&self) {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("swapchain_present_marker_encoder"),
+        });
+        encoder.push_debug_group("Swapchain Present");
+        encoder.insert_debug_marker("SurfaceTexture::present follows this marker");
+        encoder.pop_debug_group();
+        self.queue.submit([encoder.finish()]);
     }
 }

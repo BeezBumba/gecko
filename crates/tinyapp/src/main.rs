@@ -1,11 +1,12 @@
 mod app;
 mod thread;
 
+use backend_wgpu::sink::TargetAspect;
 use clap::Parser;
 use crossbeam_channel::bounded;
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::gamecube::GameCube;
-use gecko::system::{System, SystemId};
+use gecko::system::{self, System, SystemId};
 use gecko::wii::Wii;
 use image::Dol;
 use std::sync::{Arc, Mutex};
@@ -52,6 +53,26 @@ struct Args {
     #[cfg(feature = "scripting")]
     #[arg(long)]
     script: Option<String>,
+
+    /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch
+    #[arg(long, default_value = "auto")]
+    aspect: String,
+}
+
+fn resolve_aspect(arg: &str, system: SystemId) -> TargetAspect {
+    match arg {
+        "auto" => {
+            if system == system::WII {
+                TargetAspect::Ratio(16.0 / 9.0)
+            } else {
+                TargetAspect::Ratio(4.0 / 3.0)
+            }
+        }
+        "4:3" => TargetAspect::Ratio(4.0 / 3.0),
+        "16:9" => TargetAspect::Ratio(16.0 / 9.0),
+        "stretch" => TargetAspect::Stretch,
+        other => panic!("--aspect must be auto|4:3|16:9|stretch, got {other:?}"),
+    }
 }
 
 fn main() {
@@ -81,11 +102,11 @@ fn main() {
         if args.wii {
             let mut emulator = Wii::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode);
+            run(emulator, present_mode, &args.aspect);
         } else {
             let mut emulator = GameCube::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode);
+            run(emulator, present_mode, &args.aspect);
         }
     } else if let Some(ref ipl_path) = args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
@@ -95,7 +116,7 @@ fn main() {
             emulator.insert_dvd(image::load_dvd(dvd_data));
         }
         configure(&mut emulator, &args);
-        run(emulator, present_mode);
+        run(emulator, present_mode, &args.aspect);
     } else if let Some(ref dvd_path) = args.dvd {
         let dvd_data = std::fs::read(dvd_path).expect("failed to read DVD");
         let dvd = image::load_dvd(dvd_data);
@@ -111,12 +132,12 @@ fn main() {
             };
             let mut emulator = builder.build();
             configure(&mut emulator, &args);
-            run(emulator, present_mode);
+            run(emulator, present_mode, &args.aspect);
         } else {
             println!("Detected GameCube disc, booting via IPL HLE");
             let mut emulator = GameCube::with_ipl_hle(dvd);
             configure(&mut emulator, &args);
-            run(emulator, present_mode);
+            run(emulator, present_mode, &args.aspect);
         }
     } else {
         panic!("provide one of --dol, --ipl, or --dvd");
@@ -145,7 +166,8 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
     });
 }
 
-fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu::PresentMode) {
+fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu::PresentMode, aspect_arg: &str) {
+    let target_aspect = resolve_aspect(aspect_arg, SYSTEM);
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..Default::default()
@@ -163,7 +185,7 @@ fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu:
 
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
-    let renderer = backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format);
+    let renderer = backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
 
     emulator.render_sink = Box::new(renderer.clone());
 

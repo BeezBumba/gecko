@@ -364,6 +364,7 @@ impl GxRenderer {
             });
             rpass.set_pipeline(&self.efb_copy_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.insert_debug_marker("EFB copy: resolved color to texture cache");
             rpass.draw(0..3, 0..1);
         }
         encoder.pop_debug_group();
@@ -489,6 +490,7 @@ impl GxRenderer {
             });
             rpass.set_pipeline(&self.efb_depth_resolve_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.insert_debug_marker("EFB copy: resolve depth to texture cache");
             rpass.draw(0..3, 0..1);
         }
         encoder.pop_debug_group();

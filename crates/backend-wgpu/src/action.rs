@@ -234,6 +234,8 @@ impl GxRenderer {
                 self.draw_bg_keys.push(self.current_bind_group_key());
                 self.draw_viewports.push(self.current_viewport);
                 self.draw_scissors.push(self.current_scissor);
+                #[cfg(feature = "renderdoc-capture")]
+                self.draw_primitives.push(draw.primitive);
 
                 self.scratch_draws.push((prev_len as u32, added as u32));
             }
@@ -375,6 +377,8 @@ impl GxRenderer {
         self.draw_bg_keys.clear();
         self.draw_viewports.clear();
         self.draw_scissors.clear();
+        #[cfg(feature = "renderdoc-capture")]
+        self.draw_primitives.clear();
     }
 
     fn execute_action_render_pass(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -446,7 +450,7 @@ impl GxRenderer {
         }
 
         let group_label = format!(
-            "GX Draw Flush: draws={} vertices={}",
+            "GX FIFO Execution / EFB Rendering: draws={} vertices={}",
             self.scratch_draws.len(),
             self.scratch_vertices.len()
         );
@@ -469,7 +473,7 @@ impl GxRenderer {
             };
 
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("gx_action_render_pass"),
+                label: Some("efb_rendering"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: if crate::EFB_SAMPLE_COUNT == 1 {
                         &self.efb_view
@@ -512,6 +516,14 @@ impl GxRenderer {
             }
 
             for (index, (first_vertex, vertex_count)) in self.scratch_draws.iter().copied().enumerate() {
+                #[cfg(feature = "renderdoc-capture")]
+                let draw_label = {
+                    let primitive = self.draw_primitives[index];
+                    format!(
+                        "GX Primitive Batch {index}: primitive={primitive:?} first_vertex={first_vertex} vertex_count={vertex_count}"
+                    )
+                };
+                #[cfg(not(feature = "renderdoc-capture"))]
                 let draw_label = format!("GX Draw {index}: first_vertex={first_vertex} vertex_count={vertex_count}");
                 rpass.push_debug_group(&draw_label);
                 let pipeline_key = &self.draw_pipeline_keys[index];

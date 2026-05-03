@@ -215,6 +215,13 @@ pub fn present_xfb<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
             // A non-zero offset_x means this copy belongs to a different
             // buffer that happens to sit nearby in memory, reject it? TODO
             if offset_x != 0 || offset_y >= frame_h as u32 {
+                tracing::warn!(
+                    copy_dest = copy.dest_addr,
+                    base = base_addr,
+                    offset_x,
+                    offset_y,
+                    "present_xfb: rejecting XFB copy with invalid offset"
+                );
                 continue;
             }
 

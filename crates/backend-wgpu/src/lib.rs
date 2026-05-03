@@ -6,10 +6,14 @@ mod dump;
 mod helpers;
 mod pipeline;
 mod render;
+#[cfg(feature = "renderdoc-capture")]
+mod renderdoc_capture;
 pub mod sink;
 
 use encase::ShaderType as _;
 use gecko::common::Address;
+#[cfg(feature = "renderdoc-capture")]
+use gecko::flipper::gx::draw::Primitive;
 use gecko::flipper::gx::draw::{Scissor, TextureFormat, Viewport};
 use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
 #[cfg(feature = "efb-writeback")]
@@ -148,6 +152,8 @@ pub struct GxRenderer {
     pub(crate) draw_bg_keys: Vec<BindGroupCacheKey>,
     pub(crate) draw_viewports: Vec<Viewport>,
     pub(crate) draw_scissors: Vec<Scissor>,
+    #[cfg(feature = "renderdoc-capture")]
+    pub(crate) draw_primitives: Vec<Primitive>,
     pub(crate) frame_stride: usize,
     pub(crate) frame_encase_size: usize,
     // Tracked GX state (updated by state-change actions)
@@ -637,6 +643,8 @@ impl GxRenderer {
             draw_bg_keys: Vec::new(),
             draw_viewports: Vec::new(),
             draw_scissors: Vec::new(),
+            #[cfg(feature = "renderdoc-capture")]
+            draw_primitives: Vec::new(),
             frame_stride: align_up(
                 FrameUniforms::min_size().get(),
                 device.limits().min_uniform_buffer_offset_alignment as u64,
