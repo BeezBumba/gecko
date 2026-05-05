@@ -8,6 +8,6 @@ private/
 *.log
 out/
 __pycache__/
-fs/
+/fs/
 screenshots/
 textures/

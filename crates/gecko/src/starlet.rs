@@ -1,4 +1,5 @@
 use crate::System;
+use crate::hollywood::ipc::fs::host::HostBackedFile;
 use crate::hollywood::ipc::{DeviceContext, IosDevice};
 use crate::scheduler::microseconds_to_cycles;
 use crate::system::SystemId;
@@ -144,7 +145,10 @@ impl System<{ crate::WII }> {
 
         self.starlet.register("/dev/stm/immediate", Box::new(stm::Immediate));
         self.starlet.register("/dev/stm/eventhook", Box::new(stm::EventHook));
-        self.starlet.register("/dev/fs", Box::new(ipc::fs::FileSystem));
+        self.starlet.register(
+            "/dev/fs",
+            Box::new(ipc::fs::FileSystem::new(self.starlet.host_fs_root.clone())),
+        );
         self.starlet
             .register("/shared2/sys/SYSCONF", Box::new(ipc::sysconf::SysConf::new()));
         self.starlet
@@ -214,9 +218,7 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
                 ctx.device_path = path.clone();
                 let rc = dev.open(&mut ctx, mode);
                 if rc >= 0 { starlet.allocate_fd(&path) } else { rc }
-            } else if let Some(real) =
-                crate::hollywood::ipc::fs::HostBackedFile::try_open(&starlet.host_fs_root, &path, mode)
-            {
+            } else if let Some(real) = HostBackedFile::try_open(&starlet.host_fs_root, &path, mode) {
                 starlet.allocate_owned_fd(&path, Box::new(real))
             } else {
                 tracing::error!(%path, "IOS_Open: no device registered");

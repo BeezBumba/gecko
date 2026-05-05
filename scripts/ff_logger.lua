@@ -16,11 +16,7 @@ local function on_panic(emu)
     local file = read_cstring(emu, emu:gpr(3))
     local line = emu:gpr(4)
     local fmt  = read_cstring(emu, emu:gpr(5))
-    local args = {
-        emu:gpr(6), emu:gpr(7), emu:gpr(8),
-        emu:gpr(9), emu:gpr(10),
-    }
-    emit("[OSPanic] ", printf(emu, fmt, args))
+    emit("[OSPanic] ", printf(emu, fmt, printf_args(emu, 6)))
     log(string.format("[OSPanic] at %s:%d", file, line))
 end
 
