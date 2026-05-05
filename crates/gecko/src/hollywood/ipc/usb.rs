@@ -1,25 +1,48 @@
+mod bluetooth;
+mod l2cap;
+mod wiimote;
+
 use crate::hollywood::ipc::{DeviceContext, IosDevice};
+pub(crate) use bluetooth::{WIIMOTE_ADDR, WIIMOTE_NAME};
 use std::collections::VecDeque;
+pub use wiimote::{
+    BTN_A, BTN_B, BTN_DOWN, BTN_HOME, BTN_LEFT, BTN_MINUS, BTN_ONE, BTN_PLUS, BTN_RIGHT, BTN_TWO, BTN_UP,
+    NUNCHUK_BTN_C, NUNCHUK_BTN_Z,
+};
 
 const USB_CTRL: u32 = 0;
 const USB_BULK: u32 = 1;
 const USB_INTR: u32 = 2;
 const EP_INT_IN: u8 = 0x81;
+const EP_BULK_OUT: u8 = 0x02;
+const EP_BULK_IN: u8 = 0x82;
 
-const EV_COMMAND_COMPLETE: u8 = 0x0E;
-const OP_READ_LOCAL_VERSION: u16 = 0x1001;
-const OP_READ_LOCAL_FEATURES: u16 = 0x1003;
-const OP_READ_BUFFER_SIZE: u16 = 0x1005;
-const OP_READ_BD_ADDR: u16 = 0x1009;
+const MAX_PENDING_QUEUE: usize = 256;
 
 pub struct Bluetooth {
-    pending_hci: VecDeque<Vec<u8>>,
+    pub(self) pending_hci: VecDeque<Vec<u8>>,
+    pub(self) pending_acl: VecDeque<Vec<u8>>,
+    pub(self) wiimote: wiimote::WiimoteState,
+    pub(self) scanning: bool,
+    pub(self) connection_requested: bool,
+    pub(self) connected: bool,
+    pub(self) host_hid_control_cid: Option<u16>,
+    pub(self) host_hid_interrupt_cid: Option<u16>,
+    pub(self) next_l2cap_ident: u8,
 }
 
 impl Bluetooth {
     pub fn new() -> Self {
         Self {
             pending_hci: VecDeque::new(),
+            pending_acl: VecDeque::new(),
+            wiimote: wiimote::WiimoteState::default(),
+            scanning: false,
+            connection_requested: false,
+            connected: false,
+            host_hid_control_cid: None,
+            host_hid_interrupt_cid: None,
+            next_l2cap_ident: 2,
         }
     }
 }
@@ -32,6 +55,14 @@ impl IosDevice for Bluetooth {
             USB_BULK => self.handle_bulk(ctx, vec_ptr),
             _ => 0,
         }
+    }
+
+    fn set_wiimote_buttons(&mut self, buttons: u16) -> bool {
+        Bluetooth::set_wiimote_buttons(self, buttons)
+    }
+
+    fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
+        Bluetooth::set_nunchuk(self, buttons, stick_x, stick_y)
     }
 }
 
@@ -52,27 +83,54 @@ impl Bluetooth {
         }
 
         let data_ptr = self::vec_data(ctx.mmio, vec_ptr, 6);
-        let opcode = u16::from_le_bytes([ctx.mmio.phys_read_u8(data_ptr), ctx.mmio.phys_read_u8(data_ptr + 1)]);
+        let packet = ctx.mmio.phys_slice(data_ptr, w_length as usize).to_vec();
+        if packet.len() < 2 {
+            return 0;
+        }
 
-        self.queue_command_complete(opcode);
+        self.handle_hci_command(&packet);
         0
     }
 
-    /// For bulk OUT (0x02) we currently drop whatever the SDK sends. We warn if
-    /// there's any payload, since Bulk IN (0x82) just gets a length 0 reply
-    /// since we don't have ACL frames queued.
     fn handle_bulk(&mut self, ctx: &mut DeviceContext<'_>, vec_ptr: u32) -> i32 {
         let endpoint = ctx.mmio.phys_read_u8(self::vec_data(ctx.mmio, vec_ptr, 0));
+        let len_p = self::vec_data(ctx.mmio, vec_ptr, 1);
+        let w_length = u16::from_le_bytes([ctx.mmio.phys_read_u8(len_p), ctx.mmio.phys_read_u8(len_p + 1)]);
+        let buf_ptr = self::vec_data(ctx.mmio, vec_ptr, 2);
 
-        if endpoint == 0x02 {
-            let len_p = self::vec_data(ctx.mmio, vec_ptr, 1);
-            let w_length = u16::from_le_bytes([ctx.mmio.phys_read_u8(len_p), ctx.mmio.phys_read_u8(len_p + 1)]);
-            if w_length > 0 {
-                tracing::warn!(len = w_length, "no L2CAP yet");
+        match endpoint {
+            EP_BULK_OUT => {
+                let packet = ctx.mmio.phys_slice(buf_ptr, w_length as usize).to_vec();
+                tracing::debug!(
+                    bytes = format!("{packet:02X?}"),
+                    "received Bluetooth ACL frame from guest"
+                );
+                self.handle_acl_out(&packet);
+                // Without this the host's HCI tx-buffer fills up
+                // after 8? ACL packets and it disconnects the wiimote.
+                self.queue_number_of_completed_packets(1);
+                w_length as i32
             }
-        }
+            EP_BULK_IN => {
+                let Some(packet) = self.pending_acl.pop_front() else {
+                    return 0;
+                };
 
-        0
+                let delivered = packet.len().min(w_length as usize);
+                ctx.mmio
+                    .phys_slice_mut(buf_ptr, delivered)
+                    .copy_from_slice(&packet[..delivered]);
+                
+                tracing::debug!(
+                    len = delivered,
+                    bytes = format!("{:02X?}", &packet[..delivered]),
+                    "delivering Bluetooth ACL frame to guest"
+                );
+
+                delivered as i32
+            }
+            _ => 0,
+        }
     }
 
     /// HCI event receive (interrupt IN endpoint 0x81). Deliver the next
@@ -87,52 +145,52 @@ impl Bluetooth {
         };
 
         let buf_ptr = self::vec_data(ctx.mmio, vec_ptr, 2);
-        for (i, b) in event.iter().enumerate() {
-            ctx.mmio.phys_write_u8(buf_ptr + i as u32, *b);
-        }
+        ctx.mmio.phys_slice_mut(buf_ptr, event.len()).copy_from_slice(&event);
+
+        tracing::debug!(
+            event = format!("{:02X?}", &event),
+            "delivering Bluetooth HCI event to guest"
+        );
 
         event.len() as i32
     }
 
-    /// Build an HCI Command_Complete event for `opcode` and append it to the
-    /// outgoing queue. The four init Read_* commands need real payloads so
-    /// the SDK's BTM init state machine can advance to state 5; everything
-    /// else is generic status=0.
-    fn queue_command_complete(&mut self, opcode: u16) {
-        let payload: &[u8] = match opcode {
-            OP_READ_LOCAL_VERSION => &[
-                0x00, // status
-                0x03, // HCI v1.2
-                0x40, 0x0E, // HCI revision
-                0x03, // LMP v1.2
-                0x0F, 0x00, // manufacturer = Broadcom
-                0x40, 0x0E, // LMP subversion
-            ],
-            OP_READ_LOCAL_FEATURES => &[0x00, 0xBC, 0x02, 0x04, 0x38, 0x08, 0x08, 0x00, 0x00],
-            OP_READ_BUFFER_SIZE => &[
-                0x00, 0x53, 0x01, // ACL packet length = 339
-                0x40, // SCO packet length = 64
-                0x08, 0x00, // num ACL packets
-                0x08, 0x00, // num SCO packets
-            ],
-            OP_READ_BD_ADDR => &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-            _ => &[0x00],
-        };
+    fn set_wiimote_buttons(&mut self, buttons: u16) -> bool {
+        let changed = self.wiimote.set_buttons(buttons);
 
-        let mut event = Vec::with_capacity(5 + payload.len());
-        event.extend_from_slice(&[
-            EV_COMMAND_COMPLETE,
-            (3 + payload.len()) as u8,
-            0x01, // num_hci_command_packets
-            opcode as u8,
-            (opcode >> 8) as u8,
-        ]);
-        event.extend_from_slice(payload);
+        if changed {
+            tracing::debug!(buttons = format!("{buttons:#06x}"), "Wiimote button state changed");
+        }
 
-        self.pending_hci.push_back(event);
+        if self.host_hid_interrupt_cid.is_none() {
+            return changed;
+        }
+
+        let report = self.wiimote.make_input_report();
+        self.queue_hid_input_report(report);
+
+        changed
+    }
+
+    fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
+        self.wiimote.set_nunchuk(buttons, stick_x, stick_y)
     }
 }
 
+#[inline(always)]
+fn push_capped(queue: &mut VecDeque<Vec<u8>>, frame: Vec<u8>) {
+    if queue.len() >= MAX_PENDING_QUEUE {
+        tracing::warn!(
+            cap = MAX_PENDING_QUEUE,
+            "Bluetooth pending queue full; dropping oldest frame"
+        );
+        queue.pop_front();
+    }
+
+    queue.push_back(frame);
+}
+
+#[inline(always)]
 fn vec_data<const SYS: crate::system::SystemId>(mmio: &crate::mmio::Mmio<SYS>, vec_ptr: u32, idx: u32) -> u32 {
     mmio.phys_read_u32(vec_ptr + (idx * 8))
 }

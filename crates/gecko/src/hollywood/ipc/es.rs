@@ -1,5 +1,6 @@
 use crate::hollywood::ipc::IosDevice;
 
+pub const IOCTL_GET_CONSUMPTION: u32 = 0x16;
 pub const IOCTL_DI_GET_TICKET_VIEW: u32 = 0x1B;
 pub const IOCTL_GET_DATA_DIR: u32 = 0x1D;
 pub const IOCTL_GET_TITLE_ID: u32 = 0x20;
@@ -40,6 +41,10 @@ impl IosDevice for ETicketServices {
                     out_buf = format!("{out_buf:#010X}"),
                     "ES_GetTitleID"
                 );
+                0
+            }
+            IOCTL_GET_CONSUMPTION => {
+                tracing::warn!(in_count, io_count, "ES_GetConsumption: stubbed");
                 0
             }
             IOCTL_DI_GET_TICKET_VIEW => {

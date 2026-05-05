@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use egui::ViewportId;
+use gecko::HostInput;
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
@@ -400,6 +401,7 @@ type SharedState = Rc<RefCell<Option<State>>>;
 
 struct App {
     emulator: GameCube,
+    input: HostInput,
     action_queue: ActionQueue,
     window: Option<Arc<Window>>,
     state: SharedState,
@@ -449,7 +451,10 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state.is_pressed();
                 if let PhysicalKey::Code(key) = event.physical_key {
-                    update_pad(self.emulator.primary_controller_mut(), key, pressed);
+                    if let HostInput::Gc(pad) = &mut self.input {
+                        update_pad(pad, key, pressed);
+                    }
+                    self.emulator.apply_host_input(&self.input);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -487,10 +492,8 @@ pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8
         emulator.dsp.load_irom(&irom);
     }
 
-    emulator.add_primary_controller(PadStatus {
-        connected: true,
-        ..PadStatus::default()
-    });
+    let input = HostInput::gc_connected();
+    emulator.apply_host_input(&input);
 
     // Install the WebSink as the emulator's render sink.
     let action_queue: ActionQueue = Arc::new(Mutex::new(Vec::new()));
@@ -501,6 +504,7 @@ pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8
     let event_loop = EventLoop::new().unwrap();
     let app = App {
         emulator,
+        input,
         action_queue,
         window: None,
         state: Rc::new(RefCell::new(None)),

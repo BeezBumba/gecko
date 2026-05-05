@@ -328,18 +328,18 @@ dependencies = [
 
 [[package]]
 name = "chipi-build"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc93ee723a2e1024de5fdcb59d2dfac6e06edf9a9ad7a3941920d5d9296b8fdc"
+checksum = "b3272bc243a8f30942ec5e6efd9b5fd904e5f051c38d9053f485d35bff204383"
 dependencies = [
  "chipi-core",
 ]
 
 [[package]]
 name = "chipi-core"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c334634fcf9d942efa6f676b81d3dbf14c0bcf94fede78738d02a09eb3cc30a"
+checksum = "c8f3df7969c229e288b63158f9aabaaaff2aebbab70d642ba8ca7b10b6216581"
 
 [[package]]
 name = "codespan-reporting"
@@ -932,12 +932,14 @@ dependencies = [
  "chapa",
  "chipi-build",
  "crc32fast",
+ "disasm",
  "glam",
  "image",
  "multiversion",
  "rustc-hash 2.1.2",
  "tracing",
  "twox-hash",
+ "zerocopy",
 ]
 
 [[package]]

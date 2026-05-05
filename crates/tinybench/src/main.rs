@@ -1,5 +1,5 @@
 use clap::Parser;
-use gecko::flipper::si::pad::PadStatus;
+use gecko::HostInput;
 use gecko::gamecube::GameCube;
 use std::time::Instant;
 
@@ -56,10 +56,7 @@ fn main() {
         emulator.dsp.load_irom(&dsp_data);
     }
 
-    emulator.add_primary_controller(PadStatus {
-        connected: true,
-        ..PadStatus::default()
-    });
+    emulator.apply_host_input(&HostInput::gc_connected());
 
     run_bench(&mut emulator, &args);
 }

@@ -5,11 +5,13 @@ mod thread;
 use backend_wgpu::sink::TargetAspect;
 use clap::Parser;
 use crossbeam_channel::bounded;
+use gecko::HostInput;
 #[cfg(feature = "audio-wav-dump")]
 use gecko::audio::WavAudioSink;
 use gecko::audio::{AudioSink, EmptyAudioSink, MultiplexAudioSink};
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::gamecube::GameCube;
+use gecko::hollywood::ipc::usb as wiimote;
 use gecko::system::{self, System, SystemId};
 use gecko::wii::Wii;
 use image::Dol;
@@ -181,10 +183,7 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
         }
     }
 
-    emulator.add_primary_controller(PadStatus {
-        connected: true,
-        ..PadStatus::default()
-    });
+    emulator.apply_host_input(&HostInput::neutral_for(SYSTEM));
 }
 
 fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu::PresentMode, args: &Args) {
@@ -217,7 +216,7 @@ fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu:
 
     let audio_stream = install_audio_sink(args, &mut emulator);
 
-    let input = Arc::new(Mutex::new(*emulator.primary_controller_mut()));
+    let input = Arc::new(Mutex::new(HostInput::neutral_for(SYSTEM)));
 
     let (frame_tx, frame_rx) = bounded::<thread::FrameMessage>(2);
 
@@ -307,15 +306,20 @@ fn install_audio_sink<const SYSTEM: SystemId>(args: &Args, emulator: &mut System
     stream
 }
 
-fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
-    let set_button = |buttons: &mut u16, mask: u16, on: bool| {
-        if on {
-            *buttons |= mask;
-        } else {
-            *buttons &= !mask;
-        }
-    };
+#[inline(always)]
+fn set_bit<T: std::ops::BitOrAssign + std::ops::BitAndAssign + std::ops::Not<Output = T> + Copy>(
+    bits: &mut T,
+    mask: T,
+    on: bool,
+) {
+    if on {
+        *bits |= mask;
+    } else {
+        *bits &= !mask;
+    }
+}
 
+fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
     match key {
         // Analog stick
         KeyCode::ArrowUp => pad.stick_y = if pressed { 255 } else { STICK_CENTER },
@@ -324,29 +328,58 @@ fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
         KeyCode::ArrowRight => pad.stick_x = if pressed { 255 } else { STICK_CENTER },
 
         // Face buttons
-        KeyCode::KeyX => set_button(&mut pad.buttons, pad::A, pressed),
-        KeyCode::KeyZ => set_button(&mut pad.buttons, pad::B, pressed),
-        KeyCode::KeyC => set_button(&mut pad.buttons, pad::X, pressed),
-        KeyCode::KeyV => set_button(&mut pad.buttons, pad::Y, pressed),
-        KeyCode::Enter => set_button(&mut pad.buttons, pad::START, pressed),
+        KeyCode::KeyX => self::set_bit(&mut pad.buttons, pad::A, pressed),
+        KeyCode::KeyZ => self::set_bit(&mut pad.buttons, pad::B, pressed),
+        KeyCode::KeyC => self::set_bit(&mut pad.buttons, pad::X, pressed),
+        KeyCode::KeyV => self::set_bit(&mut pad.buttons, pad::Y, pressed),
+        KeyCode::Enter => self::set_bit(&mut pad.buttons, pad::START, pressed),
 
         // Triggers
         KeyCode::KeyA => {
-            set_button(&mut pad.buttons, pad::L, pressed);
+            self::set_bit(&mut pad.buttons, pad::L, pressed);
             pad.trigger_left = if pressed { 255 } else { 0 };
         }
         KeyCode::KeyS => {
-            set_button(&mut pad.buttons, pad::R, pressed);
+            self::set_bit(&mut pad.buttons, pad::R, pressed);
             pad.trigger_right = if pressed { 255 } else { 0 };
         }
-        KeyCode::KeyD => set_button(&mut pad.buttons, pad::Z, pressed),
+        KeyCode::KeyD => self::set_bit(&mut pad.buttons, pad::Z, pressed),
 
         // D-pad
-        KeyCode::KeyI => set_button(&mut pad.buttons, pad::DPAD_UP, pressed),
-        KeyCode::KeyK => set_button(&mut pad.buttons, pad::DPAD_DOWN, pressed),
-        KeyCode::KeyJ => set_button(&mut pad.buttons, pad::DPAD_LEFT, pressed),
-        KeyCode::KeyL => set_button(&mut pad.buttons, pad::DPAD_RIGHT, pressed),
+        KeyCode::KeyI => self::set_bit(&mut pad.buttons, pad::DPAD_UP, pressed),
+        KeyCode::KeyK => self::set_bit(&mut pad.buttons, pad::DPAD_DOWN, pressed),
+        KeyCode::KeyJ => self::set_bit(&mut pad.buttons, pad::DPAD_LEFT, pressed),
+        KeyCode::KeyL => self::set_bit(&mut pad.buttons, pad::DPAD_RIGHT, pressed),
 
+        _ => {}
+    }
+}
+
+pub fn update_wiimote_keys(buttons: &mut u16, key: KeyCode, pressed: bool) {
+    let mask = match key {
+        KeyCode::Digit1 => wiimote::BTN_ONE,
+        KeyCode::Digit2 => wiimote::BTN_TWO,
+        KeyCode::Home => wiimote::BTN_HOME,
+        KeyCode::Minus => wiimote::BTN_MINUS,
+        KeyCode::Equal => wiimote::BTN_PLUS,
+        KeyCode::ArrowUp => wiimote::BTN_UP,
+        KeyCode::ArrowDown => wiimote::BTN_DOWN,
+        KeyCode::ArrowLeft => wiimote::BTN_LEFT,
+        KeyCode::ArrowRight => wiimote::BTN_RIGHT,
+        _ => return,
+    };
+    self::set_bit(buttons, mask, pressed);
+}
+
+pub fn update_nunchuk_keys(buttons: &mut u8, stick_x: &mut u8, stick_y: &mut u8, key: KeyCode, pressed: bool) {
+    const NEUTRAL: u8 = 0x80;
+    match key {
+        KeyCode::KeyW => *stick_y = if pressed { 0xFF } else { NEUTRAL },
+        KeyCode::KeyS => *stick_y = if pressed { 0x00 } else { NEUTRAL },
+        KeyCode::KeyA => *stick_x = if pressed { 0x00 } else { NEUTRAL },
+        KeyCode::KeyD => *stick_x = if pressed { 0xFF } else { NEUTRAL },
+        KeyCode::KeyQ => self::set_bit(buttons, wiimote::NUNCHUK_BTN_Z, pressed),
+        KeyCode::KeyE => self::set_bit(buttons, wiimote::NUNCHUK_BTN_C, pressed),
         _ => {}
     }
 }

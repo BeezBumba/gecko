@@ -1,5 +1,5 @@
 use crossbeam_channel::Sender;
-use gecko::flipper::si::pad::PadStatus;
+use gecko::HostInput;
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::system::{System, SystemId};
 use std::sync::{Arc, Mutex};
@@ -12,11 +12,12 @@ pub struct FrameMessage {
 pub fn emu_thread<const SYSTEM: SystemId>(
     mut emulator: System<SYSTEM>,
     frame_tx: Sender<FrameMessage>,
-    input: Arc<Mutex<PadStatus>>,
+    input: Arc<Mutex<HostInput>>,
     proxy: EventLoopProxy<()>,
 ) {
     loop {
-        *emulator.primary_controller_mut() = *input.lock().unwrap();
+        let input = *input.lock().unwrap();
+        emulator.apply_host_input(&input);
         emulator.run_until_vsync();
 
         let native_hz = match emulator.vi.dcr.video_format().refresh_rate() {

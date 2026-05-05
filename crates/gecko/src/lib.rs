@@ -13,10 +13,12 @@ pub mod scheduler;
 pub mod starlet;
 pub mod system;
 pub mod wii;
+pub mod input;
 
 pub use gamecube::GameCube;
 pub use system::{GC, System, SystemId, WII};
 pub use wii::Wii;
+pub use input::HostInput;
 
 #[cfg(feature = "hooks")]
 pub mod hooks;

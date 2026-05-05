@@ -3,6 +3,7 @@ pub mod es;
 pub mod fs;
 pub mod sdio;
 pub mod stm;
+pub mod sysconf;
 pub mod usb;
 
 use crate::dvd::DvdInterface;
@@ -75,6 +76,14 @@ pub trait IosDevice: Send {
             "IOS_Ioctlv: unimplemented"
         );
         IPC_EINVAL
+    }
+
+    fn set_wiimote_buttons(&mut self, _buttons: u16) -> bool {
+        false
+    }
+
+    fn set_nunchuk(&mut self, _buttons: u8, _stick_x: u8, _stick_y: u8) -> bool {
+        false
     }
 }
 

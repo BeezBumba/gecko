@@ -2,13 +2,14 @@ use crate::thread::FrameMessage;
 use backend_wgpu::capture::{self, CaptureRequest, ScreenshotControl};
 use crossbeam_channel::Receiver;
 use egui::ViewportId;
-use gecko::flipper::si::pad::PadStatus;
+use gecko::HostInput;
+use gecko::hollywood::ipc::usb;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -213,7 +214,7 @@ impl State {
 
 pub struct App {
     pub frame_rx: Receiver<FrameMessage>,
-    pub input: Arc<Mutex<PadStatus>>,
+    pub input: Arc<Mutex<HostInput>>,
     pub window: Option<Arc<Window>>,
     pub state: Option<State>,
     pub present_mode: wgpu::PresentMode,
@@ -314,8 +315,54 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
-                    let mut pad = self.input.lock().unwrap();
-                    crate::update_pad(&mut pad, key, pressed);
+                    
+                    let mut input = self.input.lock().unwrap();
+                    match &mut *input {
+                        HostInput::Gc(pad) => crate::update_pad(pad, key, pressed),
+                        HostInput::Wii {
+                            wiimote_buttons,
+                            nunchuk_buttons,
+                            nunchuk_stick_x,
+                            nunchuk_stick_y,
+                        } => {
+                            crate::update_wiimote_keys(wiimote_buttons, key, pressed);
+                            crate::update_nunchuk_keys(
+                                nunchuk_buttons,
+                                nunchuk_stick_x,
+                                nunchuk_stick_y,
+                                key,
+                                pressed,
+                            );
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let pressed = state.is_pressed();
+                let mask = match button {
+                    MouseButton::Left => Some(usb::BTN_A),
+                    MouseButton::Right => Some(usb::BTN_B),
+                    _ => None,
+                };
+                if let Some(mask) = mask {
+                    let mut input = self.input.lock().unwrap();
+                    
+                    if let HostInput::Wii { wiimote_buttons, .. } = &mut *input {
+                        let next = if pressed {
+                            *wiimote_buttons | mask
+                        } else {
+                            *wiimote_buttons & !mask
+                        };
+
+                        if next != *wiimote_buttons {
+                            *wiimote_buttons = next;
+                            tracing::debug!(
+                                mask = format!("{mask:#06x}"),
+                                pressed,
+                                "host mouse button mapped to Wiimote"
+                            );
+                        }
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {

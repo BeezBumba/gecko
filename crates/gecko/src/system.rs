@@ -1,3 +1,4 @@
+use crate::HostInput;
 use crate::audio::{AudioSink, EmptyAudioSink};
 use crate::dvd::DvdInterface;
 use crate::flipper::ai::AudioInterface;
@@ -8,7 +9,7 @@ use crate::flipper::gx::GraphicsProcessor;
 use crate::flipper::mi::MemoryInterface;
 use crate::flipper::pe::PixelEngine;
 use crate::flipper::pi::ProcessorInterface;
-use crate::flipper::si::{SerialInterface, pad};
+use crate::flipper::si::SerialInterface;
 use crate::flipper::vi::VideoInterface;
 use crate::gekko::Gekko;
 use crate::hollywood::Hollywood;
@@ -221,12 +222,23 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         (fmt.columns(), fmt.lines())
     }
 
-    pub fn add_primary_controller(&mut self, input: pad::PadStatus) {
-        self.si.pad_state[0] = input;
-    }
-
-    pub fn primary_controller_mut(&mut self) -> &mut pad::PadStatus {
-        &mut self.si.pad_state[0]
+    pub fn apply_host_input(&mut self, input: &HostInput) {
+        match input {
+            HostInput::Gc(pad) if SYSTEM == GC => {
+                self.si.pad_state[0] = *pad;
+            }
+            HostInput::Wii {
+                wiimote_buttons,
+                nunchuk_buttons,
+                nunchuk_stick_x,
+                nunchuk_stick_y,
+            } if SYSTEM == WII => {
+                self.starlet.set_wiimote_buttons(*wiimote_buttons);
+                self.starlet
+                    .set_nunchuk(*nunchuk_buttons, *nunchuk_stick_x, *nunchuk_stick_y);
+            }
+            _ => unreachable!("invalid host input for system"),
+        }
     }
 
     #[inline(always)]

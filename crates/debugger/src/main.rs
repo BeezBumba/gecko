@@ -8,6 +8,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use gecko::HostInput;
 use gecko::audio::WavAudioSink;
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::gamecube::GameCube;
@@ -29,17 +30,17 @@ enum EmulatorVariant {
 }
 
 impl EmulatorVariant {
-    fn primary_controller_mut(&mut self) -> &mut PadStatus {
+    fn apply_host_input(&mut self, input: &HostInput) {
         match self {
-            Self::Gc(e) => e.primary_controller_mut(),
-            Self::Wii(e) => e.primary_controller_mut(),
+            Self::Gc(e) => e.apply_host_input(input),
+            Self::Wii(e) => e.apply_host_input(input),
         }
     }
 
-    fn add_primary_controller(&mut self, pad: PadStatus) {
+    fn neutral_input(&self) -> HostInput {
         match self {
-            Self::Gc(e) => e.add_primary_controller(pad),
-            Self::Wii(e) => e.add_primary_controller(pad),
+            Self::Gc(_) => HostInput::gc_connected(),
+            Self::Wii(_) => HostInput::wii_neutral(),
         }
     }
 
@@ -89,6 +90,7 @@ impl EmulatorVariant {
 
 struct App {
     emulator: EmulatorVariant,
+    input: HostInput,
     ui: DebuggerUi,
     window: Option<Arc<Window>>,
     state: Option<RenderState>,
@@ -229,7 +231,10 @@ impl ApplicationHandler for App {
                     }
 
                     if !egui_consumed {
-                        update_pad(self.emulator.primary_controller_mut(), key, pressed);
+                        if let HostInput::Gc(pad) = &mut self.input {
+                            update_pad(pad, key, pressed);
+                        }
+                        self.emulator.apply_host_input(&self.input);
                     }
                 }
             }
@@ -390,10 +395,8 @@ fn main() {
         .as_ref()
         .map(|path| image::loader::load_symbols(std::path::Path::new(path)).expect("failed to load symbols"));
 
-    emulator.add_primary_controller(PadStatus {
-        connected: true,
-        ..PadStatus::default()
-    });
+    let input = emulator.neutral_input();
+    emulator.apply_host_input(&input);
 
     // Debugger always dumps to WAV file
     let emulated_rate = emulator.aid_sample_rate_hz();
@@ -435,6 +438,7 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     let mut app = App {
         emulator,
+        input,
         ui,
         window: None,
         state: None,

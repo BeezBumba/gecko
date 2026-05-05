@@ -1,6 +1,6 @@
 use backend_wgpu::{GxRenderer, capture};
+use gecko::HostInput;
 use gecko::flipper::si::pad;
-use gecko::flipper::si::pad::PadStatus;
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
 use gecko::host::{GxAction, RenderSink};
@@ -216,15 +216,16 @@ fn run_one(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::Tex
 
     let mut gamecube = GameCube::with_ipl(IPL, true);
     gamecube.dsp.load_irom(DSP);
-    gamecube.add_primary_controller(PadStatus {
-        connected: true,
-        ..Default::default()
-    });
+
+    let mut input = HostInput::gc_connected();
+    gamecube.apply_host_input(&input);
+    
     gamecube.render_sink = Box::new(SyncSink {
         gx: gx.clone(),
         device: device.clone(),
         queue: queue.clone(),
     });
+    
     gamecube.insert_dvd(image);
 
     let framerate = match gamecube.vi.dcr.video_format().refresh_rate() {
@@ -244,8 +245,7 @@ fn run_one(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::Tex
     }
 
     for idx in 0..20 {
-        {
-            let pad = gamecube.primary_controller_mut();
+        if let HostInput::Gc(pad) = &mut input {
             pad.stick_y = pad::STICK_CENTER;
             pad.buttons = 0;
 
@@ -255,6 +255,7 @@ fn run_one(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::Tex
                 pad.buttons = pad::A | pad::START;
             }
         }
+        gamecube.apply_host_input(&input);
 
         for _ in 0..(framerate * 2) {
             gamecube.run_until_vsync();

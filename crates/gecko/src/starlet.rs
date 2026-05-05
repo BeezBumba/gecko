@@ -90,6 +90,18 @@ impl Starlet {
         }
     }
 
+    pub fn set_wiimote_buttons(&mut self, buttons: u16) -> bool {
+        self.devices
+            .get_mut("/dev/usb/oh1/57e/305")
+            .is_some_and(|dev| dev.set_wiimote_buttons(buttons))
+    }
+
+    pub fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
+        self.devices
+            .get_mut("/dev/usb/oh1/57e/305")
+            .is_some_and(|dev| dev.set_nunchuk(buttons, stick_x, stick_y))
+    }
+
     /// Drop an fd. Calls `close` on the underlying device first; for owned
     /// fds the device is dropped after close.
     pub fn close_fd(&mut self, fd: i32, ctx: &mut DeviceContext<'_>) -> i32 {
@@ -121,6 +133,8 @@ impl System<{ crate::WII }> {
         self.starlet.register("/dev/stm/immediate", Box::new(stm::Immediate));
         self.starlet.register("/dev/stm/eventhook", Box::new(stm::EventHook));
         self.starlet.register("/dev/fs", Box::new(ipc::fs::FileSystem));
+        self.starlet
+            .register("/shared2/sys/SYSCONF", Box::new(ipc::sysconf::SysConf::new()));
         self.starlet
             .register("/dev/di", Box::new(ipc::di::DiskInterface::new()));
         self.starlet.register("/dev/es", Box::new(ipc::es::ETicketServices));
