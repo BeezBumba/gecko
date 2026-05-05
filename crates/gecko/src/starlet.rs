@@ -22,7 +22,7 @@ pub struct PendingResponse {
 /// directly so each fd has its own cursor.
 enum FdEntry {
     Shared(String),
-    Owned(Box<dyn IosDevice>),
+    Owned { path: String, dev: Box<dyn IosDevice> },
 }
 
 pub struct Starlet {
@@ -58,9 +58,15 @@ impl Starlet {
 
     /// Allocate a fresh fd that owns the given device instance. Used for
     /// per-open resources (host-backed real files).
-    pub fn allocate_owned_fd(&mut self, dev: Box<dyn IosDevice>) -> i32 {
+    pub fn allocate_owned_fd(&mut self, path: &str, dev: Box<dyn IosDevice>) -> i32 {
         let fd = self.fresh_fd();
-        self.handles.insert(fd, FdEntry::Owned(dev));
+        self.handles.insert(
+            fd,
+            FdEntry::Owned {
+                path: path.to_owned(),
+                dev,
+            },
+        );
         fd
     }
 
@@ -77,7 +83,7 @@ impl Starlet {
     pub fn device_for_fd(&mut self, fd: i32) -> Option<&mut dyn IosDevice> {
         let path = match self.handles.get(&fd)? {
             FdEntry::Shared(p) => Some(p.clone()),
-            FdEntry::Owned(_) => None,
+            FdEntry::Owned { .. } => None,
         };
 
         if let Some(path) = path {
@@ -85,8 +91,14 @@ impl Starlet {
         }
 
         match self.handles.get_mut(&fd)? {
-            FdEntry::Owned(dev) => Some(dev.as_mut()),
+            FdEntry::Owned { dev, .. } => Some(dev.as_mut()),
             FdEntry::Shared(_) => unreachable!(),
+        }
+    }
+
+    pub fn device_path_for_fd(&self, fd: i32) -> Option<String> {
+        match self.handles.get(&fd)? {
+            FdEntry::Shared(path) | FdEntry::Owned { path, .. } => Some(path.clone()),
         }
     }
 
@@ -110,7 +122,7 @@ impl Starlet {
         };
 
         match entry {
-            FdEntry::Owned(mut dev) => dev.close(ctx),
+            FdEntry::Owned { mut dev, .. } => dev.close(ctx),
             FdEntry::Shared(path) => match self.devices.get_mut(&path) {
                 Some(dev) => dev.close(ctx),
                 None => crate::hollywood::ipc::IPC_EINVAL,
@@ -151,6 +163,7 @@ impl System<{ crate::WII }> {
                 scheduler: &mut self.scheduler,
                 di: &mut self.di,
                 pi: &mut self.pi,
+                device_path: "<unbound>".to_owned(),
             },
         )
     }
@@ -198,12 +211,13 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let path = self::read_c_string(&mut ctx, path_ptr);
 
             let fd = if let Some(dev) = starlet.device_for_path(&path) {
+                ctx.device_path = path.clone();
                 let rc = dev.open(&mut ctx, mode);
                 if rc >= 0 { starlet.allocate_fd(&path) } else { rc }
             } else if let Some(real) =
                 crate::hollywood::ipc::fs::HostBackedFile::try_open(&starlet.host_fs_root, &path, mode)
             {
-                starlet.allocate_owned_fd(Box::new(real))
+                starlet.allocate_owned_fd(&path, Box::new(real))
             } else {
                 tracing::error!(%path, "IOS_Open: no device registered");
                 IPC_ENOENT
@@ -213,14 +227,23 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             fd
         }
         IOS_CLOSE => {
-            tracing::debug!(fd, "IOS_Close");
+            let device_path = self::bind_fd_context(starlet, &mut ctx, fd);
+
+            tracing::debug!(fd, device = device_path.as_str(), "IOS_Close");
             starlet.close_fd(fd, &mut ctx)
         }
         IOS_READ => {
             let out_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
             let out_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
+            let device_path = self::bind_fd_context(starlet, &mut ctx, fd);
 
-            tracing::debug!(fd, out_ptr = format!("{out_ptr:#010X}"), out_len, "IOS_Read");
+            tracing::debug!(
+                fd,
+                device = device_path.as_str(),
+                out_ptr = format!("{out_ptr:#010X}"),
+                out_len,
+                "IOS_Read"
+            );
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.read(&mut ctx, out_ptr, out_len),
@@ -230,8 +253,15 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
         IOS_WRITE => {
             let in_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
             let in_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
+            let device_path = self::bind_fd_context(starlet, &mut ctx, fd);
 
-            tracing::debug!(fd, in_ptr = format!("{in_ptr:#010X}"), in_len, "IOS_Write");
+            tracing::debug!(
+                fd,
+                device = device_path.as_str(),
+                in_ptr = format!("{in_ptr:#010X}"),
+                in_len,
+                "IOS_Write"
+            );
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.write(&mut ctx, in_ptr, in_len),
@@ -241,8 +271,9 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
         IOS_SEEK => {
             let offset = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C) as i32;
             let whence = ctx.mmio.phys_read_u32(cmd_paddr + 0x10) as i32;
+            let device_path = self::bind_fd_context(starlet, &mut ctx, fd);
 
-            tracing::debug!(fd, offset, whence, "IOS_Seek");
+            tracing::debug!(fd, device = device_path.as_str(), offset, whence, "IOS_Seek");
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.seek(&mut ctx, offset, whence),
@@ -255,9 +286,11 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let in_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x14);
             let out_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
             let out_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x1C);
+            let device_path = self::bind_fd_context(starlet, &mut ctx, fd);
 
             tracing::debug!(
                 fd,
+                device = device_path.as_str(),
                 ioctl_cmd = format!("{ioctl_cmd:#010X}"),
                 in_ptr = format!("{in_ptr:#010X}"),
                 in_len,
@@ -276,8 +309,14 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let in_count = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
             let io_count = ctx.mmio.phys_read_u32(cmd_paddr + 0x14);
             let vec_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
+            let device_path = self::bind_fd_context(starlet, &mut ctx, fd);
 
-            tracing::debug!(fd, ioctl_cmd = format!("{ioctl_cmd:#010X}"), "IOS_Ioctlv");
+            tracing::debug!(
+                fd,
+                device = device_path.as_str(),
+                ioctl_cmd = format!("{ioctl_cmd:#010X}"),
+                "IOS_Ioctlv"
+            );
 
             match starlet.device_for_fd(fd) {
                 Some(dev) => dev.ioctlv(&mut ctx, ioctl_cmd, in_count, io_count, vec_ptr),
@@ -306,9 +345,15 @@ fn read_c_string(ctx: &mut DeviceContext<'_>, paddr: u32) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+fn bind_fd_context(starlet: &Starlet, ctx: &mut DeviceContext<'_>, fd: i32) -> String {
+    let device_path = starlet.device_path_for_fd(fd).unwrap_or_else(|| "<invalid>".to_owned());
+    ctx.device_path = device_path.clone();
+    device_path
+}
+
 fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     if sys.hollywood.ipc.ppcctrl.arm_response() {
-        tracing::debug!(
+        tracing::trace!(
             queue_len = sys.starlet.pending.len(),
             "deliver_pending: arm_response still set, skipping"
         );
@@ -316,10 +361,10 @@ fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     }
 
     let Some(p) = sys.starlet.pending.pop_front() else {
-        tracing::debug!("deliver_pending: queue empty");
+        tracing::trace!("deliver_pending: queue empty");
         return;
     };
-    tracing::debug!(
+    tracing::trace!(
         cmd_paddr = format!("{:#010X}", p.cmd_paddr),
         result = p.result,
         remaining = sys.starlet.pending.len(),

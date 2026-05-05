@@ -93,6 +93,7 @@ impl IosDevice for ETicketServices {
             }
             _ => {
                 tracing::warn!(
+                    device = &ctx.device_path,
                     cmd = format!("{cmd:#010X}"),
                     in_count,
                     io_count,

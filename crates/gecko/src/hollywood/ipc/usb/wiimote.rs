@@ -97,8 +97,7 @@ const WIIMOTE_EEPROM_CALIBRATION: [u8; 42] = [
     // IR sensor calibration #1 (0x00..0x0B): 4 reference dot positions + checksum
     0x7F, 0x5D, 0x03, 0x80, 0x5D, 0x80, 0xA2, 0xB8, 0x7F, 0xA2, 0x0C,
     // IR sensor calibration #2 (0x0B..0x16): duplicate
-    0x7F, 0x5D, 0x03, 0x80, 0x5D, 0x80, 0xA2, 0xB8, 0x7F, 0xA2, 0x0C,
-    // Accel calibration #1 (0x16..0x20)
+    0x7F, 0x5D, 0x03, 0x80, 0x5D, 0x80, 0xA2, 0xB8, 0x7F, 0xA2, 0x0C, // Accel calibration #1 (0x16..0x20)
     0x80, 0x80, 0x80, 0x00, // accel zero G (X, Y, Z, padding)
     0x9A, 0x9A, 0x9A, 0x00, // accel one G (X, Y, Z, padding)
     0x00, 0xA3, // padding, checksum
@@ -356,7 +355,7 @@ impl WiimoteState {
             let chunk = (size - offset).min(16);
             let chunk_addr = address as u16 + offset as u16;
             out.push(self.read_chunk_report(chunk_addr, &self.eeprom[start + offset..start + offset + chunk], 0));
-            
+
             offset += chunk;
         }
 
@@ -380,21 +379,21 @@ impl WiimoteState {
         backing[0xFA..0x100].copy_from_slice(&NUNCHUK_ID);
 
         let base = (canonical & 0xFF) as usize;
-        
+
         let mut out = Vec::new();
         let mut offset = 0usize;
         while offset < size {
             let chunk = (size - offset).min(16);
             let start = base + offset;
             let end = start + chunk;
-            
+
             if end > backing.len() {
                 out.push(self.read_chunk_report((address as u16) + offset as u16, &[], 0x08));
                 break;
             }
-            
+
             out.push(self.read_chunk_report((address as u16) + offset as u16, &backing[start..end], 0));
-            
+
             offset += chunk;
         }
         out
@@ -408,16 +407,16 @@ impl WiimoteState {
         } else {
             (((chunk_len as u8 - 1) & 0x0F) << 4) | (error & 0x0F)
         };
-        
+
         let mut report = Vec::with_capacity(22);
         report.extend_from_slice(&[HID_PREFIX_INPUT, 0x21, bb0, bb1, size_and_error]);
         report.extend_from_slice(&address.to_be_bytes());
         report.extend_from_slice(&data[..chunk_len]);
-        
+
         for _ in chunk_len..16 {
             report.push(0);
         }
-        
+
         report
     }
 
@@ -425,15 +424,15 @@ impl WiimoteState {
         let [bb0, bb1] = self.button_bytes();
         let ir_enabled = self.ir_enabled_pin1 && self.ir_enabled_pin2;
         let mut flags = self.leds << 4;
-        
+
         if ir_enabled {
             flags |= 0x08;
         }
-        
+
         if self.nunchuk_attached {
             flags |= 0x02; // extension connected
         }
-        
+
         vec![HID_PREFIX_INPUT, 0x20, bb0, bb1, flags, 0x00, 0x00, 0x64]
     }
 }

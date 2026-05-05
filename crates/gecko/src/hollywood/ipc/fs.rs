@@ -115,7 +115,12 @@ impl IosDevice for HostBackedFile {
                 0
             }
             _ => {
-                tracing::warn!(cmd = format!("{cmd:#X}"), "HostBackedFile: unhandled ioctl");
+                tracing::warn!(
+                    device = &ctx.device_path,
+                    path = format!("{}", self.path.display()),
+                    cmd = format!("{cmd:#X}"),
+                    "HostBackedFile: unhandled ioctl"
+                );
                 IPC_EINVAL
             }
         }

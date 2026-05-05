@@ -42,7 +42,11 @@ impl IosDevice for SdCard {
                 0
             }
             _ => {
-                tracing::error!(cmd = format!("{cmd:#010X}"), "SDIO: unimplemented ioctl");
+                tracing::error!(
+                    device = &ctx.device_path,
+                    cmd = format!("{cmd:#010X}"),
+                    "SDIO: unimplemented ioctl"
+                );
                 IPC_EINVAL
             }
         }

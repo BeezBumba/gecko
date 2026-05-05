@@ -1,4 +1,5 @@
-use crate::{SystemId, flipper::si::pad, WII, GC};
+use crate::flipper::si::pad;
+use crate::{GC, SystemId, WII};
 
 #[derive(Clone, Copy, Debug)]
 pub enum HostInput {

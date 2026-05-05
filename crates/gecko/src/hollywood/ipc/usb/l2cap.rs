@@ -94,7 +94,7 @@ impl Bluetooth {
                             dest_cid = format!("{dest_cid:#06x}"),
                             "Wiimote L2CAP channel connected"
                         );
-                        
+
                         self.queue_l2cap_config_req(source_cid);
                     } else {
                         tracing::warn!(

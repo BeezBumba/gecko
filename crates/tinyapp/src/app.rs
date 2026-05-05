@@ -315,7 +315,7 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
-                    
+
                     let mut input = self.input.lock().unwrap();
                     match &mut *input {
                         HostInput::Gc(pad) => crate::update_pad(pad, key, pressed),
@@ -326,13 +326,7 @@ impl ApplicationHandler for App {
                             nunchuk_stick_y,
                         } => {
                             crate::update_wiimote_keys(wiimote_buttons, key, pressed);
-                            crate::update_nunchuk_keys(
-                                nunchuk_buttons,
-                                nunchuk_stick_x,
-                                nunchuk_stick_y,
-                                key,
-                                pressed,
-                            );
+                            crate::update_nunchuk_keys(nunchuk_buttons, nunchuk_stick_x, nunchuk_stick_y, key, pressed);
                         }
                     }
                 }
@@ -346,7 +340,7 @@ impl ApplicationHandler for App {
                 };
                 if let Some(mask) = mask {
                     let mut input = self.input.lock().unwrap();
-                    
+
                     if let HostInput::Wii { wiimote_buttons, .. } = &mut *input {
                         let next = if pressed {
                             *wiimote_buttons | mask

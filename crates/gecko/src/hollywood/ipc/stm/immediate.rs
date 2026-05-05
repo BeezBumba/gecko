@@ -18,6 +18,7 @@ impl IosDevice for Immediate {
             IOCTL_VIDIMMING => 0,
             _ => {
                 tracing::warn!(
+                    device = &ctx.device_path,
                     cmd = format!("{cmd:#010X}"),
                     in_buf = format!("{:02X?}", ctx.mmio.phys_slice(in_ptr, in_len as usize)),
                     in_len,

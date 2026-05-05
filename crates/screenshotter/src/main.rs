@@ -219,13 +219,13 @@ fn run_one(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::Tex
 
     let mut input = HostInput::gc_connected();
     gamecube.apply_host_input(&input);
-    
+
     gamecube.render_sink = Box::new(SyncSink {
         gx: gx.clone(),
         device: device.clone(),
         queue: queue.clone(),
     });
-    
+
     gamecube.insert_dvd(image);
 
     let framerate = match gamecube.vi.dcr.video_format().refresh_rate() {

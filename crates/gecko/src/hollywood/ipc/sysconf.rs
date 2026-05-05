@@ -50,7 +50,7 @@ impl IosDevice for SysConf {
             .phys_slice_mut(out_ptr, n)
             .copy_from_slice(&self.blob[start..start + n]);
         self.pos += n as u64;
-        
+
         n as i32
     }
 
@@ -66,7 +66,7 @@ impl IosDevice for SysConf {
             SEEK_END => self.blob.len() as i64 + offset as i64,
             _ => return IPC_EINVAL,
         };
-        
+
         if new_pos < 0 || new_pos > self.blob.len() as i64 {
             return IPC_EINVAL;
         }
@@ -91,6 +91,7 @@ impl IosDevice for SysConf {
         }
 
         tracing::warn!(
+            device = &ctx.device_path,
             cmd = format!("{cmd:#010X}"),
             out_buf = format!("{out_ptr:#010X}"),
             "SysConf: unimplemented ioctl"

@@ -120,7 +120,7 @@ impl Bluetooth {
                 ctx.mmio
                     .phys_slice_mut(buf_ptr, delivered)
                     .copy_from_slice(&packet[..delivered]);
-                
+
                 tracing::debug!(
                     len = delivered,
                     bytes = format!("{:02X?}", &packet[..delivered]),
