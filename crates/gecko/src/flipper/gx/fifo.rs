@@ -6,18 +6,6 @@ use crate::mmio::Mmio;
 use crate::system::SystemId;
 
 impl GraphicsProcessor {
-    pub fn push_u8(&mut self, val: u8) {
-        self.fifo.push(val);
-    }
-
-    pub fn push_u16(&mut self, val: u16) {
-        self.fifo.extend_from_slice(&val.to_be_bytes());
-    }
-
-    pub fn push_u32(&mut self, val: u32) {
-        self.fifo.extend_from_slice(&val.to_be_bytes());
-    }
-
     /// Streaming GP FIFO command processor: parses and dispatches each
     /// command inline so state writes (CP/XF/BP) take effect before the
     /// next command's parse decisions read them.

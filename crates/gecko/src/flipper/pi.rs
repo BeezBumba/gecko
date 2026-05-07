@@ -44,13 +44,6 @@ impl ProcessorInterface {
         }
     }
 
-    pub fn advance_fifo_wptr(&mut self, nbytes: u32) {
-        self.fifo_wptr = self.fifo_wptr.wrapping_add(nbytes);
-        if self.fifo_end != 0 && self.fifo_wptr >= self.fifo_end {
-            self.fifo_wptr = self.fifo_base;
-        }
-    }
-
     pub fn assert_interrupt(&mut self, flag: InterruptFlag) {
         let raw = self.intsr.raw() | (flag as u32);
         self.intsr = regs::InterruptCause::from_raw(raw);

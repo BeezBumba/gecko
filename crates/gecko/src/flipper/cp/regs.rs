@@ -26,13 +26,11 @@ crate::mmio_reg!(CpStatus: u16 @ 0xCC000000);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for CpStatus {
     fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.cp.refresh_status();
         sys.cp.status
     }
 
-    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
-        sys.cp.status = self;
-        cp::refresh_interrupts(sys);
-    }
+    fn write(self, _sys: &mut System<SYSTEM>, _: WriteMask) {}
 }
 
 // 0xCC000002  2  R/W  CP_CTRL (CP Control Register)
@@ -68,6 +66,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for CpControl {
     fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         sys.cp.control = self;
         cp::refresh_interrupts(sys);
+        cp::pump_fifo(sys);
     }
 }
 
@@ -97,11 +96,11 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for CpClear {
         if self.clear_underflow() {
             sys.cp.status = sys.cp.status.with_fifo_underflow(false);
         }
-        cp::refresh_interrupts(sys);
+        cp::ack_breakpoint(sys);
     }
 }
 
-// 0xCC000020..=0xCC00003B: FIFO pointer registers. All plain 16 bit storage.
+// 0xCC000020..=0xCC00003F: FIFO pointer registers. All plain 16 bit storage.
 
 #[chapa::bitfield(u16, order = lsb0)]
 #[derive(Copy, Clone, Debug)]
@@ -186,3 +185,37 @@ crate::mmio_default_access!(FifoReadPtrLo => System.cp.fifo_read_ptr_lo);
 pub struct FifoReadPtrHi {}
 crate::mmio_reg!(FifoReadPtrHi: u16 @ 0xCC00003A);
 crate::mmio_default_access!(FifoReadPtrHi => System.cp.fifo_read_ptr_hi);
+
+#[chapa::bitfield(u16, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct FifoBpLo {}
+crate::mmio_reg!(FifoBpLo: u16 @ 0xCC00003C);
+
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FifoBpLo {
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.cp.fifo_bp_lo
+    }
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.cp.fifo_bp_lo = self;
+        if sys.cp.fifo_bp() != sys.cp.fifo_read_ptr() {
+            cp::ack_breakpoint(sys);
+        }
+    }
+}
+
+#[chapa::bitfield(u16, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct FifoBpHi {}
+crate::mmio_reg!(FifoBpHi: u16 @ 0xCC00003E);
+
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FifoBpHi {
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.cp.fifo_bp_hi
+    }
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.cp.fifo_bp_hi = self;
+        if sys.cp.fifo_bp() != sys.cp.fifo_read_ptr() {
+            cp::ack_breakpoint(sys);
+        }
+    }
+}
