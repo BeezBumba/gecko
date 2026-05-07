@@ -4193,7 +4193,7 @@ pub(crate) fn emit_logical_xform<const SYSTEM: SystemId>(
 ) -> Value {
     let s = gpr_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
     let b = gpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-    
+
     let val = match op {
         LogicalOp::And => builder.ins().band(s, b),
         LogicalOp::Or => builder.ins().bor(s, b),

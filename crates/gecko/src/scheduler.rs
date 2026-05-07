@@ -141,10 +141,6 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
             self::vsync_handler::<SYSTEM>,
         );
         s.schedule_at(
-            self::cpu_cycles_per_dsp_tick(SYSTEM) * self::DSP_BATCH_SIZE,
-            self::dsp_batch_handler::<SYSTEM>,
-        );
-        s.schedule_at(
             crate::gekko::dec::cycles_until_underflow(u32::MAX),
             crate::gekko::dec::underflow_handler::<SYSTEM>,
         );
@@ -160,11 +156,15 @@ pub fn vsync_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         .schedule_in(rate.cycles_per_frame(SYSTEM), self::vsync_handler::<SYSTEM>);
 }
 
-/// Reschedules itself every DSP batch.
+#[inline(always)]
+pub const fn dsp_batch_interval(system: SystemId) -> u64 {
+    self::cpu_cycles_per_dsp_tick(system) * self::DSP_BATCH_SIZE
+}
+
 pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.execute_dsp_batch();
-    sys.scheduler.schedule_in(
-        self::cpu_cycles_per_dsp_tick(SYSTEM) * self::DSP_BATCH_SIZE,
-        self::dsp_batch_handler::<SYSTEM>,
-    );
+    if !sys.dsp.csr.halt() && !sys.dsp.csr.reset() {
+        sys.scheduler
+            .schedule_in(self::dsp_batch_interval(SYSTEM), self::dsp_batch_handler::<SYSTEM>);
+    }
 }

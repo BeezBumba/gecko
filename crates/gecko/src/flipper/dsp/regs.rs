@@ -1,5 +1,6 @@
 use crate::flipper::{ai, dsp};
 use crate::mmio::traits::{MmioAccess, WriteMask};
+use crate::scheduler;
 use crate::system::{System, SystemId};
 use chapa::BitEnum;
 
@@ -72,6 +73,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
     fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         tracing::trace!("CSR write: {:016b} (prev: {:016b})", self.raw(), sys.dsp.csr.raw());
 
+        let was_active = !sys.dsp.csr.halt() && !sys.dsp.csr.reset();
         let mut csr = sys.dsp.csr;
 
         if self.ai_interrupt() {
@@ -105,6 +107,16 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
         csr = csr.with_reset(false);
 
         sys.dsp.csr = csr;
+
+        let now_active = !sys.dsp.csr.halt() && !sys.dsp.csr.reset();
+        match (was_active, now_active) {
+            (false, true) => sys.scheduler.schedule_in(
+                scheduler::dsp_batch_interval(SYSTEM),
+                scheduler::dsp_batch_handler::<SYSTEM>,
+            ),
+            (true, false) => sys.scheduler.cancel(scheduler::dsp_batch_handler::<SYSTEM>),
+            _ => {}
+        }
 
         dsp::refresh_interrupts(sys);
     }
