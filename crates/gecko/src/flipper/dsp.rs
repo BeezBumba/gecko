@@ -5,6 +5,8 @@ pub mod core;
 #[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
 pub mod instruction;
 pub mod interpreter;
+#[cfg(feature = "jit")]
+pub mod jit;
 pub mod regs;
 
 #[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
@@ -21,23 +23,63 @@ use crate::flipper::dsp::instruction::Instruction;
 use crate::mmio::Mmio;
 use crate::system::{System, SystemId};
 
+#[cfg(feature = "jit")]
+pub const DSP_JIT_CHAIN_BUDGET: u32 = 16;
+
+#[cfg(feature = "jit")]
+pub trait DspJitHandle {
+    fn run_block(&mut self, ctx_ptr: *mut ::core::ffi::c_void, iram: &[u8], irom: &[u8], start_pc: u16) -> u16;
+    fn record_chain_depth(&mut self, depth: u32);
+    fn flush(&mut self);
+    fn dump_hot_blocks(&self, top_k: usize);
+    fn dump_top_clif(&mut self, top_k: usize, iram: &[u8], irom: &[u8]);
+}
+
+#[cfg(feature = "jit")]
+impl<const SYSTEM: SystemId> DspJitHandle for jit::JitEngine<SYSTEM> {
+    fn run_block(&mut self, ctx_ptr: *mut ::core::ffi::c_void, iram: &[u8], irom: &[u8], start_pc: u16) -> u16 {
+        let entry = self.lookup_or_compile(iram, irom, start_pc);
+        Self::run_block(self, ctx_ptr, entry)
+    }
+    fn record_chain_depth(&mut self, depth: u32) {
+        Self::record_chain_depth(self, depth);
+    }
+    fn flush(&mut self) {
+        Self::flush(self);
+    }
+    fn dump_hot_blocks(&self, _top_k: usize) {
+        #[cfg(feature = "jit-stats")]
+        Self::dump_hot_blocks(self, _top_k);
+        #[cfg(not(feature = "jit-stats"))]
+        eprintln!("[dsp-jit-stats] feature `jit-stats` is not enabled — rebuild with `--features jit-stats`");
+    }
+    fn dump_top_clif(&mut self, _top_k: usize, _iram: &[u8], _irom: &[u8]) {
+        #[cfg(feature = "jit-stats")]
+        {
+            let mut pcs: Vec<(u16, u64)> = self.hits.iter().map(|(&pc, &n)| (pc, n)).collect();
+            pcs.sort_by(|a, b| b.1.cmp(&a.1));
+            for (pc, hits) in pcs.into_iter().take(_top_k) {
+                eprintln!("\n[dsp-jit-stats] hits={hits} pc={pc:04X}");
+                self.dump_block_clif(pc, _iram, _irom);
+            }
+        }
+        #[cfg(not(feature = "jit-stats"))]
+        eprintln!("[dsp-jit-stats] feature `jit-stats` is not enabled — rebuild with `--features jit-stats`");
+    }
+}
+
 pub struct Dsp {
-    // Registers
     pub registers: core::Registers,
 
-    // IMEM = IRAM + IROM
-    pub iram: Box<[u8; 0x2000]>, // 0x0000 - 0x0FFF
-    pub irom: Box<[u8; 0x2000]>, // 0x8000 - 0x8FFF
+    pub iram: Box<[u8; 0x2000]>,
+    pub irom: Box<[u8; 0x2000]>,
 
-    // DMEM = DRAM + COEF + IFX
-    pub dram: Box<[u8; 0x2000]>, // 0x0000 - 0x0FFF (0x1000 words)
-    pub coef: Box<[u8; 0x2000]>, // 0x1000 - 0x1FFF (0x1000 words)
-    pub ifx: Box<[u8; 0x200]>,   // 0xFF00 - 0xFFFF (0x100 words)
+    pub dram: Box<[u8; 0x2000]>,
+    pub coef: Box<[u8; 0x2000]>,
+    pub ifx: Box<[u8; 0x200]>,
 
-    // Auxiliary RAM (16 MB)
     pub aram: Box<[u8; 16 * 1024 * 1024]>,
 
-    // I/O Registers
     pub csr: regs::ControlStatus,
     pub mailbox_to_dsp_hi: regs::MailboxToDspHi,
     pub mailbox_to_dsp_lo: regs::MailboxToDspLo,
@@ -52,15 +94,24 @@ pub struct Dsp {
     pub audio_dma_start_addr: regs::AudioDmaStartAddr,
     pub audio_dma_control: regs::AudioDmaControl,
 
-    // IFX Registers
     pub dma_control: core::regs::DspDmaControl,
     pub dma_length: u16,
     pub dma_dsp_addr: u16,
     pub dma_ram_addr_hi: u16,
     pub dma_ram_addr_lo: u16,
 
-    // Audio sample accelerator (DSP IFX 0xFFD0..0xFFDF).
     pub accelerator: accelerator::Accelerator,
+
+    #[cfg(feature = "jit")]
+    pub jit: Option<Box<dyn DspJitHandle + Send>>,
+
+    #[cfg(feature = "jit")]
+    pub chain_budget: u32,
+
+    #[cfg(feature = "jit")]
+    pub instr_count: u32,
+
+    pub poll_cache: std::cell::Cell<Option<(u16, bool, bool)>>,
 }
 
 impl Dsp {
@@ -99,7 +150,97 @@ impl Dsp {
             dma_ram_addr_hi: 0,
             dma_ram_addr_lo: 0,
             accelerator: accelerator::Accelerator::new(),
+
+            #[cfg(feature = "jit")]
+            jit: None,
+            #[cfg(feature = "jit")]
+            chain_budget: 0,
+            #[cfg(feature = "jit")]
+            instr_count: 0,
+            poll_cache: std::cell::Cell::new(None),
         }
+    }
+
+    #[inline]
+    pub fn is_waiting_for_cpu_mail(&self) -> bool {
+        let pc = self.registers.pc;
+        if let Some((cached_pc, cpu, _dsp)) = self.poll_cache.get() {
+            if cached_pc == pc {
+                return cpu;
+            }
+        }
+
+        let cpu = (0i16..=0)
+            .chain(std::iter::once(-1))
+            .chain(std::iter::once(-3))
+            .any(|offset| self.matches_cpu_mail_wait(offset));
+        let dsp = (0i16..=0)
+            .chain(std::iter::once(-1))
+            .chain(std::iter::once(-3))
+            .any(|offset| self.matches_dsp_mail_wait(offset));
+
+        self.poll_cache.set(Some((pc, cpu, dsp)));
+
+        cpu
+    }
+
+    fn matches_cpu_mail_wait(&self, offset: i16) -> bool {
+        let pc = self.registers.pc;
+        let start = pc.wrapping_add_signed(offset);
+        let words = [
+            self.read_imem(start),
+            self.read_imem(start.wrapping_add(1)),
+            self.read_imem(start.wrapping_add(2)),
+            self.read_imem(start.wrapping_add(3)),
+            self.read_imem(start.wrapping_add(4)),
+        ];
+
+        let pattern_a = [0x26FE, 0x02C0, 0x8000, 0x029C, start];
+        let pattern_b = [0x27FE, 0x03C0, 0x8000, 0x029C, start];
+        let pattern_c = [0x26FE, 0x02A0, 0x8000, 0x029D, start];
+        let pattern_d = [0x27FE, 0x03A0, 0x8000, 0x029D, start];
+        words == pattern_a || words == pattern_b || words == pattern_c || words == pattern_d
+    }
+
+    #[inline]
+    pub fn is_waiting_for_dsp_mail(&self) -> bool {
+        let pc = self.registers.pc;
+        if let Some((cached_pc, _cpu, dsp)) = self.poll_cache.get() {
+            if cached_pc == pc {
+                return dsp;
+            }
+        }
+
+        let cpu = (0i16..=0)
+            .chain(std::iter::once(-1))
+            .chain(std::iter::once(-3))
+            .any(|offset| self.matches_cpu_mail_wait(offset));
+        let dsp = (0i16..=0)
+            .chain(std::iter::once(-1))
+            .chain(std::iter::once(-3))
+            .any(|offset| self.matches_dsp_mail_wait(offset));
+
+        self.poll_cache.set(Some((pc, cpu, dsp)));
+
+        dsp
+    }
+
+    fn matches_dsp_mail_wait(&self, offset: i16) -> bool {
+        let pc = self.registers.pc;
+        let start = pc.wrapping_add_signed(offset);
+        let words = [
+            self.read_imem(start),
+            self.read_imem(start.wrapping_add(1)),
+            self.read_imem(start.wrapping_add(2)),
+            self.read_imem(start.wrapping_add(3)),
+            self.read_imem(start.wrapping_add(4)),
+        ];
+
+        let pattern_a = [0x26FC, 0x02C0, 0x8000, 0x029D, start];
+        let pattern_b = [0x27FC, 0x03C0, 0x8000, 0x029D, start];
+        let pattern_c = [0x26FC, 0x02A0, 0x8000, 0x029C, start];
+        let pattern_d = [0x27FC, 0x03A0, 0x8000, 0x029C, start];
+        words == pattern_a || words == pattern_b || words == pattern_c || words == pattern_d
     }
 
     pub fn process_aram_dma<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>) {
@@ -148,11 +289,18 @@ impl Dsp {
 
         self.csr.set_dma_status(false);
         self.csr.set_dsp_interrupt(true);
+
+        self.poll_cache.set(None);
+
+        #[cfg(feature = "jit")]
+        if let Some(jit) = self.jit.as_mut() {
+            jit.flush();
+        }
     }
 
     pub fn process_dsp_dma<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>) {
         let ram_addr = ((self.dma_ram_addr_hi as u32) << 16) | self.dma_ram_addr_lo as u32;
-        let dsp_addr = (self.dma_dsp_addr as usize) * 2; // word address -> byte offset
+        let dsp_addr = (self.dma_dsp_addr as usize) * 2;
         let len = self.dma_length as usize;
 
         tracing::debug!(
@@ -169,7 +317,9 @@ impl Dsp {
             core::regs::DspMemoryType::Instruction => &mut *self.iram,
         };
 
-        match self.dma_control.direction() {
+        let mem_type = self.dma_control.memory_type();
+        let direction = self.dma_control.direction();
+        match direction {
             core::regs::DspDmaDirection::MainToDsp => {
                 let src = mmio.virt_slice(ram_addr, len);
                 memory[dsp_addr..dsp_addr + len].copy_from_slice(&src);
@@ -181,20 +331,31 @@ impl Dsp {
             }
         }
 
+        if matches!(
+            (mem_type, direction),
+            (
+                core::regs::DspMemoryType::Instruction,
+                core::regs::DspDmaDirection::MainToDsp
+            )
+        ) {
+            self.poll_cache.set(None);
+            #[cfg(feature = "jit")]
+            if let Some(jit) = self.jit.as_mut() {
+                jit.flush();
+            }
+        }
+
         self.dma_length = 0;
     }
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
-    /// Execute a single DSP instruction. Returns `false` if the DSP is halted or
-    /// in reset (no instruction was executed).
     #[inline(always)]
     pub fn step_dsp_instruction(&mut self) -> bool {
         if self.dsp.csr.reset() || self.dsp.csr.halt() {
             return false;
         }
 
-        // Check for external interrupt (CPU->DSP mailbox interrupt via CSR bit 1)
         if self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable() {
             self.dsp.csr = self.dsp.csr.with_pi_interrupt(false);
             self.dsp.registers.call_stack.push(self.dsp.registers.pc);
@@ -223,7 +384,6 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self::dispatch_gc_dsp_ext(self, instruction::GcDspExt(ext));
         }
 
-        // Check if we've reached the end of a loop.
         let at_loop_end =
             !self.dsp.registers.loop_addr.is_empty() && self.dsp.registers.nia == self.dsp.registers.loop_addr.top();
         if at_loop_end {
@@ -242,7 +402,66 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         true
     }
 
-    /// Execute a batch of DSP instructions (scheduler hot path).
+    #[cfg(feature = "jit")]
+    pub fn execute_dsp_batch(&mut self) {
+        if self.dsp.csr.reset() || self.dsp.csr.halt() {
+            self::refresh_interrupts(self);
+            return;
+        }
+
+        if self.dsp.jit.is_none() {
+            self.dsp.jit = Some(Box::new(jit::JitEngine::<SYSTEM>::new()));
+        }
+
+        let mut budget = crate::scheduler::DSP_BATCH_SIZE as u64;
+        while budget > 0 {
+            let cpu_mail_quiet = !self.dsp.mailbox_to_dsp_hi.busy();
+            let dsp_mail_full = self.dsp.mailbox_to_cpu_hi.busy();
+
+            if (cpu_mail_quiet && self.dsp.is_waiting_for_cpu_mail())
+                || (dsp_mail_full && self.dsp.is_waiting_for_dsp_mail())
+            {
+                break;
+            }
+
+            if self.dsp.csr.reset() || self.dsp.csr.halt() {
+                break;
+            }
+
+            if self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable() {
+                self.dsp.csr = self.dsp.csr.with_pi_interrupt(false);
+                self.dsp.registers.call_stack.push(self.dsp.registers.pc);
+                self.dsp.registers.data_stack.push(self.dsp.registers.status.raw());
+                self.dsp.registers.status = self.dsp.registers.status.with_external_interrupt_enable(false);
+                self.dsp.registers.pc = 0x000E;
+            }
+
+            let start_pc = self.dsp.registers.pc;
+            self.dsp.chain_budget = DSP_JIT_CHAIN_BUDGET;
+            self.dsp.instr_count = 0;
+
+            let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
+            let iram_ptr = self.dsp.iram.as_ptr();
+            let irom_ptr = self.dsp.irom.as_ptr();
+            let iram_len = self.dsp.iram.len();
+            let irom_len = self.dsp.irom.len();
+            let iram = unsafe { ::core::slice::from_raw_parts(iram_ptr, iram_len) };
+            let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
+
+            let next_pc = self.dsp.jit.as_mut().unwrap().run_block(ctx_ptr, iram, irom, start_pc);
+            self.dsp.registers.pc = next_pc;
+
+            let consumed = (self.dsp.instr_count as u64).max(1);
+            budget = budget.saturating_sub(consumed);
+
+            let chain_depth = DSP_JIT_CHAIN_BUDGET - self.dsp.chain_budget;
+            self.dsp.jit.as_mut().unwrap().record_chain_depth(chain_depth);
+        }
+
+        self::refresh_interrupts(self);
+    }
+
+    #[cfg(not(feature = "jit"))]
     #[inline(always)]
     pub fn execute_dsp_batch(&mut self) {
         for _ in 0..crate::scheduler::DSP_BATCH_SIZE {
@@ -253,11 +472,71 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self::refresh_interrupts(self);
     }
 
-    /// Run the DSP synchronously up to `max_steps` instructions or until
-    /// the DSP-to-CPU mailbox is set busy (i.e. the DSP has answered the
-    /// command). Used by AID DMA path to make the CPUs mailbox writes
-    /// behave as if the DSP processed them immediately, so AX has time to
-    /// render and DMA the buffer before AID consumes it.
+    #[cfg(feature = "jit")]
+    pub fn drain_dsp_synchronous(&mut self, max_steps: u32) {
+        let already_busy = self.dsp.mailbox_to_cpu_hi.busy();
+
+        if self.dsp.csr.reset() || self.dsp.csr.halt() {
+            self::refresh_interrupts(self);
+            return;
+        }
+
+        if self.dsp.jit.is_none() {
+            self.dsp.jit = Some(Box::new(jit::JitEngine::<SYSTEM>::new()));
+        }
+
+        let mut budget = max_steps as u64;
+        while budget > 0 {
+            if self.dsp.csr.reset() || self.dsp.csr.halt() {
+                break;
+            }
+
+            if !already_busy && self.dsp.mailbox_to_cpu_hi.busy() {
+                break;
+            }
+
+            let cpu_mail_quiet = !self.dsp.mailbox_to_dsp_hi.busy();
+            let dsp_mail_full = self.dsp.mailbox_to_cpu_hi.busy();
+            if (cpu_mail_quiet && self.dsp.is_waiting_for_cpu_mail())
+                || (dsp_mail_full && self.dsp.is_waiting_for_dsp_mail())
+            {
+                break;
+            }
+
+            if self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable() {
+                self.dsp.csr = self.dsp.csr.with_pi_interrupt(false);
+                self.dsp.registers.call_stack.push(self.dsp.registers.pc);
+                self.dsp.registers.data_stack.push(self.dsp.registers.status.raw());
+                self.dsp.registers.status = self.dsp.registers.status.with_external_interrupt_enable(false);
+                self.dsp.registers.pc = 0x000E;
+            }
+
+            let start_pc = self.dsp.registers.pc;
+            self.dsp.chain_budget = DSP_JIT_CHAIN_BUDGET;
+            self.dsp.instr_count = 0;
+
+            let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
+            let iram_ptr = self.dsp.iram.as_ptr();
+            let irom_ptr = self.dsp.irom.as_ptr();
+            let iram_len = self.dsp.iram.len();
+            let irom_len = self.dsp.irom.len();
+            let iram = unsafe { ::core::slice::from_raw_parts(iram_ptr, iram_len) };
+            let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
+
+            let next_pc = self.dsp.jit.as_mut().unwrap().run_block(ctx_ptr, iram, irom, start_pc);
+            self.dsp.registers.pc = next_pc;
+
+            let consumed = (self.dsp.instr_count as u64).max(1);
+            budget = budget.saturating_sub(consumed);
+
+            let chain_depth = DSP_JIT_CHAIN_BUDGET - self.dsp.chain_budget;
+            self.dsp.jit.as_mut().unwrap().record_chain_depth(chain_depth);
+        }
+
+        self::refresh_interrupts(self);
+    }
+
+    #[cfg(not(feature = "jit"))]
     pub fn drain_dsp_synchronous(&mut self, max_steps: u32) {
         let already_busy = self.dsp.mailbox_to_cpu_hi.busy();
 
@@ -267,7 +546,6 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
 
             if !already_busy && self.dsp.mailbox_to_cpu_hi.busy() {
-                // DSP responded; assume AX render is complete.
                 break;
             }
         }
@@ -298,7 +576,6 @@ crate::mmio_device_dispatch! {
 }
 
 impl Dsp {
-    /// Read a 16-bit word from instruction memory (IRAM 0x0000-0x0FFF, IROM 0x8000-0x8FFF).
     #[inline(always)]
     pub fn read_imem(&self, addr: u16) -> u16 {
         match addr {
@@ -308,14 +585,12 @@ impl Dsp {
         }
     }
 
-    /// Load a binary file into IROM.
     pub fn load_irom(&mut self, data: &[u8]) {
         let len = data.len().min(self.irom.len());
         self.irom[..len].copy_from_slice(&data[..len]);
         tracing::info!(size = len, "loaded DSP IROM");
     }
 
-    /// Load a binary file into the coefficient ROM (DMEM 0x1000..0x1FFF).
     pub fn load_coef(&mut self, data: &[u8]) {
         let len = data.len().min(self.coef.len());
         self.coef[..len].copy_from_slice(&data[..len]);
@@ -425,7 +700,7 @@ fn write_ifx<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, addr: u16, value:
         }
         // CMBH/CMBL are read-only from DSP side
         addr::IFX_CMBH | addr::IFX_CMBL => {}
-        // DSP DMA: writing DSBL triggers the transfer, run inline.
+
         addr::IFX_DSBL => {
             sys.dsp.dma_length = value;
             sys.dsp.process_dsp_dma(&mut sys.mmio);
