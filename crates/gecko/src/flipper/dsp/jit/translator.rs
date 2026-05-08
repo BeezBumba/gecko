@@ -286,13 +286,6 @@ pub fn block_signature(pointer_type: cranelift_codegen::ir::Type) -> Signature {
     sig
 }
 
-pub fn step_thunk_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I32));
-    sig
-}
-
 pub fn void_thunk_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
     let mut sig = Signature::new(host_cc);
     sig.params.push(AbiParam::new(pointer_type));
@@ -360,14 +353,6 @@ pub fn dynamic_shift_signature(pointer_type: cranelift_codegen::ir::Type, host_c
     let mut sig = Signature::new(host_cc);
     sig.params.push(AbiParam::new(pointer_type));
     sig.params.push(AbiParam::new(types::I32));
-    sig.params.push(AbiParam::new(types::I32));
-    sig.params.push(AbiParam::new(types::I32));
-    sig
-}
-
-pub fn kind_dispatch_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
     sig.params.push(AbiParam::new(types::I32));
     sig.params.push(AbiParam::new(types::I32));
     sig

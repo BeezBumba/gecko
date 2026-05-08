@@ -31,7 +31,6 @@ pub struct DspBlockLookupSlot {
 }
 
 pub const DSP_BLOCK_LOOKUP_TABLE_SIZE: usize = 8192;
-pub const DSP_BLOCK_LOOKUP_TABLE_MASK: u32 = (DSP_BLOCK_LOOKUP_TABLE_SIZE as u32) - 1;
 
 const CHAIN_DEPTH_HISTOGRAM_LEN: usize = super::DSP_JIT_CHAIN_BUDGET as usize + 2;
 

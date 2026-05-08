@@ -51,7 +51,7 @@ impl<const SYSTEM: SystemId> DspJitHandle for jit::JitEngine<SYSTEM> {
         #[cfg(feature = "jit-stats")]
         Self::dump_hot_blocks(self, _top_k);
         #[cfg(not(feature = "jit-stats"))]
-        eprintln!("[dsp-jit-stats] feature `jit-stats` is not enabled — rebuild with `--features jit-stats`");
+        eprintln!("[dsp-jit-stats] feature `jit-stats` is not enabled. Rebuild with `--features jit-stats`.");
     }
     fn dump_top_clif(&mut self, _top_k: usize, _iram: &[u8], _irom: &[u8]) {
         #[cfg(feature = "jit-stats")]
@@ -64,7 +64,7 @@ impl<const SYSTEM: SystemId> DspJitHandle for jit::JitEngine<SYSTEM> {
             }
         }
         #[cfg(not(feature = "jit-stats"))]
-        eprintln!("[dsp-jit-stats] feature `jit-stats` is not enabled — rebuild with `--features jit-stats`");
+        eprintln!("[dsp-jit-stats] feature `jit-stats` is not enabled. Rebuild with `--features jit-stats`.");
     }
 }
 
@@ -163,37 +163,33 @@ impl Dsp {
 
     #[inline]
     pub fn is_waiting_for_cpu_mail(&self) -> bool {
-        let pc = self.registers.pc;
-        if let Some((cached_pc, cpu, _dsp)) = self.poll_cache.get() {
-            if cached_pc == pc {
-                return cpu;
-            }
-        }
-
-        let cpu = (0i16..=0)
-            .chain(std::iter::once(-1))
-            .chain(std::iter::once(-3))
-            .any(|offset| self.matches_cpu_mail_wait(offset));
-        let dsp = (0i16..=0)
-            .chain(std::iter::once(-1))
-            .chain(std::iter::once(-3))
-            .any(|offset| self.matches_dsp_mail_wait(offset));
-
-        self.poll_cache.set(Some((pc, cpu, dsp)));
-
+        let (cpu, _dsp) = self.poll_cache_for_pc(self.registers.pc);
         cpu
     }
 
+    #[inline]
+    pub fn is_waiting_for_dsp_mail(&self) -> bool {
+        let (_cpu, dsp) = self.poll_cache_for_pc(self.registers.pc);
+        dsp
+    }
+
+    fn poll_cache_for_pc(&self, pc: u16) -> (bool, bool) {
+        if let Some((cached_pc, cpu, dsp)) = self.poll_cache.get() {
+            if cached_pc == pc {
+                return (cpu, dsp);
+            }
+        }
+
+        const OFFSETS: [i16; 3] = [0, -1, -3];
+        let cpu = OFFSETS.iter().any(|&o| self.matches_cpu_mail_wait(o));
+        let dsp = OFFSETS.iter().any(|&o| self.matches_dsp_mail_wait(o));
+        self.poll_cache.set(Some((pc, cpu, dsp)));
+        (cpu, dsp)
+    }
+
     fn matches_cpu_mail_wait(&self, offset: i16) -> bool {
-        let pc = self.registers.pc;
-        let start = pc.wrapping_add_signed(offset);
-        let words = [
-            self.read_imem(start),
-            self.read_imem(start.wrapping_add(1)),
-            self.read_imem(start.wrapping_add(2)),
-            self.read_imem(start.wrapping_add(3)),
-            self.read_imem(start.wrapping_add(4)),
-        ];
+        let start = self.registers.pc.wrapping_add_signed(offset);
+        let words = self.read_imem_window::<5>(start);
 
         let pattern_a = [0x26FE, 0x02C0, 0x8000, 0x029C, start];
         let pattern_b = [0x27FE, 0x03C0, 0x8000, 0x029C, start];
@@ -202,45 +198,23 @@ impl Dsp {
         words == pattern_a || words == pattern_b || words == pattern_c || words == pattern_d
     }
 
-    #[inline]
-    pub fn is_waiting_for_dsp_mail(&self) -> bool {
-        let pc = self.registers.pc;
-        if let Some((cached_pc, _cpu, dsp)) = self.poll_cache.get() {
-            if cached_pc == pc {
-                return dsp;
-            }
-        }
-
-        let cpu = (0i16..=0)
-            .chain(std::iter::once(-1))
-            .chain(std::iter::once(-3))
-            .any(|offset| self.matches_cpu_mail_wait(offset));
-        let dsp = (0i16..=0)
-            .chain(std::iter::once(-1))
-            .chain(std::iter::once(-3))
-            .any(|offset| self.matches_dsp_mail_wait(offset));
-
-        self.poll_cache.set(Some((pc, cpu, dsp)));
-
-        dsp
-    }
-
     fn matches_dsp_mail_wait(&self, offset: i16) -> bool {
-        let pc = self.registers.pc;
-        let start = pc.wrapping_add_signed(offset);
-        let words = [
-            self.read_imem(start),
-            self.read_imem(start.wrapping_add(1)),
-            self.read_imem(start.wrapping_add(2)),
-            self.read_imem(start.wrapping_add(3)),
-            self.read_imem(start.wrapping_add(4)),
-        ];
+        let start = self.registers.pc.wrapping_add_signed(offset);
+        let words = self.read_imem_window::<5>(start);
 
         let pattern_a = [0x26FC, 0x02C0, 0x8000, 0x029D, start];
         let pattern_b = [0x27FC, 0x03C0, 0x8000, 0x029D, start];
         let pattern_c = [0x26FC, 0x02A0, 0x8000, 0x029C, start];
         let pattern_d = [0x27FC, 0x03A0, 0x8000, 0x029C, start];
         words == pattern_a || words == pattern_b || words == pattern_c || words == pattern_d
+    }
+
+    fn read_imem_window<const N: usize>(&self, start: u16) -> [u16; N] {
+        let mut out = [0u16; N];
+        for i in 0..N {
+            out[i] = self.read_imem(start.wrapping_add(i as u16));
+        }
+        out
     }
 
     pub fn process_aram_dma<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>) {
@@ -413,6 +387,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self.dsp.jit = Some(Box::new(jit::JitEngine::<SYSTEM>::new()));
         }
 
+        let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
+        let iram_ptr = self.dsp.iram.as_ptr();
+        let irom_ptr = self.dsp.irom.as_ptr();
+        let iram_len = self.dsp.iram.len();
+        let irom_len = self.dsp.irom.len();
+        let iram = unsafe { ::core::slice::from_raw_parts(iram_ptr, iram_len) };
+        let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
+
         let mut budget = crate::scheduler::DSP_BATCH_SIZE as u64;
         while budget > 0 {
             let cpu_mail_quiet = !self.dsp.mailbox_to_dsp_hi.busy();
@@ -439,14 +421,6 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             let start_pc = self.dsp.registers.pc;
             self.dsp.chain_budget = DSP_JIT_CHAIN_BUDGET;
             self.dsp.instr_count = 0;
-
-            let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
-            let iram_ptr = self.dsp.iram.as_ptr();
-            let irom_ptr = self.dsp.irom.as_ptr();
-            let iram_len = self.dsp.iram.len();
-            let irom_len = self.dsp.irom.len();
-            let iram = unsafe { ::core::slice::from_raw_parts(iram_ptr, iram_len) };
-            let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
 
             let next_pc = self.dsp.jit.as_mut().unwrap().run_block(ctx_ptr, iram, irom, start_pc);
             self.dsp.registers.pc = next_pc;
@@ -485,6 +459,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self.dsp.jit = Some(Box::new(jit::JitEngine::<SYSTEM>::new()));
         }
 
+        let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
+        let iram_ptr = self.dsp.iram.as_ptr();
+        let irom_ptr = self.dsp.irom.as_ptr();
+        let iram_len = self.dsp.iram.len();
+        let irom_len = self.dsp.irom.len();
+        let iram = unsafe { ::core::slice::from_raw_parts(iram_ptr, iram_len) };
+        let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
+
         let mut budget = max_steps as u64;
         while budget > 0 {
             if self.dsp.csr.reset() || self.dsp.csr.halt() {
@@ -514,14 +496,6 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             let start_pc = self.dsp.registers.pc;
             self.dsp.chain_budget = DSP_JIT_CHAIN_BUDGET;
             self.dsp.instr_count = 0;
-
-            let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
-            let iram_ptr = self.dsp.iram.as_ptr();
-            let irom_ptr = self.dsp.irom.as_ptr();
-            let iram_len = self.dsp.iram.len();
-            let irom_len = self.dsp.irom.len();
-            let iram = unsafe { ::core::slice::from_raw_parts(iram_ptr, iram_len) };
-            let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
 
             let next_pc = self.dsp.jit.as_mut().unwrap().run_block(ctx_ptr, iram, irom, start_pc);
             self.dsp.registers.pc = next_pc;

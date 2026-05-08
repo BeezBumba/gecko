@@ -100,22 +100,13 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
         self.store_u16(val, off);
     }
 
-    #[allow(dead_code)]
     const SR_BIT_C: u8 = 0;
-    #[allow(dead_code)]
     const SR_BIT_O: u8 = 1;
-    #[allow(dead_code)]
     const SR_BIT_Z: u8 = 2;
-    #[allow(dead_code)]
     const SR_BIT_S: u8 = 3;
-    #[allow(dead_code)]
     const SR_BIT_AS32: u8 = 4;
-    #[allow(dead_code)]
     const SR_BIT_TB: u8 = 5;
-    #[allow(dead_code)]
     const SR_BIT_LZ: u8 = 6;
-    #[allow(dead_code)]
-    const SR_BIT_OS: u8 = 7;
 
     fn load_sr(&mut self) -> Value {
         let off = abi::dsp_status_offset() as i32;
