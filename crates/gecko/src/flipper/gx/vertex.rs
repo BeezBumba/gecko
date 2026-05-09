@@ -75,7 +75,7 @@ impl GraphicsProcessor {
 
         self.vertices_scratch.clear();
         self.vertices_scratch.reserve(vertex_count);
-
+        
         let mut cur = Cursor::new(&data);
 
         let view = mmio.ram_view();
@@ -637,7 +637,7 @@ fn decode_texcoord(data: &[u8], fmt: ComponentFormat, shift: u8, cnt: TexCount) 
 #[inline(always)]
 fn decode_components<const N: usize>(data: &[u8], num: usize, fmt: ComponentFormat, recip: f32) -> [f32; N] {
     let mut result = [0.0f32; N];
-
+    
     match fmt {
         ComponentFormat::U8 => {
             for i in 0..num {
@@ -724,3 +724,4 @@ fn decode_color(data: &[u8], fmt: regs::ColorFormat, cnt: regs::ColorCount) -> [
         }
     }
 }
+

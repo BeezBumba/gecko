@@ -247,7 +247,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         if !self.heatmap.enabled || self.heatmap.interval_frames == 0 {
             return;
         }
-
+        
         if self.vsync_count % self.heatmap.interval_frames as u64 != 0 {
             return;
         }
