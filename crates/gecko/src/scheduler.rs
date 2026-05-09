@@ -44,6 +44,8 @@ pub struct Scheduler<const SYSTEM: SystemId> {
     pub(crate) next_deadline: u64,
     pub(crate) timebase_offset: i64,
     events: VecDeque<ScheduledEvent<SYSTEM>>,
+    #[cfg(feature = "jit-stats")]
+    pub(crate) event_fire_counts: rustc_hash::FxHashMap<usize, u64>,
 }
 
 impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
@@ -53,6 +55,8 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
             next_deadline: u64::MAX,
             timebase_offset: 0,
             events: VecDeque::with_capacity(8),
+            #[cfg(feature = "jit-stats")]
+            event_fire_counts: rustc_hash::FxHashMap::default(),
         }
     }
 
@@ -108,6 +112,10 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
         if self.cycles >= front.deadline {
             let f = self.events.pop_front().unwrap().f;
             self.refresh_deadline();
+            #[cfg(feature = "jit-stats")]
+            {
+                *self.event_fire_counts.entry(f as *const () as usize).or_insert(0) += 1;
+            }
             Some(f)
         } else {
             None

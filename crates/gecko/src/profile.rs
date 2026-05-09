@@ -36,6 +36,19 @@ pub fn ensure_dir(path: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(path)
 }
 
+#[cfg(any(feature = "profile", feature = "jit-stats"))]
+pub fn resolve_symbol(addr: usize) -> Option<String> {
+    let mut name: Option<String> = None;
+    backtrace::resolve(addr as *mut std::ffi::c_void, |sym| {
+        if name.is_none() {
+            if let Some(n) = sym.name() {
+                name = Some(format!("{:#}", n));
+            }
+        }
+    });
+    name
+}
+
 pub fn write_file_atomic(
     path: &Path,
     write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
@@ -199,16 +212,7 @@ mod win_sampler {
             let mut resolved: FxHashMap<String, u64> = FxHashMap::default();
             let mut unresolved: u64 = 0;
             for (ip, n) in &counts {
-                let mut name: Option<String> = None;
-                backtrace::resolve(*ip as *mut std::ffi::c_void, |sym| {
-                    if name.is_none() {
-                        if let Some(n) = sym.name() {
-                            name = Some(format!("{:#}", n));
-                        }
-                    }
-                });
-
-                match name {
+                match super::resolve_symbol(*ip as usize) {
                     Some(n_str) => *resolved.entry(n_str).or_insert(0) += n,
                     None => unresolved += n,
                 }

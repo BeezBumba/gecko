@@ -277,17 +277,45 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let dsp_suspends = crate::flipper::dsp::DSP_SUSPEND_COUNT.load(Ordering::Relaxed);
         let dsp_wakes = crate::flipper::dsp::DSP_WAKE_COUNT.load(Ordering::Relaxed);
 
+        let event_breakdown = self.event_breakdown_top_n(20);
+
         let path = self.heatmap.out_dir.join("idle-skip.txt");
         let result = crate::profile::write_file_atomic(&path, |f| {
             writeln!(
                 f,
                 "vsync_count={}\nppc_idle_calls={}\nppc_cycles_advanced={}\nppc_avg_advance={:.1}\ndsp_suspends={}\ndsp_wakes={}",
                 self.vsync_count, calls, cycles, avg, dsp_suspends, dsp_wakes
-            )
+            )?;
+
+            writeln!(f, "\n--- top scheduler events by fire count ---")?;
+
+            for (name, count) in &event_breakdown {
+                writeln!(f, "{:>10}  {}", count, name)?;
+            }
+
+            Ok(())
         });
         if let Err(err) = result {
             tracing::warn!(?err, "idle-skip sidecar write failed");
         }
+    }
+
+    #[cfg(all(feature = "jit-stats", feature = "jit"))]
+    fn event_breakdown_top_n(&self, n: usize) -> Vec<(String, u64)> {
+        let mut entries: Vec<(String, u64)> = self
+            .scheduler
+            .event_fire_counts
+            .iter()
+            .map(|(&addr, &count)| (Self::resolve_handler_name(addr), count))
+            .collect();
+        entries.sort_by(|a, b| b.1.cmp(&a.1));
+        entries.truncate(n);
+        entries
+    }
+
+    #[cfg(all(feature = "jit-stats", feature = "jit"))]
+    fn resolve_handler_name(addr: usize) -> String {
+        crate::profile::resolve_symbol(addr).unwrap_or_else(|| format!("<unresolved {:#018x}>", addr))
     }
 
     #[cfg(feature = "profile")]

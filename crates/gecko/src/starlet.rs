@@ -32,6 +32,7 @@ pub struct Starlet {
     next_fd: i32,
     pub pending: VecDeque<PendingResponse>,
     pub host_fs_root: PathBuf,
+    delivery_scheduled: bool,
 }
 
 impl Starlet {
@@ -42,6 +43,7 @@ impl Starlet {
             next_fd: 1,
             pending: VecDeque::new(),
             host_fs_root: self::default_host_fs_root(),
+            delivery_scheduled: false,
         }
     }
 
@@ -176,15 +178,21 @@ impl System<{ crate::WII }> {
 pub fn dispatch_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: u32) {
     let result = self::process_command(sys, cmd_paddr);
     sys.starlet.pending.push_back(PendingResponse { cmd_paddr, result });
-    sys.scheduler.schedule_in(
-        microseconds_to_cycles(SYSTEM, FINALIZE_DELAY_US),
-        self::deliver_pending::<SYSTEM>,
-    );
+    self::ensure_delivery_scheduled::<SYSTEM>(sys, FINALIZE_DELAY_US);
 }
 
 pub fn schedule_drain<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    self::ensure_delivery_scheduled::<SYSTEM>(sys, ACK_TO_NEXT_DELAY_US);
+}
+
+fn ensure_delivery_scheduled<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, delay_us: u64) {
+    if sys.starlet.delivery_scheduled {
+        return;
+    }
+
+    sys.starlet.delivery_scheduled = true;
     sys.scheduler.schedule_in(
-        microseconds_to_cycles(SYSTEM, ACK_TO_NEXT_DELAY_US),
+        microseconds_to_cycles(SYSTEM, delay_us),
         self::deliver_pending::<SYSTEM>,
     );
 }
@@ -354,11 +362,18 @@ fn bind_fd_context(starlet: &Starlet, ctx: &mut DeviceContext<'_>, fd: i32) -> S
 }
 
 fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.starlet.delivery_scheduled = false;
+
     if sys.hollywood.ipc.ppcctrl.arm_response() {
         tracing::trace!(
             queue_len = sys.starlet.pending.len(),
             "deliver_pending: arm_response still set, skipping"
         );
+
+        if !sys.starlet.pending.is_empty() {
+            self::ensure_delivery_scheduled::<SYSTEM>(sys, ACK_TO_NEXT_DELAY_US);
+        }
+
         return;
     }
 
@@ -366,11 +381,17 @@ fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         tracing::trace!("deliver_pending: queue empty");
         return;
     };
+
     tracing::trace!(
         cmd_paddr = format!("{:#010X}", p.cmd_paddr),
         result = p.result,
         remaining = sys.starlet.pending.len(),
         "deliver_pending"
     );
+
     crate::hollywood::ipc::deliver_response(sys, p.cmd_paddr, p.result);
+
+    if !sys.starlet.pending.is_empty() {
+        self::ensure_delivery_scheduled::<SYSTEM>(sys, ACK_TO_NEXT_DELAY_US);
+    }
 }

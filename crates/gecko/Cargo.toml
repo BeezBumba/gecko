@@ -23,7 +23,7 @@ jit = [
     "dep:cranelift-module",
     "dep:cranelift-native",
 ]
-jit-stats = ["jit"]
+jit-stats = ["jit", "dep:backtrace"]
 fps-counter = []
 profile = ["dep:backtrace", "dep:windows-sys"]
 
