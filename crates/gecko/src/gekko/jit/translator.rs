@@ -187,6 +187,8 @@ pub fn translate<const SYSTEM: SystemId>(
         handled_natively: false,
     };
 
+    let mut pending_cycles: i64 = 0;
+
     for (i, &word) in spec.instrs.iter().enumerate() {
         let instr = Instruction(word);
         let pc = spec.pc_of(i);
@@ -197,11 +199,16 @@ pub fn translate<const SYSTEM: SystemId>(
         t.handled_natively = false;
         let chained_before = t.chained;
 
+        if is_terminator && pending_cycles > 0 {
+            emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, pending_cycles);
+            pending_cycles = 0;
+        }
+
         super::dispatch::<SYSTEM>(&mut t, instr);
 
         if t.handled_natively {
             if !t.chained || chained_before {
-                emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, CYCLES_PER_INSTR);
+                pending_cycles += CYCLES_PER_INSTR;
             }
 
             if t.chained && !chained_before {
@@ -212,6 +219,11 @@ pub fn translate<const SYSTEM: SystemId>(
                 last_terminator_nia = Some(nia);
             }
         } else {
+            if pending_cycles > 0 {
+                emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, pending_cycles);
+                pending_cycles = 0;
+            }
+            
             let pc_const = builder.ins().iconst(types::I32, pc as i64);
             let raw_const = builder.ins().iconst(types::I32, instr.0 as i64);
             let call = builder
@@ -235,6 +247,10 @@ pub fn translate<const SYSTEM: SystemId>(
         }
     }
     drop(t);
+
+    if pending_cycles > 0 {
+        emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, pending_cycles);
+    }
 
     if !chained {
         if idle_class != IdleClass::None {
@@ -1247,7 +1263,7 @@ fn emit_bclr_chain_fall<const SYSTEM: SystemId>(
 
     builder.switch_to_block(taken_block);
     builder.seal_block(taken_block);
-    
+
     if instr.lk() {
         let lr_val = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
         lr_store::<SYSTEM>(builder, ctx_ptr, lr_val);
@@ -1255,13 +1271,20 @@ fn emit_bclr_chain_fall<const SYSTEM: SystemId>(
 
     let lr = lr_load::<SYSTEM>(builder, ctx_ptr);
     let target_pc = builder.ins().band_imm(lr, !3i64);
-    emit_inline_cache_dispatch::<SYSTEM>(builder, ctx_ptr, target_pc, exit_block, block_sig_ref, lookup_table_addr);
+    emit_inline_cache_dispatch::<SYSTEM>(
+        builder,
+        ctx_ptr,
+        target_pc,
+        exit_block,
+        block_sig_ref,
+        lookup_table_addr,
+    );
 
     builder.switch_to_block(fall_block);
     builder.seal_block(fall_block);
-    
+
     let fall_v = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
-    
+
     if let Some(slot_addr) = fall_slot {
         emit_chain_or_exit::<SYSTEM>(builder, ctx_ptr, slot_addr, block_sig_ref, fall_v, exit_block);
     } else {
@@ -1304,7 +1327,14 @@ fn emit_bcctr_chain_fall<const SYSTEM: SystemId>(
     }
     let ctr = ctr_load::<SYSTEM>(builder, ctx_ptr);
     let target_pc = builder.ins().band_imm(ctr, !3i64);
-    emit_inline_cache_dispatch::<SYSTEM>(builder, ctx_ptr, target_pc, exit_block, block_sig_ref, lookup_table_addr);
+    emit_inline_cache_dispatch::<SYSTEM>(
+        builder,
+        ctx_ptr,
+        target_pc,
+        exit_block,
+        block_sig_ref,
+        lookup_table_addr,
+    );
 
     builder.switch_to_block(fall_block);
     builder.seal_block(fall_block);
@@ -3310,7 +3340,7 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
     let ps0_bits = builder.ins().bitcast(types::I32, MemFlags::new(), ps0_f32);
     let ps0_be = builder.ins().bswap(ps0_bits);
     builder.ins().store(MemFlags::new(), ps0_be, addr, 0);
-    
+
     if !w {
         let ps1_f64 = ps1_load::<SYSTEM>(builder, ctx_ptr, fs);
         let ps1_f32 = builder.ins().fdemote(types::F32, ps1_f64);
@@ -3318,19 +3348,19 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
         let ps1_be = builder.ins().bswap(ps1_bits);
         builder.ins().store(MemFlags::new(), ps1_be, addr, 4);
     }
-    
+
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_f32_block);
     builder.seal_block(slow_f32_block);
-    
+
     let fs_v = builder.ins().iconst(types::I32, fs as i64);
     let w_v = builder.ins().iconst(types::I32, if w { 1 } else { 0 });
     let gqr_const = builder.ins().iconst(types::I32, gqr_idx as i64);
     builder
         .ins()
         .call(local.do_psq_store, &[ctx_ptr, fs_v, ea, w_v, gqr_const]);
-    
+
     builder.ins().jump(merge, &[]);
 }
 
