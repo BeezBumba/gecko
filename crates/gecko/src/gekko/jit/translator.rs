@@ -249,7 +249,11 @@ pub fn translate<const SYSTEM: SystemId>(
                 builder.ins().load(types::I32, MemFlags::trusted(), nia_addr, 0)
             }),
         };
-        builder.ins().jump(exit_block, &[final_nia.into()]);
+        if let Some(slot_addr) = chain_slot_addr {
+            emit_chain_or_exit::<SYSTEM>(&mut builder, ctx_ptr, slot_addr, block_sig_ref, final_nia, exit_block);
+        } else {
+            builder.ins().jump(exit_block, &[final_nia.into()]);
+        }
     }
 
     builder.switch_to_block(exit_block);
@@ -1469,6 +1473,7 @@ fn terminator_static_taken_pc(spec: &BlockSpec) -> Option<u32> {
         } else {
             pc.wrapping_add_signed(instr.bd())
         }),
+        TermKind::LengthCap => Some(spec.end_pc()),
         _ => None,
     }
 }
