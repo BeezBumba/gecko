@@ -9,7 +9,7 @@ pub struct TextureRecord {
     pub width: u32,
     pub height: u32,
     pub format: TextureFormat,
-    pub rgba: std::sync::Arc<[u8]>,
+    pub rgba: Vec<u8>,
     pub last_seen_frame: u64,
 }
 
