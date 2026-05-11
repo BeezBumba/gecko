@@ -121,6 +121,11 @@ fn worker(
         // a fresh batch on its next flush.
         let _ = recyclers.batches.try_send(batch);
     }
+
+    match gx.save_shader_cache() {
+        Ok(n) => tracing::info!(num_variants = n, "saved shader cache"),
+        Err(err) => tracing::warn!(?err, "failed to save shader cache"),
+    }
 }
 
 #[cfg(feature = "renderdoc-capture")]

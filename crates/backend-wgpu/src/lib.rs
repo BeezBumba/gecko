@@ -617,9 +617,19 @@ impl GxRenderer {
             EFB_SAMPLE_COUNT,
         );
 
+        let cache_path = std::path::Path::new(shader_specialization::SHADER_CACHE_PATH);
+        let cached_keys = shader_specialization::load_cached_keys(cache_path);
+        let prewarmed = prewarm_shader_variants(device, &cached_keys);
+
+        let mut shader_cache: FxHashMap<ShaderKey, wgpu::ShaderModule> =
+            FxHashMap::with_capacity_and_hasher(prewarmed.len().max(64), Default::default());
+        for (k, m) in prewarmed {
+            shader_cache.insert(k, m);
+        }
+
         GxRenderer {
             pipeline_cache: FxHashMap::default(),
-            shader_cache: FxHashMap::default(),
+            shader_cache,
             pipeline_layout,
             surface_format,
             bind_group_layout,
@@ -704,4 +714,57 @@ impl GxRenderer {
     pub fn set_efb_writeback_tx(&mut self, tx: crossbeam_channel::Sender<EfbWriteback>) {
         self.efb_writeback_tx = Some(tx);
     }
+
+    pub fn save_shader_cache(&self) -> std::io::Result<usize> {
+        let path = std::path::Path::new(shader_specialization::SHADER_CACHE_PATH);
+        let keys: Vec<ShaderKey> = self.shader_cache.keys().copied().collect();
+        shader_specialization::save_keys(path, &keys)?;
+        Ok(keys.len())
+    }
+}
+
+fn prewarm_shader_variants(device: &wgpu::Device, keys: &[ShaderKey]) -> Vec<(ShaderKey, wgpu::ShaderModule)> {
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    let t0 = std::time::Instant::now();
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(keys.len());
+
+    let chunk_size = keys.len().div_ceil(num_threads);
+    let compiled: Vec<(ShaderKey, String)> = std::thread::scope(|s| {
+        let handles: Vec<_> = keys
+            .chunks(chunk_size)
+            .map(|chunk| {
+                s.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|&k| (k, shader_specialization::compile_variant(k)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    });
+
+    let modules: Vec<(ShaderKey, wgpu::ShaderModule)> = compiled
+        .into_iter()
+        .map(|(key, wgsl)| {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&format!("gx_shader_{key:?}")),
+                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+            });
+            (key, module)
+        })
+        .collect();
+
+    tracing::info!(
+        num_variants = modules.len(),
+        elapsed_ms = t0.elapsed().as_millis() as u64,
+        "prewarmed shader variants from cache"
+    );
+
+    modules
 }
