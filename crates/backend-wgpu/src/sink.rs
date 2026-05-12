@@ -33,6 +33,7 @@ pub enum TargetAspect {
 
 enum WorkerMsg {
     ActionBatch(Vec<GxAction>),
+    Shutdown,
     #[cfg(feature = "renderdoc-capture")]
     BeginEmulatedFrame {
         ack: Sender<()>,
@@ -69,6 +70,7 @@ fn worker(
     while let Ok(msg) = rx.recv() {
         let mut batch = match msg {
             WorkerMsg::ActionBatch(batch) => batch,
+            WorkerMsg::Shutdown => break,
             #[cfg(feature = "renderdoc-capture")]
             WorkerMsg::BeginEmulatedFrame { ack } => {
                 renderdoc.begin_emulated_frame();
@@ -181,7 +183,7 @@ impl Renderer {
         queue: wgpu::Queue,
         surface_format: wgpu::TextureFormat,
         target_aspect: TargetAspect,
-    ) -> Self {
+    ) -> (Self, RendererWorker) {
         let mut gx = GxRenderer::new(&device, &queue, surface_format);
         gx.prewarm_pipeline_cache(&device);
 
@@ -280,13 +282,13 @@ impl Renderer {
         let worker_device = device.clone();
         let worker_queue = queue.clone();
         let worker_cb = frame_ready_cb.clone();
-        std::thread::Builder::new()
+        let join = std::thread::Builder::new()
             .name("gx-renderer".into())
             .spawn(move || worker(gx, worker_device, worker_queue, worker_shared, rx, recyclers, worker_cb))
             .expect("failed to spawn renderer worker");
 
-        Renderer {
-            tx,
+        let renderer = Renderer {
+            tx: tx.clone(),
             shared,
             device,
             blit_pipeline,
@@ -299,7 +301,9 @@ impl Renderer {
             writeback_rx: Arc::new(Mutex::new(Some(writeback_rx))),
             recycle_rx: Arc::new(Mutex::new(Some(recycle_rx))),
             batch_recycle_rx: Arc::new(Mutex::new(Some(batch_recycle_rx))),
-        }
+        };
+
+        (renderer, RendererWorker { tx, join })
     }
 
     pub fn set_frame_ready_callback<F>(&self, cb: F)
@@ -468,6 +472,19 @@ impl BatchingSink {
 impl Drop for BatchingSink {
     fn drop(&mut self) {
         self.flush();
+    }
+}
+
+pub struct RendererWorker {
+    tx: Sender<WorkerMsg>,
+    join: std::thread::JoinHandle<()>,
+}
+
+impl RendererWorker {
+    pub fn shutdown_and_join(self) -> std::thread::Result<()> {
+        let _ = self.tx.send(WorkerMsg::Shutdown);
+        drop(self.tx);
+        self.join.join()
     }
 }
 

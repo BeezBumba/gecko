@@ -428,7 +428,8 @@ fn main() {
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
     let target_aspect = resolve_aspect(&args.aspect, matches!(emulator, EmulatorVariant::Wii(_)));
-    let renderer = backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
+    let (renderer, _renderer_worker) =
+        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
 
     emulator.install_recycle_rx(renderer.take_recycle_rx());
     emulator.install_render_sink(Box::new(renderer.take_batching_sink()));
