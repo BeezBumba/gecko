@@ -131,6 +131,8 @@ pub struct GxRenderer {
     pub(crate) efb_needs_clear: bool,
     pub(crate) sampler_cache: FxHashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,
     pub(crate) texture_cache: FxHashMap<TextureKey, (TextureFormat, wgpu::Texture, wgpu::TextureView)>,
+    // Retired LoadTexture allocations grouped by (w, h).
+    pub(crate) texture_pool: FxHashMap<(u32, u32), Vec<wgpu::Texture>>,
     // GPU textures holding EFB copy results, checked before `texture_cache` on every texture bind.
     pub(crate) efb_copy_cache: FxHashMap<Address, (wgpu::Texture, wgpu::TextureView)>,
     // Retired EFB-copy textures grouped by size, popped by the next copy to skip reallocating.
@@ -664,6 +666,7 @@ impl GxRenderer {
                 m
             },
             texture_cache: FxHashMap::default(),
+            texture_pool: FxHashMap::default(),
             efb_copy_cache: FxHashMap::default(),
             efb_copy_pool: FxHashMap::default(),
             efb_copy_pipeline,

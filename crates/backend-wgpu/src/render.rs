@@ -414,6 +414,24 @@ impl GxRenderer {
         }
     }
 
+    pub(crate) fn return_load_texture_to_pool(&mut self, tex: wgpu::Texture) {
+        const PER_BUCKET_CAP: usize = 8;
+
+        debug_assert_eq!(tex.format(), wgpu::TextureFormat::Rgba8Unorm);
+        debug_assert_eq!(tex.mip_level_count(), 1);
+        debug_assert_eq!(tex.sample_count(), 1);
+        debug_assert_eq!(tex.dimension(), wgpu::TextureDimension::D2);
+        debug_assert!(tex.usage().contains(
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+        ));
+
+        let size = tex.size();
+        let bucket = self.texture_pool.entry((size.width, size.height)).or_default();
+        if bucket.len() < PER_BUCKET_CAP {
+            bucket.push(tex);
+        }
+    }
+
     /// Resolves the 4x MSAA `efb_depth_view` into a single-sample R32Float texture keyed by `dest_addr`.
     pub(crate) fn cache_efb_copy_depth(
         &mut self,

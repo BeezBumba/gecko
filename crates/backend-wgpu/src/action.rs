@@ -110,47 +110,17 @@ impl GxRenderer {
                 fmt,
                 rgba,
             } => {
-                let texture_label = format!(
-                    "gx_tex addr={:#010x}/{:08x} fmt={:?} size={}x{}",
-                    id.ram_addr, id.variant, *fmt, *width, *height
-                );
-                let tex = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some(&texture_label),
-                    size: wgpu::Extent3d {
-                        width: *width,
-                        height: *height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_DST
-                        | wgpu::TextureUsages::COPY_SRC,
-                    view_formats: &[],
-                });
-                queue.write_texture(
-                    tex.as_image_copy(),
-                    rgba,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(*width * 4),
-                        rows_per_image: None,
-                    },
-                    wgpu::Extent3d {
-                        width: *width,
-                        height: *height,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                let view = tex.create_view(&Default::default());
-
-                // Invalidate bind groups that referenced the old entry for
-                // this exact cache id (variant-specific).
                 let tid = *id;
-                self.bind_group_cache
-                    .retain(|key, _| !key.tex_keys.iter().any(|k| *k == Some(tid)));
+                let copy_size = wgpu::Extent3d {
+                    width: *width,
+                    height: *height,
+                    depth_or_array_layers: 1,
+                };
+                let copy_layout = wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(*width * 4),
+                    rows_per_image: None,
+                };
 
                 // A fresh RAM upload means the game wrote this address
                 // after a prior EFB copy. Return the stale GPU copy to
@@ -160,7 +130,48 @@ impl GxRenderer {
                     self.return_to_pool(old_tex, old_view);
                 }
 
-                self.texture_cache.insert(*id, (*fmt, tex, view));
+                if let Some((cached_fmt, cached_tex, _)) = self.texture_cache.get_mut(&tid) {
+                    let size = cached_tex.size();
+                    if size.width == *width && size.height == *height {
+                        queue.write_texture(cached_tex.as_image_copy(), rgba, copy_layout, copy_size);
+                        *cached_fmt = *fmt;
+                        return;
+                    }
+                }
+
+                let pooled = self.texture_pool.get_mut(&(*width, *height)).and_then(|v| v.pop());
+
+                let tex = pooled.unwrap_or_else(|| {
+                    let texture_label = format!(
+                        "gx_tex addr={:#010x}/{:08x} fmt={:?} size={}x{}",
+                        id.ram_addr, id.variant, *fmt, *width, *height
+                    );
+                    device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some(&texture_label),
+                        size: copy_size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::COPY_DST
+                            | wgpu::TextureUsages::COPY_SRC,
+                        view_formats: &[],
+                    })
+                });
+
+                queue.write_texture(tex.as_image_copy(), rgba, copy_layout, copy_size);
+                let view = tex.create_view(&Default::default());
+
+                // Cached bind groups still hold the old TextureView for this
+                // key. Drop them so they get rebuilt against the new one.
+                self.bind_group_cache
+                    .retain(|key, _| !key.tex_keys.iter().any(|k| *k == Some(tid)));
+
+                let prior = self.texture_cache.insert(tid, (*fmt, tex, view));
+                if let Some((_, old_tex, _)) = prior {
+                    self.return_load_texture_to_pool(old_tex);
+                }
             }
             GxAction::InvalidateCaches => {
                 self.flush_pending_draws(device, queue);
