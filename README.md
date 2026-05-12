@@ -24,7 +24,6 @@ Gecko is still in development. Support may vary, while many games work very well
 - `wesl` based specialized shader compiler
 - Frame pacing
 - Modular audio backend, defaults to `cpal`
-  - Core speed synced to the audio rate
   - Supports mixing audio sinks
   - Supports dumping to .wav files
 - MCP server
@@ -43,7 +42,6 @@ Gecko is still in development. Support may vary, while many games work very well
 
 WIP features:
 - IPL HLE backed by [solstice](https://codeberg.org/hazelwiss/solstice)
-- Basic Wiimote controls work, but are still flaky and not fully implemented
 
 ## Projects
 This is a table of the main projects. Refer to `crates/` to find out about all available projects.
