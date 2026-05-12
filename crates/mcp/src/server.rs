@@ -108,6 +108,20 @@ pub struct SetPadArgs {
     pub buttons: Option<u16>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetWiimoteArgs {
+    #[schemars(
+        description = "Wiimote core button bitmask: A=0x0008, B=0x0004, ONE=0x0002, TWO=0x0001, MINUS=0x0010, HOME=0x0080, PLUS=0x1000, LEFT=0x0100, RIGHT=0x0200, DOWN=0x0400, UP=0x0800"
+    )]
+    pub buttons: Option<u16>,
+    #[schemars(description = "Nunchuk button bitmask: Z=0x01, C=0x02")]
+    pub nunchuk_buttons: Option<u8>,
+    #[schemars(description = "Nunchuk stick X (0..=255, center=0x80, full-left=0x00, full-right=0xFF)")]
+    pub nunchuk_stick_x: Option<u8>,
+    #[schemars(description = "Nunchuk stick Y (0..=255, center=0x80, full-down=0x00, full-up=0xFF)")]
+    pub nunchuk_stick_y: Option<u8>,
+}
+
 #[derive(Debug, Serialize)]
 struct StatusJson {
     loaded: bool,
@@ -554,6 +568,26 @@ impl McpServer {
         s.backend.as_mut().unwrap().apply_host_input(&input);
         ok_json(&json!({"applied": true}))
     }
+
+    #[tool(
+        description = "Update the Wii remote + nunchuk state. Defaults: buttons=0, stick centered (0x80). Unspecified fields go to those defaults."
+    )]
+    async fn set_wiimote(&self, Parameters(args): Parameters<SetWiimoteArgs>) -> Result<CallToolResult, McpError> {
+        require_loaded(&self.shared)?;
+        let input = gecko::HostInput::Wii {
+            wiimote_buttons: args.buttons.unwrap_or(0),
+            nunchuk_buttons: args.nunchuk_buttons.unwrap_or(0),
+            nunchuk_stick_x: args
+                .nunchuk_stick_x
+                .unwrap_or(gecko::hollywood::ipc::usb::NUNCHUK_STICK_CENTER),
+            nunchuk_stick_y: args
+                .nunchuk_stick_y
+                .unwrap_or(gecko::hollywood::ipc::usb::NUNCHUK_STICK_CENTER),
+        };
+        let mut s = self.shared.state.lock().unwrap();
+        s.backend.as_mut().unwrap().apply_host_input(&input);
+        ok_json(&json!({"applied": true}))
+    }
 }
 
 #[tool_handler]
@@ -563,7 +597,7 @@ impl ServerHandler for McpServer {
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Headless gecko (GameCube/Wii) emulator. Tools: load_game, status, pause/resume, step, run_frames, run_until_pc, run_until_vsync, read_memory, write_memory, search_bytes, get_registers, disassemble, get_view, list_textures, get_texture, list_bound_textures, set_pad."
+                "Headless gecko (GameCube/Wii) emulator. Tools: load_game, status, pause/resume, step, run_frames, run_until_pc, run_until_vsync, read_memory, write_memory, search_bytes, get_registers, disassemble, get_view, list_textures, get_texture, list_bound_textures, set_pad, set_wiimote."
                     .to_string(),
             )
     }

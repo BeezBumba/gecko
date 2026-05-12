@@ -12,7 +12,11 @@ pub const Y: u16 = 0x0800;
 pub const START: u16 = 0x1000;
 
 pub const USE_ORIGIN: u16 = 0x0080;
+pub const STICK_MIN: u8 = 0;
 pub const STICK_CENTER: u8 = 128;
+pub const STICK_MAX: u8 = 255;
+pub const TRIGGER_MIN: u8 = 0;
+pub const TRIGGER_MAX: u8 = 255;
 pub const GC_CONTROLLER_ID: u32 = 0x0900_0000;
 
 #[derive(Clone, Copy, Debug)]

@@ -1,3 +1,5 @@
+use super::crypto::Cipher;
+
 pub const BTN_TWO: u16 = 0x0001;
 pub const BTN_ONE: u16 = 0x0002;
 pub const BTN_B: u16 = 0x0004;
@@ -12,6 +14,10 @@ pub const BTN_PLUS: u16 = 0x1000;
 
 pub const NUNCHUK_BTN_C: u8 = 0x02;
 pub const NUNCHUK_BTN_Z: u8 = 0x01;
+
+pub const NUNCHUK_STICK_MIN: u8 = 0x00;
+pub const NUNCHUK_STICK_CENTER: u8 = 0x80;
+pub const NUNCHUK_STICK_MAX: u8 = 0xFF;
 
 const HID_PREFIX_INPUT: u8 = 0xA1;
 const HID_PREFIX_OUTPUT: u8 = 0xA2;
@@ -70,10 +76,10 @@ enum ReportMode {
     CoreExt19 = 0x34,
     /// Core + accel + 16-byte extension.
     CoreAccelExt16 = 0x35,
+    /// Core + 10-byte basic IR + 9-byte extension (no accel).
+    CoreIrBasicExt9 = 0x36,
     /// Core + accel + 10-byte basic IR + 6-byte extension.
-    CoreAccelIrBasicExt = 0x36,
-    /// Core + accel + 10-byte basic IR + 6-byte extension (alternate framing).
-    CoreAccelIrFullExt = 0x37,
+    CoreAccelIrBasicExt6 = 0x37,
 }
 
 impl ReportMode {
@@ -85,8 +91,8 @@ impl ReportMode {
             0x33 => Self::CoreAccelIrExt,
             0x34 => Self::CoreExt19,
             0x35 => Self::CoreAccelExt16,
-            0x36 => Self::CoreAccelIrBasicExt,
-            0x37 => Self::CoreAccelIrFullExt,
+            0x36 => Self::CoreIrBasicExt9,
+            0x37 => Self::CoreAccelIrBasicExt6,
             _ => return None,
         })
     }
@@ -109,10 +115,13 @@ const NUNCHUK_ID: [u8; 6] = [0x00, 0x00, 0xA4, 0x20, 0x00, 0x00];
 const NUNCHUK_CALIBRATION: [u8; 16] = [
     0x80, 0x80, 0x80, 0x00, // accel zero G (X, Y, Z, padding)
     0xB3, 0xB3, 0xB3, 0x00, // accel one G (X, Y, Z, padding)
-    0xFF, 0x00, 0x80, // stick X max, min, center
-    0xFF, 0x00, 0x80, // stick Y max, min, center
+    0xE0, 0x20, 0x80, // stick X max, min, center
+    0xE0, 0x20, 0x80, // stick Y max, min, center
     0x00, 0x00, // checksum (filled below at runtime)
 ];
+
+const NUNCHUK_KEY_REG_BASE: u8 = 0x40;
+const NUNCHUK_KEY_LEN: usize = 16;
 
 #[derive(Debug, Clone)]
 pub(super) struct WiimoteState {
@@ -128,6 +137,9 @@ pub(super) struct WiimoteState {
     nunchuk_stick_x: u8,
     nunchuk_stick_y: u8,
     nunchuk_calibration: [u8; 16],
+    nunchuk_key_buf: [u8; NUNCHUK_KEY_LEN],
+    nunchuk_key_valid: u16,
+    nunchuk_cipher: Cipher,
 }
 
 impl Default for WiimoteState {
@@ -150,9 +162,12 @@ impl Default for WiimoteState {
             eeprom,
             nunchuk_attached: true,
             nunchuk_buttons: 0,
-            nunchuk_stick_x: 0x80,
-            nunchuk_stick_y: 0x80,
+            nunchuk_stick_x: NUNCHUK_STICK_CENTER,
+            nunchuk_stick_y: NUNCHUK_STICK_CENTER,
             nunchuk_calibration,
+            nunchuk_key_buf: [0; NUNCHUK_KEY_LEN],
+            nunchuk_key_valid: 0,
+            nunchuk_cipher: Cipher::IDENTITY,
         }
     }
 }
@@ -198,14 +213,13 @@ impl WiimoteState {
                 r.extend_from_slice(&accel);
                 self.append_nunchuk_ext_padded(&mut r, 16);
             }
-            ReportMode::CoreAccelIrBasicExt => {
+            ReportMode::CoreIrBasicExt9 => {
+                r.extend_from_slice(&ir_basic);
+                self.append_nunchuk_ext_padded(&mut r, 9);
+            }
+            ReportMode::CoreAccelIrBasicExt6 => {
                 r.extend_from_slice(&accel);
                 r.extend_from_slice(&ir_basic);
-                r.extend_from_slice(&self.nunchuk_extension_bytes());
-            }
-            ReportMode::CoreAccelIrFullExt => {
-                r.extend_from_slice(&accel);
-                r.extend_from_slice(&ir_extended);
                 r.extend_from_slice(&self.nunchuk_extension_bytes());
             }
         }
@@ -221,14 +235,16 @@ impl WiimoteState {
 
         // Bits 0,1 of the trailing byte are inverted: 1 = button NOT pressed.
         let inv_buttons = (!self.nunchuk_buttons) & 0x03;
-        [
+        let mut bytes = [
             self.nunchuk_stick_x,
             self.nunchuk_stick_y,
             0x80, // accel X high bits (zero G)
             0x80, // accel Y high bits (zero G)
             0xB3, // accel Z high bits (+1G gravity)
             inv_buttons,
-        ]
+        ];
+        self.nunchuk_cipher.encrypt(&mut bytes, 0);
+        bytes
     }
 
     /// Append the 6-byte nunchuk extension followed by 0xFF padding so the
@@ -301,16 +317,18 @@ impl WiimoteState {
             OutputReportId::WriteMemoryAndRegisters if body.len() >= 5 => {
                 let address = self::decode_mem_address(body);
 
-                tracing::debug!(addr = format!("{address:#08x}"), "Wiimote write memory");
-
                 let address_space = body[0] & 0x06;
                 let size = body[4] as usize;
+                let payload = &body[5..5 + size.min(body.len().saturating_sub(5)).min(16)];
+
+                tracing::debug!(addr = format!("{address:#08x}"), "Wiimote write memory");
 
                 if address_space == 0 {
-                    let payload = &body[5..5 + size.min(body.len().saturating_sub(5)).min(16)];
                     let end = (address as usize + payload.len()).min(self.eeprom.len());
                     let dst = &mut self.eeprom[address as usize..end];
                     dst.copy_from_slice(&payload[..dst.len()]);
+                } else {
+                    self.observe_register_write(address, payload);
                 }
 
                 self::trivial_ack(self.button_bytes(), raw_id)
@@ -392,11 +410,51 @@ impl WiimoteState {
                 break;
             }
 
-            out.push(self.read_chunk_report((address as u16) + offset as u16, &backing[start..end], 0));
+            // The SDK runs `kpad_extension_crypt_buffer` (0x803DA000) over the
+            // returned bytes when the address sits in extension register space
+            // (see `kpad_dispatch_report` 0x803D66D0 read handler branch on
+            // `v13 == 1188`, i.e. high word == 0x4A4). It uses the low 16 bits
+            // of the request address as the cipher offset.
+            let chunk_addr = (address as u16) + offset as u16;
+            let mut chunk_data: [u8; 16] = [0; 16];
+            chunk_data[..chunk].copy_from_slice(&backing[start..end]);
+            self.nunchuk_cipher.encrypt(&mut chunk_data[..chunk], chunk_addr as u32);
+
+            out.push(self.read_chunk_report(chunk_addr, &chunk_data[..chunk], 0));
 
             offset += chunk;
         }
         out
+    }
+
+    /// Track writes to nunchuk register 0x40-0x4F so we can mirror the cipher
+    /// the SDK builds in `kpad_nunchuk_keygen` (0x803D9210). Once all 16 bytes
+    /// have arrived we derive `ft`/`sb` and switch our outgoing extension
+    /// bytes and register read responses to encrypted output.
+    fn observe_register_write(&mut self, address: u32, payload: &[u8]) {
+        let reg = (address & 0xFF) as u8;
+        let Some(rel) = reg.checked_sub(NUNCHUK_KEY_REG_BASE) else {
+            return;
+        };
+
+        let rel = rel as usize;
+        if rel >= NUNCHUK_KEY_LEN {
+            return;
+        }
+
+        let count = payload.len().min(NUNCHUK_KEY_LEN - rel);
+        self.nunchuk_key_buf[rel..rel + count].copy_from_slice(&payload[..count]);
+        for i in 0..count {
+            self.nunchuk_key_valid |= 1 << (rel + i);
+        }
+
+        if self.nunchuk_key_valid == u16::MAX {
+            self.nunchuk_cipher = Cipher::from_extension_key(&self.nunchuk_key_buf);
+            tracing::debug!(
+                key = format!("{:02X?}", self.nunchuk_key_buf),
+                "Wiimote nunchuk encryption key complete"
+            );
+        }
     }
 
     fn read_chunk_report(&self, address: u16, data: &[u8], error: u8) -> Vec<u8> {

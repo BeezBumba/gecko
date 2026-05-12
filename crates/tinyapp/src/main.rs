@@ -11,7 +11,7 @@ use gecko::HostInput;
 #[cfg(feature = "audio-wav-dump")]
 use gecko::audio::WavAudioSink;
 use gecko::audio::{AudioSink, EmptyAudioSink, MultiplexAudioSink};
-use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
+use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER, STICK_MAX, STICK_MIN, TRIGGER_MAX, TRIGGER_MIN};
 use gecko::gamecube::GameCube;
 use gecko::hollywood::ipc::usb as wiimote;
 use gecko::system::{self, System, SystemId};
@@ -476,10 +476,10 @@ fn set_bit<T: std::ops::BitOrAssign + std::ops::BitAndAssign + std::ops::Not<Out
 fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
     match key {
         // Analog stick
-        KeyCode::ArrowUp => pad.stick_y = if pressed { 255 } else { STICK_CENTER },
-        KeyCode::ArrowDown => pad.stick_y = if pressed { 0 } else { STICK_CENTER },
-        KeyCode::ArrowLeft => pad.stick_x = if pressed { 0 } else { STICK_CENTER },
-        KeyCode::ArrowRight => pad.stick_x = if pressed { 255 } else { STICK_CENTER },
+        KeyCode::ArrowUp => pad.stick_y = if pressed { STICK_MAX } else { STICK_CENTER },
+        KeyCode::ArrowDown => pad.stick_y = if pressed { STICK_MIN } else { STICK_CENTER },
+        KeyCode::ArrowLeft => pad.stick_x = if pressed { STICK_MIN } else { STICK_CENTER },
+        KeyCode::ArrowRight => pad.stick_x = if pressed { STICK_MAX } else { STICK_CENTER },
 
         // Face buttons
         KeyCode::KeyX => self::set_bit(&mut pad.buttons, pad::A, pressed),
@@ -491,11 +491,11 @@ fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
         // Triggers
         KeyCode::KeyA => {
             self::set_bit(&mut pad.buttons, pad::L, pressed);
-            pad.trigger_left = if pressed { 255 } else { 0 };
+            pad.trigger_left = if pressed { TRIGGER_MAX } else { TRIGGER_MIN };
         }
         KeyCode::KeyS => {
             self::set_bit(&mut pad.buttons, pad::R, pressed);
-            pad.trigger_right = if pressed { 255 } else { 0 };
+            pad.trigger_right = if pressed { TRIGGER_MAX } else { TRIGGER_MIN };
         }
         KeyCode::KeyD => self::set_bit(&mut pad.buttons, pad::Z, pressed),
 
@@ -526,12 +526,12 @@ pub fn update_wiimote_keys(buttons: &mut u16, key: KeyCode, pressed: bool) {
 }
 
 pub fn update_nunchuk_keys(buttons: &mut u8, stick_x: &mut u8, stick_y: &mut u8, key: KeyCode, pressed: bool) {
-    const NEUTRAL: u8 = 0x80;
+    use wiimote::{NUNCHUK_STICK_CENTER as C, NUNCHUK_STICK_MAX as MAX, NUNCHUK_STICK_MIN as MIN};
     match key {
-        KeyCode::KeyW => *stick_y = if pressed { 0xFF } else { NEUTRAL },
-        KeyCode::KeyS => *stick_y = if pressed { 0x00 } else { NEUTRAL },
-        KeyCode::KeyA => *stick_x = if pressed { 0x00 } else { NEUTRAL },
-        KeyCode::KeyD => *stick_x = if pressed { 0xFF } else { NEUTRAL },
+        KeyCode::KeyW => *stick_y = if pressed { MAX } else { C },
+        KeyCode::KeyS => *stick_y = if pressed { MIN } else { C },
+        KeyCode::KeyA => *stick_x = if pressed { MIN } else { C },
+        KeyCode::KeyD => *stick_x = if pressed { MAX } else { C },
         KeyCode::KeyQ => self::set_bit(buttons, wiimote::NUNCHUK_BTN_Z, pressed),
         KeyCode::KeyE => self::set_bit(buttons, wiimote::NUNCHUK_BTN_C, pressed),
         _ => {}

@@ -1,4 +1,5 @@
 use crate::flipper::si::pad;
+use crate::hollywood::ipc::usb;
 use crate::{GC, SystemId, WII};
 
 #[derive(Clone, Copy, Debug)]
@@ -24,8 +25,8 @@ impl HostInput {
         Self::Wii {
             wiimote_buttons: 0,
             nunchuk_buttons: 0,
-            nunchuk_stick_x: 0x80,
-            nunchuk_stick_y: 0x80,
+            nunchuk_stick_x: usb::NUNCHUK_STICK_CENTER,
+            nunchuk_stick_y: usb::NUNCHUK_STICK_CENTER,
         }
     }
 

@@ -10,7 +10,7 @@ use winit::window::{Window, WindowId};
 
 use gecko::HostInput;
 use gecko::audio::WavAudioSink;
-use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
+use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER, STICK_MAX, STICK_MIN, TRIGGER_MAX, TRIGGER_MIN};
 use gecko::gamecube::GameCube;
 use gecko::wii::Wii;
 use image::Dol;
@@ -475,10 +475,10 @@ fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
 
     match key {
         // Analog stick (digital, full deflection)
-        KeyCode::ArrowUp => pad.stick_y = if pressed { 255 } else { STICK_CENTER },
-        KeyCode::ArrowDown => pad.stick_y = if pressed { 0 } else { STICK_CENTER },
-        KeyCode::ArrowLeft => pad.stick_x = if pressed { 0 } else { STICK_CENTER },
-        KeyCode::ArrowRight => pad.stick_x = if pressed { 255 } else { STICK_CENTER },
+        KeyCode::ArrowUp => pad.stick_y = if pressed { STICK_MAX } else { STICK_CENTER },
+        KeyCode::ArrowDown => pad.stick_y = if pressed { STICK_MIN } else { STICK_CENTER },
+        KeyCode::ArrowLeft => pad.stick_x = if pressed { STICK_MIN } else { STICK_CENTER },
+        KeyCode::ArrowRight => pad.stick_x = if pressed { STICK_MAX } else { STICK_CENTER },
 
         // Face buttons
         KeyCode::KeyX => set_button(&mut pad.buttons, pad::A, pressed),
@@ -490,11 +490,11 @@ fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
         // Triggers
         KeyCode::KeyA => {
             set_button(&mut pad.buttons, pad::L, pressed);
-            pad.trigger_left = if pressed { 255 } else { 0 };
+            pad.trigger_left = if pressed { TRIGGER_MAX } else { TRIGGER_MIN };
         }
         KeyCode::KeyS => {
             set_button(&mut pad.buttons, pad::R, pressed);
-            pad.trigger_right = if pressed { 255 } else { 0 };
+            pad.trigger_right = if pressed { TRIGGER_MAX } else { TRIGGER_MIN };
         }
         KeyCode::KeyD => set_button(&mut pad.buttons, pad::Z, pressed),
 

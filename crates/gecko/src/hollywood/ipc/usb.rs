@@ -1,4 +1,5 @@
 mod bluetooth;
+mod crypto;
 mod l2cap;
 mod wiimote;
 
@@ -7,7 +8,7 @@ pub(crate) use bluetooth::{WIIMOTE_ADDR, WIIMOTE_NAME};
 use std::collections::VecDeque;
 pub use wiimote::{
     BTN_A, BTN_B, BTN_DOWN, BTN_HOME, BTN_LEFT, BTN_MINUS, BTN_ONE, BTN_PLUS, BTN_RIGHT, BTN_TWO, BTN_UP,
-    NUNCHUK_BTN_C, NUNCHUK_BTN_Z,
+    NUNCHUK_BTN_C, NUNCHUK_BTN_Z, NUNCHUK_STICK_CENTER, NUNCHUK_STICK_MAX, NUNCHUK_STICK_MIN,
 };
 
 const USB_CTRL: u32 = 0;
@@ -173,7 +174,25 @@ impl Bluetooth {
     }
 
     fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
-        self.wiimote.set_nunchuk(buttons, stick_x, stick_y)
+        let changed = self.wiimote.set_nunchuk(buttons, stick_x, stick_y);
+
+        if changed {
+            tracing::debug!(
+                buttons = format!("{buttons:#04x}"),
+                stick_x = format!("{stick_x:#04x}"),
+                stick_y = format!("{stick_y:#04x}"),
+                "Nunchuk state changed"
+            );
+        }
+
+        if self.host_hid_interrupt_cid.is_none() {
+            return changed;
+        }
+
+        let report = self.wiimote.make_input_report();
+        self.queue_hid_input_report(report);
+
+        changed
     }
 }
 

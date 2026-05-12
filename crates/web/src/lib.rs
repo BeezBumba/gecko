@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use egui::ViewportId;
 use gecko::HostInput;
-use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
+use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER, STICK_MAX, STICK_MIN, TRIGGER_MAX, TRIGGER_MIN};
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
 use gecko::host::{GxAction, RenderSink};
@@ -525,10 +525,10 @@ fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
     };
 
     match key {
-        KeyCode::ArrowUp => pad.stick_y = if pressed { 255 } else { STICK_CENTER },
-        KeyCode::ArrowDown => pad.stick_y = if pressed { 0 } else { STICK_CENTER },
-        KeyCode::ArrowLeft => pad.stick_x = if pressed { 0 } else { STICK_CENTER },
-        KeyCode::ArrowRight => pad.stick_x = if pressed { 255 } else { STICK_CENTER },
+        KeyCode::ArrowUp => pad.stick_y = if pressed { STICK_MAX } else { STICK_CENTER },
+        KeyCode::ArrowDown => pad.stick_y = if pressed { STICK_MIN } else { STICK_CENTER },
+        KeyCode::ArrowLeft => pad.stick_x = if pressed { STICK_MIN } else { STICK_CENTER },
+        KeyCode::ArrowRight => pad.stick_x = if pressed { STICK_MAX } else { STICK_CENTER },
         KeyCode::KeyX => set_button(&mut pad.buttons, pad::A, pressed),
         KeyCode::KeyZ => set_button(&mut pad.buttons, pad::B, pressed),
         KeyCode::KeyC => set_button(&mut pad.buttons, pad::X, pressed),
@@ -536,11 +536,11 @@ fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
         KeyCode::Enter => set_button(&mut pad.buttons, pad::START, pressed),
         KeyCode::KeyA => {
             set_button(&mut pad.buttons, pad::L, pressed);
-            pad.trigger_left = if pressed { 255 } else { 0 };
+            pad.trigger_left = if pressed { TRIGGER_MAX } else { TRIGGER_MIN };
         }
         KeyCode::KeyS => {
             set_button(&mut pad.buttons, pad::R, pressed);
-            pad.trigger_right = if pressed { 255 } else { 0 };
+            pad.trigger_right = if pressed { TRIGGER_MAX } else { TRIGGER_MIN };
         }
         KeyCode::KeyD => set_button(&mut pad.buttons, pad::Z, pressed),
         KeyCode::KeyI => set_button(&mut pad.buttons, pad::DPAD_UP, pressed),
