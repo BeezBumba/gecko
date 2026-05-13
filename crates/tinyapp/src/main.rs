@@ -355,10 +355,7 @@ fn run<const SYSTEM: SystemId>(
     emulator.gx.draw_box_recycle_rx = renderer.take_recycle_rx();
     emulator.render_sink = Box::new(renderer.take_batching_sink());
 
-    #[cfg(feature = "efb-writeback")]
-    {
-        emulator.gx.efb_writeback_rx = renderer.take_writeback_rx();
-    }
+    emulator.gx.efb_writeback_rx = renderer.take_writeback_rx();
 
     let audio_stream = install_audio_sink(args, &mut emulator);
 

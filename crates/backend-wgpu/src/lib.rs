@@ -16,9 +16,8 @@ use gecko::common::Address;
 use gecko::flipper::gx::draw::Primitive;
 use gecko::flipper::gx::draw::{Scissor, TextureFormat, Viewport};
 use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
-#[cfg(feature = "efb-writeback")]
-use gecko::host::EfbWriteback;
-use gecko::host::TextureKey;
+
+use gecko::host::{EfbWriteback, TextureKey};
 use glam::Mat4;
 use pipeline::FullPipelineKey;
 use rustc_hash::FxHashMap;
@@ -104,6 +103,12 @@ pub const EFB_WIDTH: u32 = 640;
 pub const EFB_HEIGHT: u32 = 528;
 pub const EFB_SAMPLE_COUNT: u32 = 4;
 
+pub(crate) struct EfbCopyEntry {
+    pub(crate) format: gecko::flipper::gx::texture::CopyFormat,
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+}
+
 pub struct GxRenderer {
     pub(crate) pipeline_cache: FxHashMap<FullPipelineKey, wgpu::RenderPipeline>,
     pub(crate) shader_cache: FxHashMap<ShaderKey, wgpu::ShaderModule>,
@@ -133,21 +138,13 @@ pub struct GxRenderer {
     pub(crate) texture_cache: FxHashMap<TextureKey, (TextureFormat, wgpu::Texture, wgpu::TextureView)>,
     // Retired LoadTexture allocations grouped by (w, h).
     pub(crate) texture_pool: FxHashMap<(u32, u32), Vec<wgpu::Texture>>,
-    // GPU textures holding EFB copy results, checked before `texture_cache` on every texture bind.
-    pub(crate) efb_copy_cache: FxHashMap<Address, (wgpu::Texture, wgpu::TextureView)>,
-    // Retired EFB-copy textures grouped by size, popped by the next copy to skip reallocating.
+    pub(crate) efb_copy_cache: FxHashMap<Address, EfbCopyEntry>,
     pub(crate) efb_copy_pool: FxHashMap<(u32, u32), Vec<(wgpu::Texture, wgpu::TextureView)>>,
-    // Blits a sub-rect of `efb_view` into an `Rgba8Unorm` target, reusing xfb_copy's shader and layout.
-    pub(crate) efb_copy_pipeline: wgpu::RenderPipeline,
-    // Retired depth copy textures grouped by size, kept separate so the (w, h) key isn't shared with color.
-    pub(crate) efb_depth_pool: FxHashMap<(u32, u32), Vec<(wgpu::Texture, wgpu::TextureView)>>,
-    // Resolves a sub-rect of the 4x MSAA `efb_depth_view` into an R32Float target.
-    pub(crate) efb_depth_resolve_pipeline: wgpu::RenderPipeline,
+    pub(crate) efb_pack_pipelines: render::EfbPackPipelines,
     pub(crate) efb_depth_resolve_bg_layout: wgpu::BindGroupLayout,
     pub(crate) efb_depth_resolve_uniform_buffer: wgpu::Buffer,
-    #[cfg(feature = "efb-writeback")]
+
     pub(crate) efb_depth_writeback_pipeline: wgpu::RenderPipeline,
-    #[cfg(feature = "efb-writeback")]
     pub(crate) efb_depth_writeback_target: Option<(wgpu::Texture, wgpu::TextureView)>,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
@@ -203,16 +200,24 @@ pub struct GxRenderer {
     pub(crate) xfb_copy_uniform_write_pending: bool,
     pub(crate) efb_clear_uniform_write_pending: bool,
     pub(crate) efb_depth_resolve_uniform_write_pending: bool,
-    // EFB-to-texture readback. Only allocated with `efb-writeback`.
-    #[cfg(feature = "efb-writeback")]
-    pub(crate) efb_readback_staging: Option<wgpu::Buffer>,
-    #[cfg(feature = "efb-writeback")]
-    pub(crate) efb_readback_capacity: u64,
-    // Sender used to ship encoded EFB-to-texture bytes back to the emu
-    // thread. Installed by `sink::Renderer::new` via
-    // [`GxRenderer::set_efb_writeback_tx`].
-    #[cfg(feature = "efb-writeback")]
+    pub(crate) efb_readback_staging_pool: FxHashMap<u64, Vec<wgpu::Buffer>>,
+    pub(crate) pending_writebacks: Vec<PendingWriteback>,
     pub(crate) efb_writeback_tx: Option<crossbeam_channel::Sender<EfbWriteback>>,
+}
+
+pub(crate) struct PendingWriteback {
+    pub dest_addr: Address,
+    pub staging: wgpu::Buffer,
+    pub staging_capacity: u64,
+    pub bytes_per_row: u64,
+    pub staging_size: u64,
+    pub width: u32,
+    pub height: u32,
+    pub copy_format: gecko::flipper::gx::texture::CopyFormat,
+    pub stride: u32,
+    pub swap_bgra: bool,
+    pub box_filter_downsample: bool,
+    pub label: &'static str,
 }
 
 impl GxRenderer {
@@ -231,6 +236,10 @@ impl GxRenderer {
         let efb_depth_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("efb_depth_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/efb_depth.wgsl").into()),
+        });
+        let efb_pack_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("efb_pack_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/efb_pack.wgsl").into()),
         });
 
         // Bindings: 0=FrameUniforms, 1=DrawUniforms, 2-9=textures 0-7, 10-17=samplers 0-7
@@ -499,40 +508,6 @@ impl GxRenderer {
             cache: None,
         });
 
-        // Same shader and layout as xfb_copy, but writes `Rgba8Unorm` so the output matches `LoadTexture`.
-        let efb_copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("efb_copy_pipeline"),
-            layout: Some(&xfb_copy_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &xfb_copy_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &xfb_copy_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
-        });
-
         let xfb_copy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("xfb_copy_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -577,41 +552,9 @@ impl GxRenderer {
             ],
         });
         let efb_depth_resolve_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("efb_depth_resolve_layout"),
+            label: Some("efb_depth_pack_layout"),
             bind_group_layouts: &[&efb_depth_resolve_bg_layout],
             immediate_size: 0,
-        });
-        let efb_depth_resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("efb_depth_resolve_pipeline"),
-            layout: Some(&efb_depth_resolve_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &efb_depth_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &efb_depth_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::RED,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
         });
         let efb_depth_resolve_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("efb_depth_resolve_uniforms"),
@@ -620,39 +563,61 @@ impl GxRenderer {
             mapped_at_creation: false,
         });
 
-        #[cfg(feature = "efb-writeback")]
-        let efb_depth_writeback_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("efb_depth_writeback_pipeline"),
-            layout: Some(&efb_depth_resolve_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &efb_depth_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &efb_depth_shader,
-                entry_point: Some("fs_writeback_z24"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        let make_pack_pipeline =
+            |label: &str, entry: &str, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some(entry),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+        let color_pack =
+            |label: &str, entry: &str| make_pack_pipeline(label, entry, &xfb_copy_pipeline_layout, &efb_pack_shader);
+        let efb_pack_pipelines = render::EfbPackPipelines {
+            rgba8: color_pack("efb_pack_rgba8", "fs_rgba8"),
+            i8: color_pack("efb_pack_i8", "fs_i8"),
+            i4: color_pack("efb_pack_i4", "fs_i4"),
+            ia8: color_pack("efb_pack_ia8", "fs_ia8"),
+            ia4: color_pack("efb_pack_ia4", "fs_ia4"),
+            rgb565: color_pack("efb_pack_rgb565", "fs_rgb565"),
+            rgb5a3: color_pack("efb_pack_rgb5a3", "fs_rgb5a3"),
+            a8: color_pack("efb_pack_a8", "fs_a8"),
+            r8: color_pack("efb_pack_r8", "fs_r8"),
+            rg8: color_pack("efb_pack_rg8", "fs_rg8"),
+        };
+        let efb_depth_writeback_pipeline = make_pack_pipeline(
+            "efb_depth_writeback_pipeline",
+            "fs_writeback_z24",
+            &efb_depth_resolve_pipeline_layout,
+            &efb_depth_shader,
+        );
 
         let efb_clear = clear::EfbClear::new(
             device,
@@ -707,9 +672,7 @@ impl GxRenderer {
             texture_pool: FxHashMap::default(),
             efb_copy_cache: FxHashMap::default(),
             efb_copy_pool: FxHashMap::default(),
-            efb_copy_pipeline,
-            efb_depth_pool: FxHashMap::default(),
-            efb_depth_resolve_pipeline,
+            efb_pack_pipelines,
             efb_depth_resolve_bg_layout,
             efb_depth_resolve_uniform_buffer,
             fallback_view,
@@ -755,22 +718,18 @@ impl GxRenderer {
             xfb_copy_uniform_write_pending: false,
             efb_clear_uniform_write_pending: false,
             efb_depth_resolve_uniform_write_pending: false,
-            #[cfg(feature = "efb-writeback")]
-            efb_readback_staging: None,
-            #[cfg(feature = "efb-writeback")]
-            efb_readback_capacity: 0,
-            #[cfg(feature = "efb-writeback")]
+
+            efb_readback_staging_pool: FxHashMap::default(),
+            pending_writebacks: Vec::new(),
             efb_writeback_tx: None,
-            #[cfg(feature = "efb-writeback")]
+
             efb_depth_writeback_pipeline,
-            #[cfg(feature = "efb-writeback")]
             efb_depth_writeback_target: None,
         }
     }
 
     /// Install the sender used to ship encoded EFB-to-texture bytes back
     /// to the emulator thread. Called by `sink::Renderer` during setup.
-    #[cfg(feature = "efb-writeback")]
     pub fn set_efb_writeback_tx(&mut self, tx: crossbeam_channel::Sender<EfbWriteback>) {
         self.efb_writeback_tx = Some(tx);
     }

@@ -15,7 +15,7 @@ const MAIN_WESL: &str = include_str!("shaders/main.wesl");
 
 pub(crate) const KEY_BYTES: usize = 5;
 const CACHE_MAGIC: [u8; 4] = *b"GSKC";
-pub(crate) const CACHE_VERSION: u32 = 3;
+pub(crate) const CACHE_VERSION: u32 = 5;
 pub(crate) const SHADER_CACHE_PATH: &str = "cache/shader_keys.bin";
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]

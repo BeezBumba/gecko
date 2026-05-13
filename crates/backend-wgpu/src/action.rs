@@ -5,6 +5,7 @@ use crate::{
     SamplerKey, helpers,
 };
 use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
+use gecko::flipper::gx::texture::CopyFormat;
 use gecko::host::{DrawData, GxAction};
 use glam::{Mat4, UVec4, Vec4};
 
@@ -124,12 +125,13 @@ impl GxRenderer {
                     rows_per_image: None,
                 };
 
-                // A fresh RAM upload means the game wrote this address
-                // after a prior EFB copy. Return the stale GPU copy to
-                // its pool and let the RAM-decoded entry win. EFB copies
-                // are keyed by bare ram_addr (no TLUT variant).
-                if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&tid.ram_addr) {
-                    self.return_to_pool(old_tex, old_view);
+                let keep_cached = self.efb_copy_cache.get(&tid.ram_addr).is_some_and(|e| {
+                    e.format.base_texture_format() == *fmt
+                        && e.texture.size().width == *width
+                        && e.texture.size().height == *height
+                });
+                if !keep_cached && let Some(entry) = self.efb_copy_cache.remove(&tid.ram_addr) {
+                    self.return_to_pool(entry.texture, entry.view);
                 }
 
                 if let Some((cached_fmt, cached_tex, _)) = self.texture_cache.get_mut(&tid) {
@@ -179,7 +181,7 @@ impl GxRenderer {
                 self.flush_pending_draws(device, queue);
                 self.submit_pending(queue);
                 self.texture_cache.clear();
-                let drained: Vec<_> = self.efb_copy_cache.drain().map(|(_, v)| v).collect();
+                let drained: Vec<_> = self.efb_copy_cache.drain().map(|(_, e)| (e.texture, e.view)).collect();
                 for (tex, view) in drained {
                     self.return_to_pool(tex, view);
                 }
@@ -354,6 +356,7 @@ impl GxRenderer {
             GxAction::PresentXfb { width, height, parts } => {
                 self.flush_pending_draws(device, queue);
                 self.execute_present_xfb(device, queue, *width, *height, parts);
+                self.drain_pending_writebacks(device, queue);
             }
 
             GxAction::CopyEfbToTexture {
@@ -362,9 +365,9 @@ impl GxRenderer {
                 src_y,
                 src_w,
                 src_h,
-                copy_format: _copy_format,
+                copy_format: raw_copy_format,
                 mipmap,
-                stride: _stride,
+                stride,
                 clear,
                 clear_color,
                 clear_z,
@@ -376,10 +379,10 @@ impl GxRenderer {
             } => {
                 self.flush_pending_draws(device, queue);
 
-                // With `efb-writeback`: read the EFB back, encode it in
-                // `copy_format`, ship the bytes to the emu thread so they
-                // land in `Mmio::ram` at `dest_addr`. Expensive (GPU stall).
-                #[cfg(feature = "efb-writeback")]
+                // Readback + per-format encode is queued onto
+                // `pending_writebacks` for the next frame-boundary drain.
+                // The bind path samples `efb_copy_cache` (populated below)
+                // for same-frame correctness.
                 self.execute_copy_efb_to_texture(
                     device,
                     queue,
@@ -388,9 +391,9 @@ impl GxRenderer {
                     *src_y,
                     *src_w,
                     *src_h,
-                    *_copy_format,
+                    *raw_copy_format,
                     *mipmap,
-                    *_stride,
+                    *stride,
                     *depth_copy,
                     *clear,
                     *clear_color,
@@ -401,11 +404,10 @@ impl GxRenderer {
                     *alpha_supported,
                 );
 
-                // Blit or resolve the EFB region into a GPU texture keyed by `dest_addr`.
-                if *depth_copy {
-                    self.cache_efb_copy_depth(device, queue, *dest_addr, *src_x, *src_y, *src_w, *src_h, *mipmap);
-                } else {
-                    self.cache_efb_copy_color(device, queue, *dest_addr, *src_x, *src_y, *src_w, *src_h, *mipmap);
+                if !*depth_copy && let Some(copy_fmt) = CopyFormat::from_u8_color(*raw_copy_format) {
+                    self.cache_efb_copy_color(
+                        device, queue, *dest_addr, *src_x, *src_y, *src_w, *src_h, *mipmap, copy_fmt,
+                    );
                 }
 
                 if *clear {
@@ -482,7 +484,7 @@ impl GxRenderer {
                         let view = self
                             .efb_copy_cache
                             .get(&tid.ram_addr)
-                            .map(|(_, v)| v)
+                            .map(|e| &e.view)
                             .or_else(|| self.texture_cache.get(tid).map(|(_, _, v)| v));
                         if let Some(view) = view {
                             tex_views[slot] = view;

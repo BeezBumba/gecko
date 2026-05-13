@@ -8,11 +8,6 @@ default = ["jit", "idle-skip"]
 idle-skip = []
 hooks = []
 hooks-mut-traps = ["hooks"]
-# Full EFB-to-texture writeback: the renderer reads the EFB back, encodes
-# it in the GX copy format, and ships the bytes over a channel to the emu
-# thread which copies them into `Mmio::ram` synchronously. Expensive (GPU
-# stall, encode, RAM copy).
-efb-writeback = []
 # Enable the WAV file audio sink
 audio-wav-dump = ["dep:hound"]
 # Cranelift JIT for Gekko

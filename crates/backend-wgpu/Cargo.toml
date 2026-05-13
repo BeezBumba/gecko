@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-efb-writeback = ["gecko/efb-writeback"]
 renderdoc-capture = ["dep:renderdoc"]
 hotpath = ["dep:hotpath", "hotpath/hotpath", "hotpath/crossbeam"]
 

@@ -1,12 +1,7 @@
-#[cfg(feature = "efb-writeback")]
-use crate::align_up;
-use crate::{GpuVertex, GxRenderer};
+use crate::{GpuVertex, GxRenderer, PendingWriteback, align_up};
 use gecko::common::Address;
-#[cfg(feature = "efb-writeback")]
-use gecko::flipper::gx::texture;
-#[cfg(feature = "efb-writeback")]
-use gecko::host::EfbWriteback;
-use gecko::host::XfbPart;
+use gecko::flipper::gx::texture::{self, CopyFormat};
+use gecko::host::{EfbWriteback, XfbPart};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -15,6 +10,37 @@ pub(crate) struct XfbCopyUniforms {
     dst_size: [f32; 2],
     gamma: f32,
     filter_mode: u32,
+}
+
+pub(crate) struct EfbPackPipelines {
+    pub(crate) rgba8: wgpu::RenderPipeline,
+    pub(crate) i8: wgpu::RenderPipeline,
+    pub(crate) i4: wgpu::RenderPipeline,
+    pub(crate) ia8: wgpu::RenderPipeline,
+    pub(crate) ia4: wgpu::RenderPipeline,
+    pub(crate) rgb565: wgpu::RenderPipeline,
+    pub(crate) rgb5a3: wgpu::RenderPipeline,
+    pub(crate) a8: wgpu::RenderPipeline,
+    pub(crate) r8: wgpu::RenderPipeline,
+    pub(crate) rg8: wgpu::RenderPipeline,
+}
+
+impl EfbPackPipelines {
+    pub(crate) fn for_color(&self, fmt: CopyFormat) -> Option<&wgpu::RenderPipeline> {
+        Some(match fmt {
+            CopyFormat::RGBA8 => &self.rgba8,
+            CopyFormat::I8 => &self.i8,
+            CopyFormat::I4 => &self.i4,
+            CopyFormat::IA8 => &self.ia8,
+            CopyFormat::IA4 => &self.ia4,
+            CopyFormat::RGB565 => &self.rgb565,
+            CopyFormat::RGB5A3 => &self.rgb5a3,
+            CopyFormat::A8 => &self.a8,
+            CopyFormat::R8 => &self.r8,
+            CopyFormat::RG8 => &self.rg8,
+            CopyFormat::Z24X8 => return None,
+        })
+    }
 }
 
 /// Upload `bytes` into `buffer` at offset 0 via `write_buffer_with`, which
@@ -276,7 +302,7 @@ impl GxRenderer {
         }
     }
 
-    /// Blits the resolved EFB region into a GPU texture keyed by `dest_addr` for later texture binds to sample. Color only.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn cache_efb_copy_color(
         &mut self,
         device: &wgpu::Device,
@@ -287,7 +313,13 @@ impl GxRenderer {
         src_w: u32,
         src_h: u32,
         half: bool,
+        copy_format: CopyFormat,
     ) {
+        debug_assert!(
+            self.efb_pack_pipelines.for_color(copy_format).is_some(),
+            "cache_efb_copy_color called with depth-only copy format {copy_format:?}",
+        );
+
         let width = src_w.min(crate::EFB_WIDTH.saturating_sub(src_x));
         let height = src_h.min(crate::EFB_HEIGHT.saturating_sub(src_y));
         if width == 0 || height == 0 {
@@ -304,9 +336,8 @@ impl GxRenderer {
         let dst_w = (width / divisor).max(1);
         let dst_h = (height / divisor).max(1);
 
-        // Send any prior cached entry back to the right pool so it can be reused.
-        if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&dest_addr) {
-            self.return_to_pool(old_tex, old_view);
+        if let Some(entry) = self.efb_copy_cache.remove(&dest_addr) {
+            self.return_to_pool(entry.texture, entry.view);
         }
         self.bind_group_cache
             .retain(|key, _| !key.tex_keys.iter().any(|k| k.map(|t| t.ram_addr) == Some(dest_addr)));
@@ -316,7 +347,7 @@ impl GxRenderer {
             .get_mut(&(dst_w, dst_h))
             .and_then(Vec::pop)
             .unwrap_or_else(|| {
-                let label = format!("efb_copy addr={dest_addr:#010x} size={dst_w}x{dst_h}");
+                let label = format!("efb_copy addr={dest_addr:#010x} size={dst_w}x{dst_h} fmt={copy_format:?}");
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some(&label),
                     size: wgpu::Extent3d {
@@ -350,7 +381,7 @@ impl GxRenderer {
         queue.write_buffer(&self.xfb_copy_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("efb_copy_bg"),
+            label: Some("efb_pack_bg"),
             layout: &self.xfb_copy_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -369,15 +400,15 @@ impl GxRenderer {
         });
 
         let group_label = format!(
-            "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={dst_w}x{dst_h}"
+            "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={dst_w}x{dst_h} fmt={copy_format:?}"
         );
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("efb_copy_encoder"),
+            label: Some("efb_pack_encoder"),
         });
         encoder.push_debug_group(&group_label);
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("efb_copy"),
+                label: Some("efb_pack"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -392,25 +423,32 @@ impl GxRenderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            rpass.set_pipeline(&self.efb_copy_pipeline);
+            rpass.set_pipeline(self.efb_pack_pipelines.for_color(copy_format).unwrap());
             rpass.set_bind_group(0, &bind_group, &[]);
-            rpass.insert_debug_marker("EFB copy: resolved color to texture cache");
+            rpass.insert_debug_marker("EFB copy: per-format pack into cache");
             rpass.draw(0..3, 0..1);
         }
         encoder.pop_debug_group();
         self.pending_command_buffers.push(encoder.finish());
         self.xfb_copy_uniform_write_pending = true;
 
-        self.efb_copy_cache.insert(dest_addr, (tex, view));
+        self.efb_copy_cache.insert(
+            dest_addr,
+            crate::EfbCopyEntry {
+                format: copy_format,
+                texture: tex,
+                view,
+            },
+        );
     }
 
-    /// Sends an evicted efb_copy_cache entry back to the correct size-keyed pool based on its format.
     pub(crate) fn return_to_pool(&mut self, tex: wgpu::Texture, view: wgpu::TextureView) {
+        const PER_BUCKET_CAP: usize = 8;
+
         let size = tex.size();
-        let key = (size.width, size.height);
-        match tex.format() {
-            wgpu::TextureFormat::R16Float => self.efb_depth_pool.entry(key).or_default().push((tex, view)),
-            _ => self.efb_copy_pool.entry(key).or_default().push((tex, view)),
+        let bucket = self.efb_copy_pool.entry((size.width, size.height)).or_default();
+        if bucket.len() < PER_BUCKET_CAP {
+            bucket.push((tex, view));
         }
     }
 
@@ -430,127 +468,6 @@ impl GxRenderer {
         if bucket.len() < PER_BUCKET_CAP {
             bucket.push(tex);
         }
-    }
-
-    /// Resolves the 4x MSAA `efb_depth_view` into a single-sample R32Float texture keyed by `dest_addr`.
-    pub(crate) fn cache_efb_copy_depth(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        dest_addr: Address,
-        src_x: u32,
-        src_y: u32,
-        src_w: u32,
-        src_h: u32,
-        half: bool,
-    ) {
-        let width = src_w.min(crate::EFB_WIDTH.saturating_sub(src_x));
-        let height = src_h.min(crate::EFB_HEIGHT.saturating_sub(src_y));
-        if width == 0 || height == 0 {
-            tracing::warn!(
-                src_x,
-                src_y,
-                src_w,
-                src_h,
-                "efb_depth_cache: zero-area region after clamping, skipping"
-            );
-            return;
-        }
-        let divisor = if half { 2 } else { 1 };
-        let dst_w = (width / divisor).max(1);
-        let dst_h = (height / divisor).max(1);
-
-        if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&dest_addr) {
-            self.return_to_pool(old_tex, old_view);
-        }
-        self.bind_group_cache
-            .retain(|key, _| !key.tex_keys.iter().any(|k| k.map(|t| t.ram_addr) == Some(dest_addr)));
-
-        let (tex, view) = self
-            .efb_depth_pool
-            .get_mut(&(dst_w, dst_h))
-            .and_then(Vec::pop)
-            .unwrap_or_else(|| {
-                let label = format!("efb_depth addr={dest_addr:#010x} size={dst_w}x{dst_h}");
-                let tex = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some(&label),
-                    size: wgpu::Extent3d {
-                        width: dst_w,
-                        height: dst_h,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::R16Float,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                });
-                let view = tex.create_view(&Default::default());
-                (tex, view)
-            });
-
-        if self.efb_depth_resolve_uniform_write_pending {
-            self.submit_pending(queue);
-        }
-
-        let uniforms = XfbCopyUniforms {
-            src_rect: [src_x as f32, src_y as f32, width as f32, height as f32],
-            dst_size: [dst_w as f32, dst_h as f32],
-            gamma: 1.0,
-            filter_mode: 0,
-        };
-        queue.write_buffer(&self.efb_depth_resolve_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("efb_depth_resolve_bg"),
-            layout: &self.efb_depth_resolve_bg_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.efb_depth_resolve_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.efb_depth_view),
-                },
-            ],
-        });
-
-        let group_label = format!(
-            "CopyEfbDepthToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={dst_w}x{dst_h}"
-        );
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("efb_depth_resolve_encoder"),
-        });
-        encoder.push_debug_group(&group_label);
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("efb_depth_resolve"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-            rpass.set_pipeline(&self.efb_depth_resolve_pipeline);
-            rpass.set_bind_group(0, &bind_group, &[]);
-            rpass.insert_debug_marker("EFB copy: resolve depth to texture cache");
-            rpass.draw(0..3, 0..1);
-        }
-        encoder.pop_debug_group();
-        self.pending_command_buffers.push(encoder.finish());
-        self.efb_depth_resolve_uniform_write_pending = true;
-
-        self.efb_copy_cache.insert(dest_addr, (tex, view));
     }
 
     pub(crate) fn execute_present_xfb(
@@ -651,17 +568,9 @@ impl GxRenderer {
         self.xfb_has_content = true;
     }
 
-    /// EFB-to-texture copy: read a region of the resolved EFB back into a
-    /// staging buffer, convert from the wgpu surface format to RGBA8,
-    /// optional 2x downsample, encode into the requested GX texture format,
-    /// and ship the bytes back to the emu thread via the writeback channel.
-    ///
-    /// The clear flag and per-channel update masks are applied after the
-    /// copy, matching GX copy-clear ordering.
-    ///
-    /// Only compiled with `efb-writeback`. The default no-feature path
-    /// handles CopyEfbToTexture inline in `action.rs` with just a clear.
-    #[cfg(feature = "efb-writeback")]
+    /// Queue an EFB region readback into `pending_writebacks`. The actual
+    /// map+encode+ship happens at the next frame boundary via
+    /// `drain_pending_writebacks`.
     pub(crate) fn execute_copy_efb_to_texture(
         &mut self,
         device: &wgpu::Device,
@@ -762,20 +671,8 @@ impl GxRenderer {
         // wgpu requires 256-byte row alignment for texture<->buffer copies.
         let bytes_per_row = align_up(width as u64 * 4, 256);
         let staging_size = bytes_per_row * height as u64;
+        let (staging, staging_capacity) = self.acquire_readback_staging(device, staging_size);
 
-        // Grow staging buffer on demand.
-        if self.efb_readback_staging.is_none() || self.efb_readback_capacity < staging_size {
-            let new_cap = staging_size.next_power_of_two().max(4096);
-            self.efb_readback_staging = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("efb_readback_staging"),
-                size: new_cap,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }));
-            self.efb_readback_capacity = new_cap;
-        }
-
-        // Submit the EFB -> staging copy.
         let group_label = format!(
             "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) fmt={copy_format_enum:?} mip={mipmap} stride={stride} depth={depth_copy}"
         );
@@ -783,11 +680,6 @@ impl GxRenderer {
             label: Some("efb_to_texture_copy_encoder"),
         });
         encoder.push_debug_group(&group_label);
-        let copy_marker = format!(
-            "EFB readback copy: bytes_per_row={} staging_size={}",
-            bytes_per_row, staging_size
-        );
-        encoder.insert_debug_marker(&copy_marker);
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.efb_texture,
@@ -800,7 +692,7 @@ impl GxRenderer {
                 aspect: wgpu::TextureAspect::default(),
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: self.efb_readback_staging.as_ref().unwrap(),
+                buffer: &staging,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row as u32),
@@ -816,24 +708,24 @@ impl GxRenderer {
         encoder.pop_debug_group();
         self.pending_command_buffers.push(encoder.finish());
 
-        let swap = matches!(
+        let swap_bgra = matches!(
             self.surface_format,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
         );
-        self.map_encode_and_ship(
-            device,
-            queue,
-            width,
-            height,
+        self.pending_writebacks.push(PendingWriteback {
+            dest_addr,
+            staging,
+            staging_capacity,
             bytes_per_row,
             staging_size,
-            swap,
-            mipmap,
-            copy_format_enum,
-            dest_addr,
+            width,
+            height,
+            copy_format: copy_format_enum,
             stride,
-            "efb_to_texture",
-        );
+            swap_bgra,
+            box_filter_downsample: mipmap,
+            label: "efb_to_texture",
+        });
 
         if clear {
             self.clear_efb_region(
@@ -852,7 +744,6 @@ impl GxRenderer {
         }
     }
 
-    #[cfg(feature = "efb-writeback")]
     fn execute_depth_writeback(
         &mut self,
         device: &wgpu::Device,
@@ -924,24 +815,15 @@ impl GxRenderer {
             ],
         });
 
-        let (target_tex, target_view) = self.efb_depth_writeback_target.as_ref().unwrap();
         let group_label = format!(
             "DepthWriteback addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={encode_w}x{encode_h} stride={stride}"
         );
 
         let bytes_per_row = align_up(encode_w as u64 * 4, 256);
         let staging_size = bytes_per_row * encode_h as u64;
+        let (staging, staging_capacity) = self.acquire_readback_staging(device, staging_size);
 
-        if self.efb_readback_staging.is_none() || self.efb_readback_capacity < staging_size {
-            let new_cap = staging_size.next_power_of_two().max(4096);
-            self.efb_readback_staging = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("efb_readback_staging"),
-                size: new_cap,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }));
-            self.efb_readback_capacity = new_cap;
-        }
+        let (target_tex, target_view) = self.efb_depth_writeback_target.as_ref().unwrap();
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("efb_depth_writeback_encoder"),
@@ -979,7 +861,7 @@ impl GxRenderer {
                 aspect: wgpu::TextureAspect::default(),
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: self.efb_readback_staging.as_ref().unwrap(),
+                buffer: &staging,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row as u32),
@@ -995,96 +877,132 @@ impl GxRenderer {
         encoder.pop_debug_group();
         self.pending_command_buffers.push(encoder.finish());
         self.efb_depth_resolve_uniform_write_pending = false;
+        let _ = queue;
 
-        self.map_encode_and_ship(
-            device,
-            queue,
-            encode_w,
-            encode_h,
+        self.pending_writebacks.push(PendingWriteback {
+            dest_addr,
+            staging,
+            staging_capacity,
             bytes_per_row,
             staging_size,
-            false,
-            false,
-            copy_format_enum,
-            dest_addr,
+            width: encode_w,
+            height: encode_h,
+            copy_format: copy_format_enum,
             stride,
-            "efb_depth_writeback",
-        );
+            swap_bgra: false,
+            box_filter_downsample: false,
+            label: "efb_depth_writeback",
+        });
     }
 
-    #[cfg(feature = "efb-writeback")]
-    #[allow(clippy::too_many_arguments)]
-    fn map_encode_and_ship(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        bytes_per_row: u64,
-        staging_size: u64,
-        swap_bgra: bool,
-        box_filter_downsample: bool,
-        copy_format: texture::CopyFormat,
-        dest_addr: Address,
-        stride: u32,
-        label: &'static str,
-    ) {
+    pub(crate) fn acquire_readback_staging(&mut self, device: &wgpu::Device, staging_size: u64) -> (wgpu::Buffer, u64) {
+        let capacity = staging_size.next_power_of_two().max(4096);
+        if let Some(bucket) = self.efb_readback_staging_pool.get_mut(&capacity) {
+            if let Some(buf) = bucket.pop() {
+                return (buf, capacity);
+            }
+        }
+
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("efb_readback_staging"),
+            size: capacity,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        (buf, capacity)
+    }
+
+    pub(crate) fn return_readback_staging(&mut self, buf: wgpu::Buffer, capacity: u64) {
+        const MAX_PER_BUCKET: usize = 8;
+        let bucket = self.efb_readback_staging_pool.entry(capacity).or_default();
+        if bucket.len() < MAX_PER_BUCKET {
+            bucket.push(buf);
+        }
+    }
+
+    pub(crate) fn drain_pending_writebacks(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.pending_writebacks.is_empty() {
+            return;
+        }
+
         self.submit_pending(queue);
 
-        let staging = self.efb_readback_staging.as_ref().unwrap();
-        let slice = staging.slice(..staging_size);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
+        for pending in &self.pending_writebacks {
+            pending
+                .staging
+                .slice(..pending.staging_size)
+                .map_async(wgpu::MapMode::Read, |_| {});
+        }
+
         if let Err(err) = device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: Some(std::time::Duration::from_secs(5)),
         }) {
-            tracing::warn!(?err, label, "device poll failed");
+            tracing::warn!(?err, "efb writeback drain: device poll failed");
+            // Best-effort: drop the buffers back into the pool so we don't leak.
+            let pending: Vec<PendingWriteback> = self.pending_writebacks.drain(..).collect();
+            for w in pending {
+                self.return_readback_staging(w.staging, w.staging_capacity);
+            }
             return;
         }
 
-        let mut rgba = vec![0u8; (width * height * 4) as usize];
-        {
-            let mapped = slice.get_mapped_range();
-            let row_bytes = (width * 4) as usize;
-            let src_row_bytes = bytes_per_row as usize;
-            for y in 0..height as usize {
-                let src_row = &mapped[y * src_row_bytes..y * src_row_bytes + row_bytes];
-                let dst_row = &mut rgba[y * row_bytes..y * row_bytes + row_bytes];
-                if swap_bgra {
-                    for i in 0..width as usize {
-                        dst_row[i * 4] = src_row[i * 4 + 2];
-                        dst_row[i * 4 + 1] = src_row[i * 4 + 1];
-                        dst_row[i * 4 + 2] = src_row[i * 4];
-                        dst_row[i * 4 + 3] = src_row[i * 4 + 3];
+        let pending: Vec<PendingWriteback> = self.pending_writebacks.drain(..).collect();
+        for w in pending {
+            let mut rgba = vec![0u8; (w.width * w.height * 4) as usize];
+            {
+                let slice = w.staging.slice(..w.staging_size);
+                let mapped = slice.get_mapped_range();
+                let row_bytes = (w.width * 4) as usize;
+                let src_row_bytes = w.bytes_per_row as usize;
+
+                for y in 0..w.height as usize {
+                    let src_row = &mapped[y * src_row_bytes..y * src_row_bytes + row_bytes];
+                    let dst_row = &mut rgba[y * row_bytes..y * row_bytes + row_bytes];
+
+                    if w.swap_bgra {
+                        for i in 0..w.width as usize {
+                            dst_row[i * 4] = src_row[i * 4 + 2];
+                            dst_row[i * 4 + 1] = src_row[i * 4 + 1];
+                            dst_row[i * 4 + 2] = src_row[i * 4];
+                            dst_row[i * 4 + 3] = src_row[i * 4 + 3];
+                        }
+                    } else {
+                        dst_row.copy_from_slice(src_row);
                     }
-                } else {
-                    dst_row.copy_from_slice(src_row);
                 }
             }
-        }
-        staging.unmap();
+            w.staging.unmap();
 
-        let (encode_w, encode_h, encode_src) = if box_filter_downsample {
-            (width / 2, height / 2, texture::downsample_box_2x(&rgba, width, height))
-        } else {
-            (width, height, rgba)
-        };
+            let (encode_w, encode_h, encode_src) = if w.box_filter_downsample {
+                (
+                    w.width / 2,
+                    w.height / 2,
+                    texture::downsample_box_2x(&rgba, w.width, w.height),
+                )
+            } else {
+                (w.width, w.height, rgba)
+            };
 
-        let encoded = texture::encode_from_rgba(&encode_src, encode_w as usize, encode_h as usize, copy_format);
-        let row_bytes = texture::encoded_row_bytes(encode_w, copy_format);
-        let row_count = texture::encoded_row_count(encode_h, copy_format);
-        let dest_stride_bytes = stride as usize;
+            let encoded = texture::encode_from_rgba(&encode_src, encode_w as usize, encode_h as usize, w.copy_format);
+            let row_bytes = texture::encoded_row_bytes(encode_w, w.copy_format);
+            let row_count = texture::encoded_row_count(encode_h, w.copy_format);
+            let dest_stride_bytes = w.stride as usize;
 
-        if let Some(tx) = &self.efb_writeback_tx {
-            if let Err(err) = tx.try_send(EfbWriteback {
-                dest_addr,
-                bytes: encoded,
-                row_bytes,
-                row_count,
-                dest_stride_bytes,
-            }) {
-                tracing::warn!(?err, label, "writeback channel send failed");
+            if let Some(tx) = &self.efb_writeback_tx {
+                if let Err(err) = tx.try_send(EfbWriteback {
+                    dest_addr: w.dest_addr,
+                    bytes: encoded,
+                    row_bytes,
+                    row_count,
+                    dest_stride_bytes,
+                }) {
+                    tracing::warn!(?err, label = w.label, "writeback channel send failed");
+                }
             }
+
+            self.return_readback_staging(w.staging, w.staging_capacity);
         }
     }
 

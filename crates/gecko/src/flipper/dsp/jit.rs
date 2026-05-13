@@ -461,7 +461,11 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 continue;
             }
 
-            tracing::info!(pc = format!("{:04X}", b.pc), count = b.instr_count, "compiling DSP JIT block from cache");
+            tracing::info!(
+                pc = format!("{:04X}", b.pc),
+                count = b.instr_count,
+                "compiling DSP JIT block from cache"
+            );
             self.lookup_or_compile(iram, irom, b.pc);
 
             compiled += 1;

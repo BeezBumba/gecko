@@ -57,7 +57,6 @@ impl EmulatorVariant {
         }
     }
 
-    #[cfg(feature = "efb-writeback")]
     fn install_efb_writeback(&mut self, rx: Option<crossbeam_channel::Receiver<gecko::host::EfbWriteback>>) {
         match self {
             Self::Gc(e) => e.gx.efb_writeback_rx = rx,
@@ -526,10 +525,7 @@ fn main() {
     emulator.install_recycle_rx(renderer.take_recycle_rx());
     emulator.install_render_sink(Box::new(renderer.take_batching_sink()));
 
-    #[cfg(feature = "efb-writeback")]
-    {
-        emulator.install_efb_writeback(renderer.take_writeback_rx());
-    }
+    emulator.install_efb_writeback(renderer.take_writeback_rx());
 
     let ui = DebuggerUi {
         symbols,

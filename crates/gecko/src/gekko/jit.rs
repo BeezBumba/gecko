@@ -552,7 +552,11 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 continue;
             }
 
-            tracing::info!(pc = format!("{:08X}", b.pc), count = b.instr_count, "compiling PPC JIT block from cache");
+            tracing::info!(
+                pc = format!("{:08X}", b.pc),
+                count = b.instr_count,
+                "compiling PPC JIT block from cache"
+            );
             self.lookup_or_compile(sys, b.pc);
 
             compiled += 1;

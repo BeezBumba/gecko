@@ -138,13 +138,9 @@ pub enum GxAction {
     },
 }
 
-/// Payload sent from the renderer worker back to the emulator thread after
-/// an EFB-to-texture copy completes. The emu thread copies `bytes` into
-/// `Mmio::ram` at `dest_addr` and invalidates the texture-hash cache so the
-/// next `TX_SETIMAGE3` at that address re-decodes.
-///
-/// Only compiled when the `efb-writeback` feature is enabled.
-#[cfg(feature = "efb-writeback")]
+/// Payload the renderer worker ships back when an EFB-to-texture readback
+/// completes. The emu thread copies `bytes` into `Mmio::ram` at `dest_addr`
+/// at the next safe drain point.
 #[derive(Debug)]
 pub struct EfbWriteback {
     pub dest_addr: Address,

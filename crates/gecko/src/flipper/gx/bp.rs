@@ -3,8 +3,6 @@ use super::regs::*;
 use super::{GraphicsProcessor, draw, texture};
 use crate::host::{GxAction, RenderSink, TextureKey};
 use crate::mmio::{RamView, RamViewMut};
-#[cfg(feature = "efb-writeback")]
-use std::time::Duration;
 
 impl GraphicsProcessor {
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
@@ -188,12 +186,14 @@ impl GraphicsProcessor {
         // PE finish
         if idx == BP_PE_DONE && (val & BP_PE_DONE_FINISH_BIT) != 0 {
             self.raise_interrupt = true;
+            self.drain_efb_writebacks(ram);
         }
 
         // PE token (0x47): store token value only
         if idx == BP_PE_TOKEN {
             self.pending_token = (val & 0xFFFF) as u16;
             self.token_dirty = true;
+            self.drain_efb_writebacks(ram);
         }
 
         // PE token interrupt (0x48): store token value + raise interrupt
@@ -202,6 +202,7 @@ impl GraphicsProcessor {
             self.pending_token = (val & 0xFFFF) as u16;
             self.token_dirty = true;
             self.raise_token_interrupt = true;
+            self.drain_efb_writebacks(ram);
         }
 
         // Scissor registers (BP 0x20 = TL, 0x21 = BR, 0x59 = OFFSET).
@@ -529,35 +530,30 @@ impl GraphicsProcessor {
                 depth_copy: self.cur_pe_control.pixel_format().is_depth_only(),
             });
 
-            // Writeback overwrites RAM, so drop every cached hash that
-            // points at this ram_addr (any TLUT variant) to force a redecode.
-            #[cfg(feature = "efb-writeback")]
+            // Drop cached hashes for this ram_addr (any TLUT variant) so the
+            // next snapshot at this address re decodes once the deferred
+            // RAM writeback lands.
             self.texture_hashes.retain(|k, _| k.ram_addr != dest_addr);
-            let _ = ram;
 
-            // With `efb-writeback`: block until the renderer finishes the
-            // readback + encode and ships the encoded bytes back. This
-            // preserves ordering with subsequent FIFO commands (a
-            // `TX_SETIMAGE3` at `dest_addr` immediately after this copy
-            // sees up-to-date RAM + a freshly re-hashable texture).
-            #[cfg(feature = "efb-writeback")]
-            if let Some(rx) = &self.efb_writeback_rx {
-                match rx.recv_timeout(Duration::from_secs(2)) {
-                    Ok(wb) => {
-                        texture::write_strided_copy_to_ram(
-                            ram,
-                            wb.dest_addr,
-                            &wb.bytes,
-                            wb.row_bytes,
-                            wb.row_count,
-                            wb.dest_stride_bytes,
-                        );
-                    }
-                    Err(err) => {
-                        tracing::warn!(?err, "efb writeback recv timed out");
-                    }
-                }
-            }
+            self.drain_efb_writebacks(ram);
+        }
+    }
+
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
+    pub fn drain_efb_writebacks(&mut self, ram: &mut RamViewMut<'_>) {
+        let Some(rx) = self.efb_writeback_rx.as_ref() else {
+            return;
+        };
+
+        while let Ok(wb) = rx.try_recv() {
+            texture::write_strided_copy_to_ram(
+                ram,
+                wb.dest_addr,
+                &wb.bytes,
+                wb.row_bytes,
+                wb.row_count,
+                wb.dest_stride_bytes,
+            );
         }
     }
 

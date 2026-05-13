@@ -45,3 +45,4 @@ fn fs_writeback_z24(@builtin(position) position: vec4<f32>) -> @location(0) vec4
     let b = f32( z24         & 0xFFu) / 255.0;
     return vec4<f32>(r, g, b, 1.0);
 }
+

@@ -14,9 +14,7 @@ macro_rules! instrument_channel {
     };
 }
 
-#[cfg(feature = "efb-writeback")]
-use gecko::host::EfbWriteback;
-use gecko::host::{DrawData, GxAction, RenderSink};
+use gecko::host::{DrawData, EfbWriteback, GxAction, RenderSink};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(feature = "renderdoc-capture")]
@@ -181,9 +179,7 @@ pub struct Renderer {
     /// Receiver end of the EFB-to-texture writeback channel. Taken by the
     /// emulator setup code (via [`Renderer::take_writeback_rx`]) and
     /// installed into `GraphicsProcessor::efb_writeback_rx`. Wrapped in
-    /// `Arc<Mutex<Option<_>>>` so `Renderer` stays `Clone`. Only built when
-    /// `efb-writeback` is enabled.
-    #[cfg(feature = "efb-writeback")]
+    /// `Arc<Mutex<Option<_>>>` so `Renderer` stays `Clone`.
     writeback_rx: Arc<Mutex<Option<Receiver<EfbWriteback>>>>,
     recycle_rx: Arc<Mutex<Option<Receiver<Box<DrawData>>>>>,
     batch_recycle_rx: Arc<Mutex<Option<Receiver<Vec<GxAction>>>>>,
@@ -203,8 +199,6 @@ impl Renderer {
 
         // Writeback channel: GxRenderer sends encoded EFB-to-texture bytes,
         // GraphicsProcessor consumes them synchronously on the emu thread.
-        // Only created with `efb-writeback`.
-        #[cfg(feature = "efb-writeback")]
         let writeback_rx = {
             let (writeback_tx, writeback_rx) =
                 instrument_channel!(bounded::<EfbWriteback>(CHANNEL_CAPACITY), "efb_writeback");
@@ -314,7 +308,6 @@ impl Renderer {
             target_aspect,
             actions_sent: Arc::new(AtomicU64::new(0)),
             frame_ready_cb,
-            #[cfg(feature = "efb-writeback")]
             writeback_rx: Arc::new(Mutex::new(Some(writeback_rx))),
             recycle_rx: Arc::new(Mutex::new(Some(recycle_rx))),
             batch_recycle_rx: Arc::new(Mutex::new(Some(batch_recycle_rx))),
@@ -332,9 +325,7 @@ impl Renderer {
 
     /// Take the writeback receiver once. Returns `Some` on the first call,
     /// `None` thereafter. The caller installs it into
-    /// `GraphicsProcessor::efb_writeback_rx`. Only available when the
-    /// `efb-writeback` feature is enabled.
-    #[cfg(feature = "efb-writeback")]
+    /// `GraphicsProcessor::efb_writeback_rx`.
     pub fn take_writeback_rx(&self) -> Option<Receiver<EfbWriteback>> {
         self.writeback_rx.lock().ok()?.take()
     }
