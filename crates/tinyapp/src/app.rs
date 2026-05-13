@@ -132,6 +132,9 @@ impl State {
     }
 
     fn render(&mut self, window: &Window, waiting: bool) {
+        #[cfg(feature = "renderdoc-capture")]
+        self.renderer.begin_renderdoc_emulated_frame();
+
         if !waiting && let Some(intended) = self.intended_present_time {
             let target = intended + self.pacer_offset;
             let now = Instant::now();
@@ -296,6 +299,9 @@ impl State {
             let next = (base + self.frame_period).max(now);
             self.intended_present_time = Some(next);
         }
+
+        #[cfg(feature = "renderdoc-capture")]
+        self.renderer.end_renderdoc_emulated_frame();
     }
 }
 
@@ -419,6 +425,8 @@ impl ApplicationHandler<crate::UserEvent> for App {
                     if pressed && !event.repeat {
                         if let Some(state) = &mut self.state {
                             match key {
+                                #[cfg(feature = "renderdoc-capture")]
+                                KeyCode::F10 => state.renderer.capture_next_renderdoc_emulated_frame(),
                                 KeyCode::F11 => state.screenshots.request(CaptureRequest::FullWindow),
                                 KeyCode::F12 => state.screenshots.request(CaptureRequest::GameOnly),
                                 _ => {}

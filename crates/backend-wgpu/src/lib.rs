@@ -145,6 +145,10 @@ pub struct GxRenderer {
     pub(crate) efb_depth_resolve_pipeline: wgpu::RenderPipeline,
     pub(crate) efb_depth_resolve_bg_layout: wgpu::BindGroupLayout,
     pub(crate) efb_depth_resolve_uniform_buffer: wgpu::Buffer,
+    #[cfg(feature = "efb-writeback")]
+    pub(crate) efb_depth_writeback_pipeline: wgpu::RenderPipeline,
+    #[cfg(feature = "efb-writeback")]
+    pub(crate) efb_depth_writeback_target: Option<(wgpu::Texture, wgpu::TextureView)>,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
     /// `(first_vertex, vertex_count, first_index, index_count)`. When
@@ -616,6 +620,40 @@ impl GxRenderer {
             mapped_at_creation: false,
         });
 
+        #[cfg(feature = "efb-writeback")]
+        let efb_depth_writeback_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("efb_depth_writeback_pipeline"),
+            layout: Some(&efb_depth_resolve_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &efb_depth_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &efb_depth_shader,
+                entry_point: Some("fs_writeback_z24"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        });
+
         let efb_clear = clear::EfbClear::new(
             device,
             surface_format,
@@ -723,6 +761,10 @@ impl GxRenderer {
             efb_readback_capacity: 0,
             #[cfg(feature = "efb-writeback")]
             efb_writeback_tx: None,
+            #[cfg(feature = "efb-writeback")]
+            efb_depth_writeback_pipeline,
+            #[cfg(feature = "efb-writeback")]
+            efb_depth_writeback_target: None,
         }
     }
 
