@@ -424,12 +424,18 @@ fn resolve_aspect(arg: &str, is_wii: bool) -> TargetAspect {
 }
 
 fn main() {
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        .add_directive("cranelift_jit=warn".parse().unwrap())
+        .add_directive("cranelift_codegen=warn".parse().unwrap())
+        .add_directive("cranelift_frontend=warn".parse().unwrap())
+        .add_directive("regalloc2=warn".parse().unwrap())
+        .add_directive("wgpu_core=warn".parse().unwrap())
+        .add_directive("wgpu_hal=warn".parse().unwrap())
+        .add_directive("naga=warn".parse().unwrap());
+
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                tracing_subscriber::EnvFilter::new("info,cranelift_jit=warn,cranelift_codegen=warn")
-            }),
-        )
+        .with_env_filter(env_filter)
         .without_time()
         .init();
 

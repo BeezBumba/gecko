@@ -16,8 +16,23 @@ use mcp::{boot, worker};
 #[derive(Parser, Debug)]
 #[command(name = "mcp", about = "MCP server exposing the gecko GameCube/Wii emulator to LLMs")]
 struct Cli {
-    #[arg(long, value_name = "PATH", help = "Disc image to load on startup (ISO/RVZ/ZIP)")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Disc image to load on startup (ISO/RVZ/ZIP)",
+        conflicts_with = "dol"
+    )]
     dvd: Option<PathBuf>,
+
+    #[arg(long, value_name = "PATH", help = "DOL homebrew to load on startup")]
+    dol: Option<PathBuf>,
+
+    #[arg(
+        long,
+        help = "Boot the DOL as a Wii executable instead of GameCube",
+        requires = "dol"
+    )]
+    wii: bool,
 
     #[arg(long, value_name = "PATH", help = "Override the embedded GameCube IPL")]
     ipl: Option<PathBuf>,
@@ -89,9 +104,21 @@ fn main() -> Result<()> {
         coef_rom,
     });
 
-    if let Some(dvd_path) = cli.dvd.as_ref() {
+    let initial = if let Some(dol_path) = cli.dol.as_ref() {
+        let bytes = std::fs::read(dol_path).with_context(|| format!("read DOL {dol_path:?}"))?;
+        Some(boot::boot_dol(
+            bytes,
+            cli.wii,
+            &shared.dsp_rom,
+            &shared.coef_rom,
+            shared.gx.clone(),
+            shared.device.clone(),
+            shared.queue.clone(),
+            shared.introspect.clone(),
+        ))
+    } else if let Some(dvd_path) = cli.dvd.as_ref() {
         let bytes = std::fs::read(dvd_path).with_context(|| format!("read DVD {dvd_path:?}"))?;
-        let result = boot::boot(
+        Some(boot::boot(
             bytes,
             &shared.ipl,
             &shared.dsp_rom,
@@ -100,8 +127,12 @@ fn main() -> Result<()> {
             shared.device.clone(),
             shared.queue.clone(),
             shared.introspect.clone(),
-        );
+        ))
+    } else {
+        None
+    };
 
+    if let Some(result) = initial {
         let mut s = shared.state.lock().unwrap();
         s.backend = Some(result.backend);
         s.game_name = result.game_name;

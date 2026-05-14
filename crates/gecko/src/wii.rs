@@ -45,6 +45,7 @@ impl Wii {
         Self::setup_msr_hid(&mut emu);
         // No disc / TMD available: default to IOS56, TODO
         Self::setup_low_memory_common(&mut emu, ios::ios56());
+        Self::setup_post_ios_handoff(&mut emu);
         emu.load_image(exe);
         emu
     }
@@ -75,6 +76,7 @@ impl Wii {
         Self::setup_bats(&mut emu);
         Self::setup_msr_hid(&mut emu);
         Self::setup_low_memory(&mut emu, dvd.as_ref());
+        Self::setup_post_ios_handoff(&mut emu);
 
         let apploader = *dvd.apploader();
         let apploader_entry = apploader.entrypoint.get();
@@ -137,6 +139,11 @@ impl Wii {
         emu.gekko.spr.hid0 = 0x0011_C664;
         emu.gekko.spr.hid2 = 0xE000_0000;
         emu.gekko.spr.hid4 = 0x8390_0000;
+    }
+
+    fn setup_post_ios_handoff(emu: &mut Wii) {
+        // Seems to be required for libogc? I guess Starlet leaves IPC mask on.
+        emu.hollywood.irq.mask = crate::hollywood::regs::Mask::from_raw(0).with_ipc(true);
     }
 
     // Cross referenced with beanwii and Dolphin!!

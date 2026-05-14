@@ -4,6 +4,7 @@ use backend_wgpu::GxRenderer;
 use gecko::HostInput;
 use gecko::gamecube::GameCube;
 use gecko::wii::Wii;
+use image::Dol;
 
 use crate::sink::{Introspection, McpSink};
 use crate::state::Backend;
@@ -12,6 +13,36 @@ pub struct BootResult {
     pub backend: Backend,
     pub game_name: String,
     pub game_code: String,
+}
+
+fn make_sink(
+    gx: Arc<Mutex<GxRenderer>>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    introspect: Arc<Mutex<Introspection>>,
+) -> Box<McpSink> {
+    Box::new(McpSink {
+        gx,
+        device,
+        queue,
+        introspect,
+    })
+}
+
+fn finalize_wii(mut emu: Wii, dsp_rom: &[u8], coef_rom: &[u8], sink: Box<McpSink>) -> Wii {
+    emu.dsp.load_irom(dsp_rom);
+    emu.dsp.load_coef(coef_rom);
+    emu.render_sink = sink;
+    emu.apply_host_input(&HostInput::wii_neutral());
+    emu
+}
+
+fn finalize_gc(mut emu: GameCube, dsp_rom: &[u8], coef_rom: &[u8], sink: Box<McpSink>) -> GameCube {
+    emu.dsp.load_irom(dsp_rom);
+    emu.dsp.load_coef(coef_rom);
+    emu.render_sink = sink;
+    emu.apply_host_input(&HostInput::gc_connected());
+    emu
 }
 
 pub fn boot(
@@ -33,26 +64,12 @@ pub fn boot(
         .trim_end_matches('\0')
         .to_owned();
 
-    let sink = Box::new(McpSink {
-        gx,
-        device,
-        queue,
-        introspect,
-    });
+    let sink = make_sink(gx, device, queue, introspect);
 
     let backend = if dvd.header().is_wii() {
-        let mut emu = Wii::apploader_hle(dvd).build();
-        emu.dsp.load_irom(dsp_rom);
-        emu.dsp.load_coef(coef_rom);
-        emu.render_sink = sink;
-        emu.apply_host_input(&HostInput::wii_neutral());
-        Backend::Wii(emu)
+        Backend::Wii(finalize_wii(Wii::apploader_hle(dvd).build(), dsp_rom, coef_rom, sink))
     } else {
-        let mut emu = GameCube::with_ipl(ipl, true);
-        emu.dsp.load_irom(dsp_rom);
-        emu.dsp.load_coef(coef_rom);
-        emu.render_sink = sink;
-        emu.apply_host_input(&HostInput::gc_connected());
+        let mut emu = finalize_gc(GameCube::with_ipl(ipl, true), dsp_rom, coef_rom, sink);
         emu.insert_dvd(dvd);
         Backend::Gc(emu)
     };
@@ -61,5 +78,31 @@ pub fn boot(
         backend,
         game_name,
         game_code,
+    }
+}
+
+pub fn boot_dol(
+    dol_bytes: Vec<u8>,
+    wii: bool,
+    dsp_rom: &[u8],
+    coef_rom: &[u8],
+    gx: Arc<Mutex<GxRenderer>>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    introspect: Arc<Mutex<Introspection>>,
+) -> BootResult {
+    let dol = Dol::parse(dol_bytes);
+    let sink = make_sink(gx, device, queue, introspect);
+
+    let backend = if wii {
+        Backend::Wii(finalize_wii(Wii::with_image(&dol), dsp_rom, coef_rom, sink))
+    } else {
+        Backend::Gc(finalize_gc(GameCube::with_image(&dol), dsp_rom, coef_rom, sink))
+    };
+
+    BootResult {
+        backend,
+        game_name: String::new(),
+        game_code: String::new(),
     }
 }
