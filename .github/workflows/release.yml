@@ -26,10 +26,6 @@ jobs:
             target: aarch64-apple-darwin
             suffix: macos-arm64
             dbg_suffix: macos-dbg-arm64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            suffix: macos-x86_64
-            dbg_suffix: macos-dbg-x86_64
 
     runs-on: ${{ matrix.os }}
 
