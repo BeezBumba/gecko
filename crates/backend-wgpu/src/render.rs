@@ -168,6 +168,8 @@ impl GxRenderer {
             self.submit_pending(queue);
         }
 
+        let mut encoder = self.take_or_create_encoder(device);
+
         let entry = self.xfb_copies.entry(id).or_insert_with(|| {
             let texture_label = format!("xfb_copy_tmp id={id} size={width}x{dst_h}");
             let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -218,9 +220,6 @@ impl GxRenderer {
         let group_label = format!(
             "CopyXfb id={id} src=({src_x},{src_y} {width}x{height}) dst_h={dst_h} gamma={gamma:.3} clear={clear}"
         );
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("copy_xfb_encoder"),
-        });
         encoder.push_debug_group(&group_label);
         if needs_shader_copy {
             encoder.insert_debug_marker("CopyXfb path: shader copy for scale/gamma");
@@ -309,7 +308,7 @@ impl GxRenderer {
         }
         encoder.pop_debug_group();
 
-        self.pending_command_buffers.push(encoder.finish());
+        self.current_encoder = Some(encoder);
         if needs_shader_copy {
             self.xfb_copy_uniform_write_pending = true;
         }
@@ -434,9 +433,7 @@ impl GxRenderer {
         let group_label = format!(
             "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={dst_w}x{dst_h} fmt={copy_format:?}"
         );
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("efb_pack_encoder"),
-        });
+        let mut encoder = self.take_or_create_encoder(device);
         encoder.push_debug_group(&group_label);
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -461,7 +458,7 @@ impl GxRenderer {
             rpass.draw(0..3, 0..1);
         }
         encoder.pop_debug_group();
-        self.pending_command_buffers.push(encoder.finish());
+        self.current_encoder = Some(encoder);
         self.xfb_copy_uniform_write_pending = true;
 
         self.efb_copy_cache.insert(
@@ -537,9 +534,7 @@ impl GxRenderer {
         }
 
         let group_label = format!("PresentXfb size={width}x{height} parts={}", parts.len());
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("present_xfb_encoder"),
-        });
+        let mut encoder = self.take_or_create_encoder(device);
         encoder.push_debug_group(&group_label);
 
         // Don't clear the XFB: let previous content persist so partial
@@ -594,7 +589,7 @@ impl GxRenderer {
         }
 
         encoder.pop_debug_group();
-        self.pending_command_buffers.push(encoder.finish());
+        self.current_encoder = Some(encoder);
         self.submit_pending(queue);
         self.xfb_has_content = true;
     }
@@ -667,9 +662,7 @@ impl GxRenderer {
         let group_label = format!(
             "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) fmt={copy_format_enum:?} mip={mipmap} stride={stride} depth={depth_copy}"
         );
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("efb_to_texture_copy_encoder"),
-        });
+        let mut encoder = self.take_or_create_encoder(device);
         encoder.push_debug_group(&group_label);
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
@@ -697,7 +690,7 @@ impl GxRenderer {
             },
         );
         encoder.pop_debug_group();
-        self.pending_command_buffers.push(encoder.finish());
+        self.current_encoder = Some(encoder);
 
         let swap_bgra = matches!(
             self.surface_format,
@@ -793,10 +786,8 @@ impl GxRenderer {
         let staging_size = bytes_per_row * encode_h as u64;
         let (staging, staging_capacity) = self.acquire_readback_staging(device, staging_size);
 
+        let mut encoder = self.take_or_create_encoder(device);
         let (writeback_tex, writeback_view) = self.efb_depth_writeback_target.as_ref().unwrap();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("efb_depth_encoder"),
-        });
         encoder.push_debug_group(&format!(
             "EfbDepth addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={encode_w}x{encode_h}"
         ));

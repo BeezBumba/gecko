@@ -215,13 +215,12 @@ impl EfbClear {
     }
 
     /// Clear a rectangular region with independent RGB, alpha, and depth
-    /// masks. Returns the finished CommandBuffer so the caller can batch
-    /// it with surrounding work; returns None on no-op early-outs
-    /// (all masks off / zero-area / fully clamped away).
+    /// masks. Records into `encoder` so the surrounding frame's work
+    /// shares one persistent encoder.
     pub fn clear_region_masked(
         &self,
-        device: &wgpu::Device,
         queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
         msaa_color_view: &wgpu::TextureView,
         resolve_color_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
@@ -236,14 +235,14 @@ impl EfbClear {
         color_update: bool,
         alpha_update: bool,
         z_update: bool,
-    ) -> Option<wgpu::CommandBuffer> {
+    ) -> bool {
         if !color_update && !alpha_update && !z_update {
-            return None;
+            return false;
         }
 
         if w == 0 || h == 0 {
             tracing::warn!(x, y, w, h, "clear: zero-area clear region, skipping");
-            return None;
+            return false;
         }
 
         let x = x.min(target_width);
@@ -252,7 +251,7 @@ impl EfbClear {
         let h = h.min(target_height.saturating_sub(y));
         if w == 0 || h == 0 {
             tracing::warn!(x, y, w, h, "clear: zero-area after clamping to target, skipping");
-            return None;
+            return false;
         }
 
         // im gonna vomit
@@ -282,9 +281,6 @@ impl EfbClear {
             h,
             clear_mask_label(color_update, alpha_update, z_update)
         );
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("efb_clear_encoder"),
-        });
         encoder.push_debug_group(&group_label);
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -332,7 +328,6 @@ impl EfbClear {
             rpass.draw(0..3, 0..1);
         }
         encoder.pop_debug_group();
-
-        Some(encoder.finish())
+        true
     }
 }

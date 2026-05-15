@@ -239,6 +239,9 @@ pub struct GxRenderer {
     // Region-scoped EFB clear.
     pub(crate) efb_clear: clear::EfbClear,
     pub(crate) pending_command_buffers: Vec<wgpu::CommandBuffer>,
+    /// Persistent encoder accumulating GPU commands across operations within
+    /// a frame.
+    pub(crate) current_encoder: Option<wgpu::CommandEncoder>,
     pub(crate) draw_bufs_write_pending: bool,
     pub(crate) xfb_copy_uniform_write_pending: bool,
     pub(crate) efb_clear_uniform_write_pending: bool,
@@ -766,6 +769,7 @@ impl GxRenderer {
             xfb_copy_uniform_buffer,
             efb_clear,
             pending_command_buffers: Vec::with_capacity(8),
+            current_encoder: None,
             draw_bufs_write_pending: false,
             xfb_copy_uniform_write_pending: false,
             efb_clear_uniform_write_pending: false,
@@ -779,7 +783,21 @@ impl GxRenderer {
         }
     }
 
+    /// Take ownership of the persistent frame encoder, or create a fresh
+    /// one if there isn't one yet. Caller appends commands and must put it
+    /// back via `self.current_encoder = Some(encoder)`.
+    pub(crate) fn take_or_create_encoder(&mut self, device: &wgpu::Device) -> wgpu::CommandEncoder {
+        self.current_encoder.take().unwrap_or_else(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gx_frame_encoder"),
+            })
+        })
+    }
+
     pub(crate) fn submit_pending(&mut self, queue: &wgpu::Queue) {
+        if let Some(encoder) = self.current_encoder.take() {
+            self.pending_command_buffers.push(encoder.finish());
+        }
         if self.pending_command_buffers.is_empty() {
             return;
         }
@@ -811,9 +829,10 @@ impl GxRenderer {
             self.submit_pending(queue);
         }
 
-        if let Some(cb) = self.efb_clear.clear_region_masked(
-            device,
+        let mut encoder = self.take_or_create_encoder(device);
+        let did_clear = self.efb_clear.clear_region_masked(
             queue,
+            &mut encoder,
             &self.efb_msaa_view,
             &self.efb_view,
             &self.efb_depth_view,
@@ -828,8 +847,9 @@ impl GxRenderer {
             color_update,
             alpha_update,
             z_update,
-        ) {
-            self.pending_command_buffers.push(cb);
+        );
+        self.current_encoder = Some(encoder);
+        if did_clear {
             self.efb_clear_uniform_write_pending = true;
         }
     }

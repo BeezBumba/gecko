@@ -588,9 +588,7 @@ impl GxRenderer {
             self.bind_group_cache.insert(self.draw_bg_keys[i].clone(), new_bg);
         }
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("gx_draw_flush_encoder"),
-        });
+        let mut encoder = self.take_or_create_encoder(device);
         #[cfg(feature = "renderdoc-capture")]
         let group_label = format!(
             "GX FIFO Execution / EFB Rendering: draws={} vertices={}",
@@ -787,7 +785,7 @@ impl GxRenderer {
         #[cfg(feature = "renderdoc-capture")]
         encoder.pop_debug_group();
 
-        self.pending_command_buffers.push(encoder.finish());
+        self.current_encoder = Some(encoder);
         self.draw_bufs_write_pending = true;
     }
 
