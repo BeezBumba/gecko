@@ -17,7 +17,7 @@ use gecko::flipper::gx::draw::Primitive;
 use gecko::flipper::gx::draw::{Scissor, TextureFormat, Viewport};
 use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
 
-use gecko::host::{EfbWriteback, TextureKey};
+use gecko::host::TextureKey;
 use glam::Mat4;
 use pipeline::FullPipelineKey;
 use rustc_hash::FxHashMap;
@@ -211,7 +211,6 @@ pub struct GxRenderer {
     pub(crate) efb_depth_resolve_uniform_write_pending: bool,
     pub(crate) efb_readback_staging_pool: FxHashMap<u64, Vec<wgpu::Buffer>>,
     pub(crate) pending_writebacks: Vec<PendingWriteback>,
-    pub(crate) efb_writeback_tx: Option<crossbeam_channel::Sender<EfbWriteback>>,
 }
 
 pub(crate) struct PendingWriteback {
@@ -226,7 +225,6 @@ pub(crate) struct PendingWriteback {
     pub stride: u32,
     pub swap_bgra: bool,
     pub box_filter_downsample: bool,
-    pub label: &'static str,
 }
 
 impl GxRenderer {
@@ -732,17 +730,10 @@ impl GxRenderer {
 
             efb_readback_staging_pool: FxHashMap::default(),
             pending_writebacks: Vec::new(),
-            efb_writeback_tx: None,
 
             efb_depth_writeback_pipeline,
             efb_depth_writeback_target: None,
         }
-    }
-
-    /// Install the sender used to ship encoded EFB-to-texture bytes back
-    /// to the emulator thread. Called by `sink::Renderer` during setup.
-    pub fn set_efb_writeback_tx(&mut self, tx: crossbeam_channel::Sender<EfbWriteback>) {
-        self.efb_writeback_tx = Some(tx);
     }
 
     pub(crate) fn submit_pending(&mut self, queue: &wgpu::Queue) {

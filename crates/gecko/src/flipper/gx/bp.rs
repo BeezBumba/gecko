@@ -1,24 +1,8 @@
 use super::constants::*;
 use super::regs::*;
 use super::{GraphicsProcessor, draw, texture};
-use crate::host::{EfbWriteback, GxAction, RenderSink, TextureKey};
+use crate::host::{GxAction, RenderSink, TextureKey};
 use crate::mmio::{RamView, RamViewMut};
-
-const EFB_WRITEBACK_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
-
-fn efb_copy_will_writeback(src_x: u32, src_y: u32, src_w: u32, src_h: u32, copy_format: u8, depth: bool) -> bool {
-    let w = src_w.min(EFB_WIDTH.saturating_sub(src_x));
-    let h = src_h.min(EFB_HEIGHT.saturating_sub(src_y));
-    if w == 0 || h == 0 {
-        return false;
-    }
-
-    if depth {
-        texture::CopyFormat::from_u8_depth(copy_format).is_some()
-    } else {
-        texture::CopyFormat::from_u8_color(copy_format).is_some()
-    }
-}
 
 impl GraphicsProcessor {
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
@@ -202,14 +186,14 @@ impl GraphicsProcessor {
         // PE finish
         if idx == BP_PE_DONE && (val & BP_PE_DONE_FINISH_BIT) != 0 {
             self.raise_interrupt = true;
-            self.wait_for_efb_writebacks(renderer, ram);
+            renderer.flush_efb_copies(ram);
         }
 
         // PE token (0x47): store token value only
         if idx == BP_PE_TOKEN {
             self.pending_token = (val & 0xFFFF) as u16;
             self.token_dirty = true;
-            self.wait_for_efb_writebacks(renderer, ram);
+            renderer.flush_efb_copies(ram);
         }
 
         // PE token interrupt (0x48): store token value + raise interrupt
@@ -218,7 +202,7 @@ impl GraphicsProcessor {
             self.pending_token = (val & 0xFFFF) as u16;
             self.token_dirty = true;
             self.raise_token_interrupt = true;
-            self.wait_for_efb_writebacks(renderer, ram);
+            renderer.flush_efb_copies(ram);
         }
 
         // Scissor registers (BP 0x20 = TL, 0x21 = BR, 0x59 = OFFSET).
@@ -237,7 +221,7 @@ impl GraphicsProcessor {
 
         // EFB copy trigger (BP 0x52)
         if idx == BP_PE_COPY_CMD {
-            self.efb_copy(renderer, ram, val);
+            self.efb_copy(renderer, val);
         }
     }
 
@@ -438,7 +422,7 @@ impl GraphicsProcessor {
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    fn efb_copy(&mut self, renderer: &mut dyn RenderSink, ram: &mut RamViewMut<'_>, trigger: u32) {
+    fn efb_copy(&mut self, renderer: &mut dyn RenderSink, trigger: u32) {
         let src = EfbCopySrc::from_raw(self.bp_regs[BP_PE_COPY_SRC]);
         let dims = EfbCopyDims::from_raw(self.bp_regs[BP_PE_COPY_DIMS]);
         let src_x = src.left() as u32;
@@ -528,9 +512,6 @@ impl GraphicsProcessor {
             let z_update = self.cur_zmode.update_enable();
 
             let depth_copy = self.cur_pe_control.pixel_format().is_depth_only();
-            if efb_copy_will_writeback(src_x, src_y, src_w, src_h, copy_format, depth_copy) {
-                self.pending_efb_writebacks += 1;
-            }
             renderer.exec(GxAction::CopyEfbToTexture {
                 dest_addr,
                 src_x,
@@ -555,60 +536,7 @@ impl GraphicsProcessor {
             // next snapshot at this address re decodes once the deferred
             // RAM writeback lands.
             self.texture_hashes.retain(|k, _| k.ram_addr != dest_addr);
-
-            self.drain_efb_writebacks(ram);
         }
-    }
-
-    #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    pub fn drain_efb_writebacks(&mut self, ram: &mut RamViewMut<'_>) {
-        let Some(rx) = self.efb_writeback_rx.as_ref() else {
-            return;
-        };
-        while let Ok(wb) = rx.try_recv() {
-            Self::apply_efb_writeback(&mut self.pending_efb_writebacks, ram, wb);
-        }
-    }
-
-    #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    pub fn wait_for_efb_writebacks(&mut self, renderer: &mut dyn RenderSink, ram: &mut RamViewMut<'_>) {
-        if self.pending_efb_writebacks == 0 {
-            return;
-        }
-        renderer.exec(GxAction::FlushEfbWritebacks);
-
-        let Some(rx) = self.efb_writeback_rx.as_ref() else {
-            self.pending_efb_writebacks = 0;
-            return;
-        };
-
-        while self.pending_efb_writebacks > 0 {
-            match rx.recv_timeout(EFB_WRITEBACK_WAIT_TIMEOUT) {
-                Ok(wb) => Self::apply_efb_writeback(&mut self.pending_efb_writebacks, ram, wb),
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        outstanding = self.pending_efb_writebacks,
-                        "efb writeback wait timed out"
-                    );
-                    self.pending_efb_writebacks = 0;
-                    return;
-                }
-            }
-        }
-    }
-
-    #[inline]
-    fn apply_efb_writeback(pending: &mut u32, ram: &mut RamViewMut<'_>, wb: EfbWriteback) {
-        texture::write_strided_copy_to_ram(
-            ram,
-            wb.dest_addr,
-            &wb.bytes,
-            wb.row_bytes,
-            wb.row_count,
-            wb.dest_stride_bytes,
-        );
-        *pending = pending.saturating_sub(1);
     }
 
     fn recompute_scissor(&mut self) {

@@ -349,13 +349,11 @@ fn run<const SYSTEM: SystemId>(
 
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
-    let (renderer, renderer_worker) =
+    let (renderer, sink) =
         backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
 
     emulator.gx.draw_box_recycle_rx = renderer.take_recycle_rx();
-    emulator.render_sink = Box::new(renderer.take_batching_sink());
-
-    emulator.gx.efb_writeback_rx = renderer.take_writeback_rx();
+    emulator.render_sink = Box::new(sink);
 
     let audio_stream = install_audio_sink(args, &mut emulator);
 
@@ -452,10 +450,6 @@ fn run<const SYSTEM: SystemId>(
 
     if let Err(err) = emu_handle.join() {
         tracing::error!(?err, "emu thread panicked");
-    }
-
-    if let Err(err) = renderer_worker.shutdown_and_join() {
-        tracing::error!(?err, "gx-renderer thread panicked");
     }
 
     std::mem::forget(app);

@@ -17,7 +17,7 @@ use crate::flipper::gx::draw::Matrix4;
 use crate::flipper::gx::regs::{
     AlphaCompare, BlendMode, ChanCtrl, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode,
 };
-use crate::host::{DrawData, DrawVertex, EfbWriteback, GxAction, LightData, TextureKey, XfbPart};
+use crate::host::{DrawData, DrawVertex, GxAction, LightData, TextureKey, XfbPart};
 use crate::system::{System, SystemId};
 use rustc_hash::FxHashMap;
 
@@ -95,10 +95,6 @@ pub struct GraphicsProcessor {
     // sends. Keyed by the same `TextureKey` sent to the renderer in
     // [`GxAction::LoadTexture`].
     pub texture_hashes: FxHashMap<TextureKey, u64>,
-    // Receiver for encoded EFB-to-texture bytes coming back from the
-    // renderer worker.
-    pub efb_writeback_rx: Option<crossbeam_channel::Receiver<EfbWriteback>>,
-    pub pending_efb_writebacks: u32,
     pub draw_box_pool: Vec<Box<DrawData>>,
     pub draw_box_recycle_rx: Option<crossbeam_channel::Receiver<Box<DrawData>>>,
 }
@@ -183,8 +179,6 @@ impl GraphicsProcessor {
             #[cfg(feature = "gx-stats")]
             stats: GxStats::default(),
             texture_hashes: FxHashMap::default(),
-            efb_writeback_rx: None,
-            pending_efb_writebacks: 0,
             draw_box_pool: {
                 const POOL_PREALLOC: usize = 1024;
                 let mut v: Vec<Box<crate::host::DrawData>> = Vec::with_capacity(POOL_PREALLOC);

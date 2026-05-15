@@ -98,9 +98,6 @@ pub enum GxAction {
         alpha_supported: bool,
     },
 
-    /// I onyl really added this cause of fuckass GC games acting up (Wario World).
-    FlushEfbWritebacks,
-
     /// Composite all XFB copies from this frame into the output framebuffer.
     /// Emitted once per vblank by `present_xfb()`. Each [`XfbPart`]
     /// identifies a copy by `id` and places it at `(offset_x, offset_y)`.
@@ -140,18 +137,6 @@ pub enum GxAction {
         depth_copy: bool,
         is_intensity: bool,
     },
-}
-
-/// Payload the renderer worker ships back when an EFB-to-texture readback
-/// completes. The emu thread copies `bytes` into `Mmio::ram` at `dest_addr`
-/// at the next safe drain point.
-#[derive(Debug)]
-pub struct EfbWriteback {
-    pub dest_addr: Address,
-    pub bytes: Vec<u8>,
-    pub row_bytes: usize,
-    pub row_count: usize,
-    pub dest_stride_bytes: usize,
 }
 
 /// Identifies one tile in a composited XFB frame. The `id` matches the
@@ -224,23 +209,13 @@ pub struct LightData {
     pub direction: [f32; 4],
 }
 
-/// One-way sink for GX actions. The emulator pushes actions here; the
-/// renderer consumes them (typically on a separate thread).
+/// One-way sink for GX actions. The emulator pushes actions here.
 pub trait RenderSink: Send {
-    /// Submit a single action. Implementations should not block unless
-    /// back-pressure from the renderer requires it.
+    /// Submit a single action.
     fn exec(&mut self, action: GxAction);
 
-    fn actions_sent_total(&self) -> u64 {
-        0
-    }
-
-    fn channel_len(&self) -> usize {
-        0
-    }
-
-    fn channel_capacity(&self) -> Option<usize> {
-        None
+    fn flush_efb_copies(&mut self, ram: &mut crate::mmio::RamViewMut<'_>) {
+        let _ = ram;
     }
 }
 

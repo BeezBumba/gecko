@@ -57,13 +57,6 @@ impl EmulatorVariant {
         }
     }
 
-    fn install_efb_writeback(&mut self, rx: Option<crossbeam_channel::Receiver<gecko::host::EfbWriteback>>) {
-        match self {
-            Self::Gc(e) => e.gx.efb_writeback_rx = rx,
-            Self::Wii(e) => e.gx.efb_writeback_rx = rx,
-        }
-    }
-
     fn install_recycle_rx(&mut self, rx: Option<crossbeam_channel::Receiver<Box<gecko::host::DrawData>>>) {
         match self {
             Self::Gc(e) => e.gx.draw_box_recycle_rx = rx,
@@ -525,13 +518,11 @@ fn main() {
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
     let target_aspect = resolve_aspect(&args.aspect, matches!(emulator, EmulatorVariant::Wii(_)));
-    let (renderer, renderer_worker) =
+    let (renderer, sink) =
         backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
 
     emulator.install_recycle_rx(renderer.take_recycle_rx());
-    emulator.install_render_sink(Box::new(renderer.take_batching_sink()));
-
-    emulator.install_efb_writeback(renderer.take_writeback_rx());
+    emulator.install_render_sink(Box::new(sink));
 
     let ui = DebuggerUi {
         symbols,
@@ -589,10 +580,6 @@ fn main() {
     }
 
     app.emulator.install_audio_sink(Box::new(EmptyAudioSink));
-
-    if let Err(err) = renderer_worker.shutdown_and_join() {
-        eprintln!("gx-renderer thread panicked: {err:?}");
-    }
 
     std::mem::forget(app);
 }

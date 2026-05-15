@@ -1,7 +1,7 @@
 use crate::{GpuVertex, GxRenderer, PendingWriteback, align_up};
 use gecko::common::Address;
 use gecko::flipper::gx::texture::{self, CopyFormat};
-use gecko::host::{EfbWriteback, XfbPart};
+use gecko::host::XfbPart;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -691,7 +691,6 @@ impl GxRenderer {
             stride,
             swap_bgra,
             box_filter_downsample: mipmap,
-            label: "efb_to_texture",
         });
     }
 
@@ -837,7 +836,6 @@ impl GxRenderer {
             stride,
             swap_bgra: false,
             box_filter_downsample: false,
-            label: "efb_depth_writeback",
         });
     }
 
@@ -867,7 +865,12 @@ impl GxRenderer {
         }
     }
 
-    pub(crate) fn drain_pending_writebacks(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub(crate) fn drain_pending_writebacks(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        ram: &mut gecko::mmio::RamViewMut<'_>,
+    ) {
         if self.pending_writebacks.is_empty() {
             return;
         }
@@ -936,17 +939,7 @@ impl GxRenderer {
             let row_count = texture::encoded_row_count(encode_h, w.copy_format);
             let dest_stride_bytes = w.stride as usize;
 
-            if let Some(tx) = &self.efb_writeback_tx {
-                if let Err(err) = tx.try_send(EfbWriteback {
-                    dest_addr: w.dest_addr,
-                    bytes: encoded,
-                    row_bytes,
-                    row_count,
-                    dest_stride_bytes,
-                }) {
-                    tracing::warn!(?err, label = w.label, "writeback channel send failed");
-                }
-            }
+            texture::write_strided_copy_to_ram(ram, w.dest_addr, &encoded, row_bytes, row_count, dest_stride_bytes);
 
             self.return_readback_staging(w.staging, w.staging_capacity);
         }

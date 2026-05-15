@@ -355,12 +355,6 @@ impl GxRenderer {
             GxAction::PresentXfb { width, height, parts } => {
                 self.flush_pending_draws(device, queue);
                 self.execute_present_xfb(device, queue, *width, *height, parts);
-                self.drain_pending_writebacks(device, queue);
-            }
-
-            GxAction::FlushEfbWritebacks => {
-                self.flush_pending_draws(device, queue);
-                self.drain_pending_writebacks(device, queue);
             }
 
             GxAction::CopyEfbToTexture {
