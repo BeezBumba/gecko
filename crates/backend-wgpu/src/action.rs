@@ -158,7 +158,7 @@ impl GxRenderer {
                     height: *height,
                     depth_or_array_layers: 1,
                 };
-                let copy_layout = wgpu::TexelCopyBufferLayout {
+                let direct_copy_layout = wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(*width * 4),
                     rows_per_image: None,
@@ -172,11 +172,20 @@ impl GxRenderer {
                     self.return_to_pool(entry.texture, entry.view);
                 }
 
-                if let Some((cached_fmt, cached_tex, _)) = self.texture_cache.get_mut(&tid) {
+                if let Some((_, cached_tex, _)) = self.texture_cache.get(&tid) {
                     let size = cached_tex.size();
                     if size.width == *width && size.height == *height {
-                        queue.write_texture(cached_tex.as_image_copy(), rgba, copy_layout, copy_size);
-                        *cached_fmt = *fmt;
+                        let cached_tex = cached_tex.clone();
+                        let staged = self.stage_texture_upload(device, &cached_tex, rgba, *width, *height);
+
+                        if !staged {
+                            queue.write_texture(cached_tex.as_image_copy(), rgba, direct_copy_layout, copy_size);
+                        }
+
+                        if let Some((cached_fmt, _, _)) = self.texture_cache.get_mut(&tid) {
+                            *cached_fmt = *fmt;
+                        }
+
                         return;
                     }
                 }
@@ -202,7 +211,10 @@ impl GxRenderer {
                     })
                 });
 
-                queue.write_texture(tex.as_image_copy(), rgba, copy_layout, copy_size);
+                let staged = self.stage_texture_upload(device, &tex, rgba, *width, *height);
+                if !staged {
+                    queue.write_texture(tex.as_image_copy(), rgba, direct_copy_layout, copy_size);
+                }
                 let view = tex.create_view(&Default::default());
 
                 // Cached bind groups still hold the old TextureView for this

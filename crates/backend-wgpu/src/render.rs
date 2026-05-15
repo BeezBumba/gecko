@@ -591,6 +591,9 @@ impl GxRenderer {
         encoder.pop_debug_group();
         self.current_encoder = Some(encoder);
         self.submit_pending(queue);
+        // The staging buffer's in-flight references have just been submitted;
+        // now's the safe moment to grow it if this frame exceeded capacity.
+        self.maybe_grow_texture_staging(device);
         self.xfb_has_content = true;
     }
 
