@@ -1,14 +1,27 @@
 import json
+import sys
 import zipfile
 from pathlib import Path
 
-OUTPUT_PATH = Path(__file__).with_name("game_index.json")
-OUTPUT_TXT_PATH = Path(__file__).with_name("game_index.txt")
+HERE = Path(__file__).parent
 
-ROMS_PATH = Path("\\\\VIBRATOR\\Roms\\Nintendo - GameCube")
+PLATFORMS = {
+    "gc": {
+        "roms_path": Path("/run/user/1000/gvfs/smb-share:server=vibrator.local,share=roms/Nintendo - GameCube"),
+        "output_json": HERE / "game_index.json",
+        "output_txt": HERE / "game_index.txt",
+        "expected_magic": "gc",
+    },
+    "wii": {
+        "roms_path": Path("/run/user/1000/gvfs/smb-share:server=vibrator.local,share=roms/Nintendo - Wii"),
+        "output_json": HERE / "game_index_wii.json",
+        "output_txt": HERE / "game_index_wii.txt",
+        "expected_magic": "wii",
+    },
+}
 
 WHITELIST = ["(USA)"]
-BLACKLIST = [
+GC_BLACKLIST = [
     "Alpha", "Beta", "Proto", "Rev ", "Action Replay", "(v1.", "(Unl)", "Disc 2", "Disc 3", "Demo", "Preview", "Bonus", "Debug"
 ]
 
@@ -16,12 +29,16 @@ RVZ_MAGIC = b"RVZ\x01"
 DISC_HEADER_OFFSET = 0x48 + 0x10
 DISC_HEADER_SIZE = 0x80
 
+WII_MAGIC = b"\x5D\x1C\x9E\xA3"
+GC_MAGIC = b"\xC2\x33\x9F\x3D"
 
-def is_allowed(name: str) -> bool:
+
+def is_allowed(name: str, platform: str) -> bool:
     lower = name.lower()
     if not any(w.lower() in lower for w in WHITELIST):
         return False
-    return not any(b.lower() in lower for b in BLACKLIST)
+    blacklist = GC_BLACKLIST if platform == "gc" else []
+    return not any(b.lower() in lower for b in blacklist)
 
 
 def read_disc_header(fp) -> bytes:
@@ -31,28 +48,41 @@ def read_disc_header(fp) -> bytes:
     return fp.read(DISC_HEADER_SIZE)
 
 
-def parse_header(header: bytes) -> tuple[str, str]:
+def parse_header(header: bytes) -> tuple[str, str, str | None]:
     game_code = header[:4].decode("ascii", errors="replace")
     name_bytes = header[0x20:DISC_HEADER_SIZE].split(b"\x00", 1)[0]
     internal_name = name_bytes.decode("utf-8", errors="replace").strip()
-    return game_code, internal_name
+    if header[0x18:0x1C] == WII_MAGIC:
+        kind = "wii"
+    elif header[0x1C:0x20] == GC_MAGIC:
+        kind = "gc"
+    else:
+        kind = None
+    return game_code, internal_name, kind
 
 
-def index_zip(zip_path: Path) -> tuple[str, str, str] | None:
+def index_zip(zip_path: Path) -> tuple[str, str, str, str | None] | None:
     with zipfile.ZipFile(zip_path) as zf:
         rvz_entries = [n for n in zf.namelist() if n.lower().endswith(".rvz")]
         if not rvz_entries:
             return None
         with zf.open(rvz_entries[0]) as fp:
             header = read_disc_header(fp)
-    game_code, internal_name = parse_header(header)
-    return game_code, internal_name, zip_path.stem
+    game_code, internal_name, kind = parse_header(header)
+    return game_code, internal_name, zip_path.stem, kind
 
 
-def main() -> None:
+def build_platform(platform: str) -> None:
+    cfg = PLATFORMS[platform]
+    roms_path: Path = cfg["roms_path"]
+    output_json: Path = cfg["output_json"]
+    output_txt: Path = cfg["output_txt"]
+    expected_magic: str = cfg["expected_magic"]
+
+    print(f"=== {platform} === scanning {roms_path}")
     collisions: dict[str, list[tuple[str, str]]] = {}
-    for zip_path in sorted(ROMS_PATH.glob("*.zip")):
-        if not is_allowed(zip_path.name):
+    for zip_path in sorted(roms_path.glob("*.zip")):
+        if not is_allowed(zip_path.name, platform):
             continue
         try:
             entry = index_zip(zip_path)
@@ -61,7 +91,10 @@ def main() -> None:
             continue
         if entry is None:
             continue
-        game_code, internal_name, stem = entry
+        game_code, internal_name, stem, kind = entry
+        if kind != expected_magic:
+            print(f"[skip] {zip_path.name}: expected {expected_magic} disc, got {kind!r}")
+            continue
         collisions.setdefault(game_code, []).append((internal_name, stem))
         print(f"{game_code}  {internal_name}  ({stem})")
 
@@ -80,12 +113,23 @@ def main() -> None:
         code: [{"internal_name": name, "filename": stem} for name, stem in entries]
         for code, entries in sorted(collisions.items())
     }
-    OUTPUT_PATH.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\nwrote {OUTPUT_PATH}")
+    output_json.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\nwrote {output_json}")
 
     lines = [f"{code}={entries[0][1]}" for code, entries in sorted(collisions.items())]
-    OUTPUT_TXT_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {OUTPUT_TXT_PATH}")
+    output_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"wrote {output_txt}")
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    targets = args if args else list(PLATFORMS)
+    unknown = [a for a in targets if a not in PLATFORMS]
+    if unknown:
+        print(f"unknown platform(s): {', '.join(unknown)}; valid: {', '.join(PLATFORMS)}")
+        sys.exit(2)
+    for platform in targets:
+        build_platform(platform)
 
 
 if __name__ == "__main__":

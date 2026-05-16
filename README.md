@@ -13,7 +13,15 @@ A cross-platform GameCube/Wii emulator and debugger written in Rust.
 
 ## Status
 
-Gecko is still in development. Support may vary, while many games work very well, most will likely either have varying degrees of visual glitches or are outright broken. Refer to the [screenshot database](https://emu.layle.dev/gecko/) to gauge compatiblity. Gecko is developed with homebrew development and reverse engineering in mind.
+Gecko is still in development. Support may vary, while many games work very well, most will likely have varying degrees of visual glitches or will be outright broken. Refer to the screenshot databases to gauge compatiblity:
+- [GameCube](https://emu.layle.dev/gecko-gc/4ad1a63/)
+- [Wii](https://emu.layle.dev/gecko-wii/4ad1a63/)
+
+Note: Only NTSC games are tracked. The screenshot service makes a best effort attempt to enter games by pressing random buttons. Just because a game doesn't go ingame, doesn't mean it actually doesn't.
+
+## Features
+
+Gecko is developed with homebrew development and reverse engineering in mind, but also aims to provide accuracy and a playable experience!
 
 - PowerPC JIT (Cranelift)
 - DSP JIT (Cranelift)
@@ -41,10 +49,7 @@ Gecko is still in development. Support may vary, while many games work very well
 - [Support for web browser](https://gecko.layle.dev)
   - [incl. debugging capabilities](https://gecko.layle.dev/dbg)
 
-WIP features:
-- IPL HLE backed by [solstice](https://codeberg.org/hazelwiss/solstice)
-
-For **Wii support** use the `dev` branch!
+There is currently **no way to save games** for GameCube. Wii save games are supported naturally via NAND.
 
 ## Projects
 This is a table of the main projects. Refer to `crates/` to find out about all available projects.
@@ -152,11 +157,13 @@ multitool ipl --action decode private/IPL.bin private/IPL.decoded.bin
 ```
 
 ### Wii
-NAND filesystem dump from Dolphin. Place it under `./fs/` or point `GECKO_FS_ROOT` at the directory:
+NAND filesystem dump from Dolphin or a real Wii. Place it under `./fs/` or point `GECKO_FS_ROOT` at the directory:
 
 ```sh
 GECKO_FS_ROOT=/path/to/dolphin-nand tinyapp --dvd wii_game.rvz
 ```
+
+NAND must likely be NTSC.
 
 Reference SHA-256 hashes (these are the files the project is developed against):
 

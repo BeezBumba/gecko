@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-const WORKER_COUNT: usize = 10;
+const WORKER_COUNT: usize = 1;
 const WORKER_BIN: &str = "screenshotter-worker";
 
 fn main() {
