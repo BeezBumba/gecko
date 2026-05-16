@@ -3,14 +3,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-const WORKER_COUNT: usize = 5;
+const WORKER_COUNT: usize = 10;
 const WORKER_BIN: &str = "screenshotter-worker";
 
 fn main() {
     let input_dir = PathBuf::from(
         std::env::args()
             .nth(1)
-            .expect("Please provide a path to a folder of GameCube ISOs/RVZs"),
+            .expect("Please provide a path to a folder of GameCube/Wii ISOs/RVZs"),
     );
     let gamelist = PathBuf::from(
         std::env::args()

@@ -3,7 +3,10 @@ use gecko::HostInput;
 use gecko::flipper::si::pad;
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
+use gecko::hollywood::ipc::usb as wiimote;
 use gecko::host::{GxAction, RenderSink};
+use gecko::system::{System, SystemId};
+use gecko::wii::Wii;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -91,64 +94,126 @@ fn run_one(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::Tex
     let name = name.trim_end_matches('\0').to_owned();
     let code = String::from_utf8_lossy(&image.header().game_code);
     let code = code.trim_end_matches('\0').to_owned();
-    println!("Running: {} ({})", name, code);
+    let is_wii = image.header().is_wii();
+    println!("Running: {} ({}) [{}]", name, code, if is_wii { "Wii" } else { "GC" });
 
     let out_dir = format!("screenshotdb/{}", code);
     std::fs::create_dir_all(&out_dir).expect("Failed to create screenshotdb directory");
 
     let gx = Arc::new(Mutex::new(GxRenderer::new(device, queue, surface_format)));
-
-    let mut gamecube = GameCube::with_ipl(IPL, true);
-    gamecube.dsp.load_irom(DSP);
-    gamecube.dsp.load_coef(COEF);
-
-    let mut input = HostInput::gc_connected();
-    gamecube.apply_host_input(&input);
-
-    gamecube.render_sink = Box::new(SyncSink {
+    let sink = SyncSink {
         gx: gx.clone(),
         device: device.clone(),
         queue: queue.clone(),
         scratch: Vec::new(),
-    });
+    };
 
-    gamecube.insert_dvd(image);
+    if is_wii {
+        let mut wii = Wii::apploader_hle(image).build();
+        wii.dsp.load_irom(DSP);
+        wii.dsp.load_coef(COEF);
+        wii.render_sink = Box::new(sink);
+        drive(
+            &mut wii,
+            device,
+            queue,
+            &gx,
+            &code,
+            HostInput::wii_neutral(),
+            update_wii_input,
+        );
+    } else {
+        let mut gamecube = GameCube::with_ipl(IPL, true);
+        gamecube.dsp.load_irom(DSP);
+        gamecube.dsp.load_coef(COEF);
+        gamecube.render_sink = Box::new(sink);
+        gamecube.insert_dvd(image);
+        drive(
+            &mut gamecube,
+            device,
+            queue,
+            &gx,
+            &code,
+            HostInput::gc_connected(),
+            update_gc_input,
+        );
+    }
+}
 
-    let framerate = match gamecube.vi.dcr.video_format().refresh_rate() {
+fn drive<const SYSTEM: SystemId>(
+    emu: &mut System<SYSTEM>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gx: &Arc<Mutex<GxRenderer>>,
+    code: &str,
+    mut input: HostInput,
+    mut update_input: impl FnMut(&mut HostInput, usize),
+) {
+    emu.apply_host_input(&input);
+
+    let framerate = match emu.vi.dcr.video_format().refresh_rate() {
         RefreshRate::Hz50 => 50,
         RefreshRate::Hz60 => 60,
     };
 
-    // Preliminary for IPL skip
-    for _ in 0..(framerate * 1) {
-        gamecube.run_until_vsync();
+    // Preliminary for IPL skip / boot settle.
+    for _ in 0..framerate {
+        emu.run_until_vsync();
     }
 
     let mut frame: u32 = framerate * 2;
     {
         let g = gx.lock().unwrap();
-        take_screenshot(device, queue, &g, &code, frame);
+        take_screenshot(device, queue, &g, code, frame);
     }
 
     for idx in 0..20 {
-        if let HostInput::Gc(pad) = &mut input {
-            pad.stick_y = pad::STICK_CENTER;
-            pad.buttons = 0;
-
-            if idx == 3 {
-                pad.stick_y = 255;
-            } else if idx > 3 && idx % 5 == 0 {
-                pad.buttons = pad::A | pad::START;
-            }
-        }
-        gamecube.apply_host_input(&input);
+        update_input(&mut input, idx);
+        emu.apply_host_input(&input);
 
         for _ in 0..(framerate * 2) {
-            gamecube.run_until_vsync();
+            emu.run_until_vsync();
             frame += 1;
         }
 
         let g = gx.lock().unwrap();
-        take_screenshot(device, queue, &g, &code, frame);
+        take_screenshot(device, queue, &g, code, frame);
+    }
+}
+
+fn update_gc_input(input: &mut HostInput, idx: usize) {
+    let HostInput::Gc(pad) = input else {
+        return;
+    };
+    pad.stick_y = pad::STICK_CENTER;
+    pad.buttons = 0;
+
+    if idx == 3 {
+        pad.stick_y = 255;
+    } else if idx > 3 && idx % 5 == 0 {
+        pad.buttons = pad::A | pad::START;
+    }
+}
+
+fn update_wii_input(input: &mut HostInput, idx: usize) {
+    let HostInput::Wii {
+        wiimote_buttons,
+        nunchuk_buttons,
+        nunchuk_stick_x,
+        nunchuk_stick_y,
+        ..
+    } = input
+    else {
+        return;
+    };
+    *wiimote_buttons = 0;
+    *nunchuk_buttons = 0;
+    *nunchuk_stick_x = wiimote::NUNCHUK_STICK_CENTER;
+    *nunchuk_stick_y = wiimote::NUNCHUK_STICK_CENTER;
+
+    if idx == 3 {
+        *nunchuk_stick_y = wiimote::NUNCHUK_STICK_MAX;
+    } else if idx > 3 && idx % 5 == 0 {
+        *wiimote_buttons = wiimote::BTN_A | wiimote::BTN_PLUS;
     }
 }
