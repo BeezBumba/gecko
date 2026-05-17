@@ -228,7 +228,6 @@ GECKO_FS_ROOT=/path/to/dolphin-nand tinyapp --dvd wii_game.rvz
 ```
 
 NAND must likely be NTSC.
-
 Reference SHA-256 hashes (these are the files the project is developed against):
 
 | File                         | SHA-256                                                            |
@@ -253,11 +252,14 @@ debugger --dvd game.rvz --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.
 
 The CLI options are largely the same across the sub projects (such as the debugger). For more options, see `--help`.
 
+## Why?
+Why do we get a new Wii emulator? Well, it all started a few years ago. I wanted to do something nostalgic and as a kid I spent countless hour in this one Wii game called *Final Fantasy Crystal Chronicals: The Crystal Bearers*. It wasn't a well received game but I loved it so much, I chose my online persona "Layle" after the main protagonist. I figured it would be cool to spend some years learning about emulation development with the goal to eventually run the game in my own emulator!
+
 ## Sister Projects
 Gecko is being developed alongside other amazing emulators that shaped how Gecko came to be. Without them, Gecko wouldn't exist!
 
-- [lazuli](https://github.com/vxpm/lazuli) authored by vxpm
-- [solstice](https://codeberg.org/hazelwiss/solstice) authored by hazelwiss
-- [beanwii](https://github.com/zaydlang/beanwii) authored by zayd
+- [lazuli](https://github.com/vxpm/lazuli) by vxpm
+- [solstice](https://codeberg.org/hazelwiss/solstice) by hazelwiss
+- [beanwii](https://github.com/zaydlang/beanwii) by zayd
 
-Besides these "sister projects", [Dolphin](https://github.com/dolphin-emu/dolphin) has also been a major contributor and the main reference for when things got tricky ;)
+Besides these "sister projects", [Dolphin](https://github.com/dolphin-emu/dolphin) has also been a major contributor in many ways.
