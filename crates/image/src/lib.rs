@@ -1,6 +1,7 @@
 pub mod dol;
 pub mod dvd;
 pub mod iso;
+#[cfg(feature = "rvz")]
 pub mod rvz;
 
 #[cfg(feature = "symbols")]
@@ -13,6 +14,7 @@ pub mod symbols;
 
 pub use dol::Dol;
 pub use iso::Iso;
+#[cfg(feature = "rvz")]
 pub use rvz::Rvz;
 
 use dvd::{Apploader, Header};
@@ -99,7 +101,14 @@ pub fn load_dvd(data: Vec<u8>) -> Box<dyn Dvd> {
     };
 
     if data.starts_with(b"RVZ\x01") {
-        Box::new(Rvz::parse(data))
+        #[cfg(feature = "rvz")]
+        {
+            Box::new(Rvz::parse(data))
+        }
+        #[cfg(not(feature = "rvz"))]
+        {
+            panic!("RVZ support is not compiled in (enable the `rvz` feature)");
+        }
     } else {
         Box::new(Iso::parse(data))
     }

@@ -72,9 +72,9 @@ jobs:
       - name: Build debugger + multitool (dev profile, with tracing output)
         run: cargo build --profile dev --target ${{ matrix.target }} -p debugger -p multitool
 
-      - name: Patch chipi dispatch strategy (tinyapp only)
-        shell: bash
-        run: perl -pi -e 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/spec/*.bindings.chipi
+      # - name: Patch chipi dispatch strategy (tinyapp only)
+      #   shell: bash
+      #   run: perl -pi -e 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/spec/*.bindings.chipi
 
       - name: Build tinyapp (release)
         run: cargo build --release --package tinyapp --target ${{ matrix.target }}

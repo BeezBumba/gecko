@@ -10,7 +10,7 @@ hotpath = ["dep:hotpath", "hotpath/hotpath", "hotpath/crossbeam"]
 [dependencies]
 wgpu = "28.0.0"
 bytemuck = { version = "1.25.0", features = ["derive"] }
-gecko = { path = "../gecko" }
+gecko = { path = "../gecko", default-features = false }
 chapa = "0.1.2"
 wesl = "0.3.2"
 glam = { version = "0.32.1", features = ["bytemuck"] }
