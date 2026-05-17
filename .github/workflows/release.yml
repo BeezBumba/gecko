@@ -33,9 +33,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Init submodules
-        run: |
-          git submodule update --init --depth 1 --recursive submodules/chipi-spec
-          git submodule update --init --depth 1 --recursive submodules/solstice
+        run: git submodule update --init --depth 1 --recursive submodules/chipi-spec submodules/solstice
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -56,9 +54,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev libasound2-dev
 
-      - name: Enable panic = abort for release builds
+      - name: Install mold linker
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y mold
+          echo 'RUSTFLAGS="-C link-arg=-fuse-ld=mold"' >> $GITHUB_ENV
+
+      - name: Patch Cargo.toml for CI builds
         shell: bash
-        run: perl -pi -e 's/^# panic = "abort"$/panic = "abort"/' Cargo.toml
+        run: |
+          perl -pi -e 's/^# panic = "abort"$/panic = "abort"/' Cargo.toml
+          perl -pi -e 's/^#codegen-units = 1$/codegen-units = 1/' Cargo.toml
 
       - name: Build debugger + multitool (release)
         run: cargo build --release --target ${{ matrix.target }} -p debugger -p multitool
@@ -76,44 +82,26 @@ jobs:
       - name: Build tinyapp (dev profile, with tracing output)
         run: cargo build --profile dev --package tinyapp --target ${{ matrix.target }}
 
-      - name: Package artifacts (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          mkdir -p artifacts
-
-          mkdir -p staging-rel
-          cp target/${{ matrix.target }}/release/tinyapp staging-rel/
-          cp target/${{ matrix.target }}/release/debugger staging-rel/
-          cp target/${{ matrix.target }}/release/multitool staging-rel/
-          cp LICENSE README.md staging-rel/
-          (cd staging-rel && zip ../artifacts/gecko-${{ matrix.suffix }}.zip tinyapp debugger multitool LICENSE README.md)
-
-          mkdir -p staging-dbg
-          cp target/${{ matrix.target }}/debug/tinyapp staging-dbg/
-          cp target/${{ matrix.target }}/debug/debugger staging-dbg/
-          cp target/${{ matrix.target }}/debug/multitool staging-dbg/
-          cp LICENSE README.md staging-dbg/
-          (cd staging-dbg && zip ../artifacts/gecko-${{ matrix.dbg_suffix }}.zip tinyapp debugger multitool LICENSE README.md)
-
-      - name: Package artifacts (Windows)
-        if: runner.os == 'Windows'
+      - name: Package artifacts
         shell: bash
         run: |
+          EXT=""
+          [ "${{ runner.os }}" = "Windows" ] && EXT=".exe"
+
           mkdir -p artifacts
 
-          mkdir -p staging-rel
-          cp target/${{ matrix.target }}/release/tinyapp.exe staging-rel/
-          cp target/${{ matrix.target }}/release/debugger.exe staging-rel/
-          cp target/${{ matrix.target }}/release/multitool.exe staging-rel/
-          cp LICENSE README.md staging-rel/
-          (cd staging-rel && 7z a ../artifacts/gecko-${{ matrix.suffix }}.zip tinyapp.exe debugger.exe multitool.exe LICENSE README.md)
+          package() {
+            local profile=$1 suffix=$2 staging=$3
+            mkdir -p "$staging"
+            cp "target/${{ matrix.target }}/$profile/tinyapp$EXT" "$staging/"
+            cp "target/${{ matrix.target }}/$profile/debugger$EXT" "$staging/"
+            cp "target/${{ matrix.target }}/$profile/multitool$EXT" "$staging/"
+            cp LICENSE README.md "$staging/"
+            (cd "$staging" && 7z a "../artifacts/gecko-$suffix.zip" *)
+          }
 
-          mkdir -p staging-dbg
-          cp target/${{ matrix.target }}/debug/tinyapp.exe staging-dbg/
-          cp target/${{ matrix.target }}/debug/debugger.exe staging-dbg/
-          cp target/${{ matrix.target }}/debug/multitool.exe staging-dbg/
-          cp LICENSE README.md staging-dbg/
-          (cd staging-dbg && 7z a ../artifacts/gecko-${{ matrix.dbg_suffix }}.zip tinyapp.exe debugger.exe multitool.exe LICENSE README.md)
+          package release "${{ matrix.suffix }}" staging-rel
+          package debug   "${{ matrix.dbg_suffix }}" staging-dbg
 
       - uses: actions/upload-artifact@v4
         with:
