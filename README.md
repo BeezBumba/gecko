@@ -21,7 +21,7 @@ Note: Only NTSC games are tracked. The screenshot service makes a best effort at
 
 ## Features
 
-Gecko is developed with homebrew development and reverse engineering in mind, but also aims to provide a faitful and playable experience!
+Gecko is developed with homebrew development and reverse engineering in mind, but also aims to provide a faithful and playable experience!
 
 - PowerPC JIT (Cranelift)
 - DSP JIT (Cranelift)
