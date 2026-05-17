@@ -49,7 +49,7 @@ RUN mkdir -p /out/debug \
 
 
 FROM base AS release-build
-RUN sed -i 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/*.bindings.chipi
+RUN sed -i 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/spec/*.bindings.chipi
 
 RUN cargo build --release \
         --target x86_64-unknown-linux-gnu \

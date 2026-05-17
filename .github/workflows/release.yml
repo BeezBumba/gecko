@@ -74,7 +74,7 @@ jobs:
 
       - name: Patch chipi dispatch strategy (tinyapp only)
         shell: bash
-        run: perl -pi -e 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/*.bindings.chipi
+        run: perl -pi -e 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/spec/*.bindings.chipi
 
       - name: Build tinyapp (release)
         run: cargo build --release --package tinyapp --target ${{ matrix.target }}
