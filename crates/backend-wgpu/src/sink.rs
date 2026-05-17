@@ -2,11 +2,14 @@ use crate::GxRenderer;
 
 use gecko::host::{DrawData, DrawVertex, GxAction, RenderSink};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 pub type FrameReadyCallback = Box<dyn Fn(Instant) + Send + Sync>;
 
-/// Holds the XFB output texture view that the emu thread updates and the
+const WORK_QUEUE_LIMIT: usize = 4096;
+
+/// Holds the XFB output texture view that the render worker updates and the
 /// windowing thread reads for blitting.
 pub struct Shared {
     pub output: Mutex<wgpu::TextureView>,
@@ -21,49 +24,52 @@ pub enum TargetAspect {
     Ratio(f32),
 }
 
-pub struct InlineSink {
+pub struct ThreadedSink {
+    work_tx: crossbeam_channel::Sender<WorkerCommand>,
+    recycled_draw_data_rx: crossbeam_channel::Receiver<Box<DrawData>>,
+    worker_thread: Option<JoinHandle<()>>,
+    scratch: Vec<DrawVertex>,
+    scratch_sent_len: usize,
+}
+
+struct RenderWorker {
     gx: GxRenderer,
     device: wgpu::Device,
     queue: wgpu::Queue,
     shared: Arc<Shared>,
     frame_ready_cb: Arc<OnceLock<FrameReadyCallback>>,
-    recycled_draw_data: Option<Box<DrawData>>,
+    recycled_draw_data_tx: crossbeam_channel::Sender<Box<DrawData>>,
 }
 
-impl RenderSink for InlineSink {
-    fn exec(&mut self, action: GxAction) {
-        self.gx.process_action(&self.device, &self.queue, &action);
+struct ActionMessage {
+    action: GxAction,
+    vertices: Vec<DrawVertex>,
+}
 
-        match action {
-            GxAction::PresentXfb { .. } => {
-                let view = self.gx.xfb_view.clone();
-                *self.shared.output.lock().unwrap() = view;
-                if let Some(cb) = self.frame_ready_cb.get() {
-                    cb(Instant::now());
-                }
+struct EfbDrainRequest {
+    mem1_addr: usize,
+    mem1_len: usize,
+    mem2_addr: usize,
+    mem2_len: usize,
+    done_tx: crossbeam_channel::Sender<()>,
+}
+
+enum WorkerCommand {
+    Action(ActionMessage),
+    DrainEfbCopies(EfbDrainRequest),
+    Shutdown,
+}
+
+impl RenderWorker {
+    fn run(mut self, work_rx: crossbeam_channel::Receiver<WorkerCommand>) {
+        while let Ok(command) = work_rx.recv() {
+            match command {
+                WorkerCommand::Action(message) => self.exec(message),
+                WorkerCommand::DrainEfbCopies(request) => self.drain_efb_copies(request),
+                WorkerCommand::Shutdown => break,
             }
-            GxAction::Draw(boxed) => {
-                self.recycled_draw_data = Some(boxed);
-            }
-            _ => {}
         }
-    }
 
-    fn flush_efb_copies(&mut self, ram: &mut gecko::mmio::RamViewMut<'_>) {
-        self.gx.drain_pending_writebacks(&self.device, &self.queue, ram);
-    }
-
-    fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
-        &mut self.gx.scratch_vertices
-    }
-
-    fn take_draw_data(&mut self) -> Box<DrawData> {
-        self.recycled_draw_data.take().unwrap_or_default()
-    }
-}
-
-impl Drop for InlineSink {
-    fn drop(&mut self) {
         self.gx.submit_pending(&self.queue);
         match self.gx.save_shader_cache() {
             Ok(n) => tracing::info!(num_variants = n, "saved shader cache"),
@@ -73,6 +79,124 @@ impl Drop for InlineSink {
             Ok(n) => tracing::info!(num_pipelines = n, "saved pipeline cache"),
             Err(err) => tracing::warn!(?err, "failed to save pipeline cache"),
         }
+    }
+
+    fn exec(&mut self, message: ActionMessage) {
+        if !message.vertices.is_empty() {
+            self.gx.scratch_vertices.extend_from_slice(&message.vertices);
+        }
+
+        let resets_scratch = action_resets_vertex_scratch(&message.action);
+        self.gx.process_action(&self.device, &self.queue, &message.action);
+
+        match message.action {
+            GxAction::PresentXfb { .. } => {
+                let view = self.gx.xfb_view.clone();
+                *self.shared.output.lock().unwrap() = view;
+                if let Some(cb) = self.frame_ready_cb.get() {
+                    cb(Instant::now());
+                }
+            }
+            GxAction::Draw(boxed) => {
+                let _ = self.recycled_draw_data_tx.send(boxed);
+            }
+            _ => {}
+        }
+
+        if resets_scratch {
+            self.gx.scratch_vertices.clear();
+        }
+    }
+
+    fn drain_efb_copies(&mut self, request: EfbDrainRequest) {
+        let mut ram = unsafe {
+            // The emu thread blocks on `done_tx` and holds the only mutable
+            // RamViewMut while this command runs. FIFO channel ordering also
+            // ensures all prior EFB copy commands have reached the worker.
+            let mem1 = std::slice::from_raw_parts_mut(request.mem1_addr as *mut u8, request.mem1_len);
+            let mem2 = std::slice::from_raw_parts_mut(request.mem2_addr as *mut u8, request.mem2_len);
+            gecko::mmio::RamViewMut { mem1, mem2 }
+        };
+        self.gx.drain_pending_writebacks(&self.device, &self.queue, &mut ram);
+        let _ = request.done_tx.send(());
+    }
+}
+
+impl ThreadedSink {
+    fn pending_vertices(&mut self) -> Vec<DrawVertex> {
+        if self.scratch.len() <= self.scratch_sent_len {
+            return Vec::new();
+        }
+
+        let vertices = self.scratch[self.scratch_sent_len..].to_vec();
+        self.scratch_sent_len = self.scratch.len();
+        vertices
+    }
+}
+
+impl RenderSink for ThreadedSink {
+    fn exec(&mut self, action: GxAction) {
+        let resets_scratch = action_resets_vertex_scratch(&action);
+        let message = ActionMessage {
+            action,
+            vertices: self.pending_vertices(),
+        };
+
+        self.work_tx
+            .send(WorkerCommand::Action(message))
+            .expect("render worker thread stopped");
+
+        if resets_scratch {
+            self.scratch.clear();
+            self.scratch_sent_len = 0;
+        }
+    }
+
+    fn flush_efb_copies(&mut self, ram: &mut gecko::mmio::RamViewMut<'_>) {
+        let (done_tx, done_rx) = crossbeam_channel::bounded(0);
+        let request = EfbDrainRequest {
+            mem1_addr: ram.mem1.as_mut_ptr() as usize,
+            mem1_len: ram.mem1.len(),
+            mem2_addr: ram.mem2.as_mut_ptr() as usize,
+            mem2_len: ram.mem2.len(),
+            done_tx,
+        };
+
+        self.work_tx
+            .send(WorkerCommand::DrainEfbCopies(request))
+            .expect("render worker thread stopped");
+        done_rx.recv().expect("render worker thread stopped");
+    }
+
+    fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
+        &mut self.scratch
+    }
+
+    fn take_draw_data(&mut self) -> Box<DrawData> {
+        self.recycled_draw_data_rx.try_recv().unwrap_or_default()
+    }
+}
+
+impl Drop for ThreadedSink {
+    fn drop(&mut self) {
+        if let Some(worker_thread) = self.worker_thread.take() {
+            let _ = self.work_tx.send(WorkerCommand::Shutdown);
+            if let Err(err) = worker_thread.join() {
+                tracing::error!(?err, "render worker thread panicked");
+            }
+        }
+    }
+}
+
+fn action_resets_vertex_scratch(action: &GxAction) -> bool {
+    match action {
+        GxAction::InvalidateCaches
+        | GxAction::CopyXfb { .. }
+        | GxAction::PresentXfb { .. }
+        | GxAction::CopyEfbToTexture { .. } => true,
+        #[cfg(not(target_arch = "wasm32"))]
+        GxAction::DumpTextures { .. } => true,
+        _ => false,
     }
 }
 
@@ -95,7 +219,7 @@ impl Renderer {
         queue: wgpu::Queue,
         surface_format: wgpu::TextureFormat,
         target_aspect: TargetAspect,
-    ) -> (Self, InlineSink) {
+    ) -> (Self, ThreadedSink) {
         let mut gx = GxRenderer::new(&device, &queue, surface_format);
         gx.prewarm_pipeline_cache(&device);
 
@@ -172,13 +296,27 @@ impl Renderer {
 
         let frame_ready_cb: Arc<OnceLock<FrameReadyCallback>> = Arc::new(OnceLock::new());
 
-        let sink = InlineSink {
+        let (work_tx, work_rx) = crossbeam_channel::bounded(WORK_QUEUE_LIMIT);
+        let (recycled_draw_data_tx, recycled_draw_data_rx) = crossbeam_channel::unbounded();
+        let worker = RenderWorker {
             gx,
             device: device.clone(),
             queue,
             shared: shared.clone(),
             frame_ready_cb: frame_ready_cb.clone(),
-            recycled_draw_data: None,
+            recycled_draw_data_tx,
+        };
+        let worker_thread = std::thread::Builder::new()
+            .name("backend-wgpu render".to_string())
+            .spawn(move || worker.run(work_rx))
+            .expect("failed to spawn render worker thread");
+
+        let sink = ThreadedSink {
+            work_tx,
+            recycled_draw_data_rx,
+            worker_thread: Some(worker_thread),
+            scratch: Vec::new(),
+            scratch_sent_len: 0,
         };
 
         let renderer = Renderer {

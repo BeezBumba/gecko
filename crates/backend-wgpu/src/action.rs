@@ -117,8 +117,8 @@ impl GxRenderer {
         }
     }
 
-    /// Process a single [`GxAction`]. Called inline on the emu thread by
-    /// [`InlineSink::exec`]. Draws are accumulated and flushed lazily when a
+    /// Process a single [`GxAction`]. Called on the render worker by the
+    /// backend-wgpu sink. Draws are accumulated and flushed lazily when a
     /// non-draw action arrives.
     pub fn process_action(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, action: &GxAction) {
         let draw_stride = self.draw_uniform_stride as usize;
