@@ -144,9 +144,9 @@ impl State {
         }
 
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!(?e, "surface error");
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            status => {
+                tracing::error!(?status, "surface error");
                 return;
             }
         };

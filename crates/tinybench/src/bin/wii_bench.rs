@@ -28,17 +28,6 @@ struct Args {
     no_jit_cache: bool,
 }
 
-fn game_id_from_header(header: &image::dvd::Header) -> String {
-    let mut buf = String::with_capacity(6);
-    for &b in &header.game_code {
-        buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
-    }
-    for &b in &header.maker_code {
-        buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
-    }
-    buf
-}
-
 fn main() {
     let args = Args::parse();
 
@@ -46,7 +35,7 @@ fn main() {
     let dvd = image::load_dvd(dvd_data);
     assert!(dvd.header().is_wii(), "wii_bench requires a Wii disc");
 
-    let game_id = game_id_from_header(dvd.header());
+    let game_id = dvd.header().game_id();
 
     let mut emulator = Wii::apploader_hle(dvd).build();
 

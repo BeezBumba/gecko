@@ -14,12 +14,12 @@ gecko = { path = "../gecko", default-features = false }
 image = { path = "../image", default-features = false }
 backend-wgpu = { path = "../backend-wgpu" }
 dbglib = { path = "../dbglib", optional = true }
-egui-phosphor = { version = "0.11.0", optional = true, features = ["fill"] }
-wgpu = "28.0.0"
+egui-phosphor = { version = "0.12.0", optional = true, features = ["fill"] }
+wgpu = "29.0.3"
 winit = { version = "0.30.13", features = ["rwh_06"] }
-egui = "0.33.3"
-egui-wgpu = "0.33.3"
-egui-winit = { version = "0.33.3", default-features = false, features = ["links"] }
+egui = "0.34.2"
+egui-wgpu = "0.34.2"
+egui-winit = { version = "0.34.2", default-features = false, features = ["links"] }
 wasm-bindgen = "0.2.117"
 wasm-bindgen-futures = "0.4.67"
 web-sys = { version = "0.3.94", features = [
@@ -37,11 +37,3 @@ web-sys = { version = "0.3.94", features = [
 ] }
 console_error_panic_hook = "0.1.7"
 getrandom = { version = "0.3", features = ["wasm_js"] }
-
-[patch.crates-io]
-egui = { git = "https://github.com/ioncodes/egui.git" }
-epaint = { git = "https://github.com/ioncodes/egui.git" }
-emath = { git = "https://github.com/ioncodes/egui.git" }
-ecolor = { git = "https://github.com/ioncodes/egui.git" }
-egui-wgpu = { git = "https://github.com/ioncodes/egui.git" }
-egui-winit = { git = "https://github.com/ioncodes/egui.git" }

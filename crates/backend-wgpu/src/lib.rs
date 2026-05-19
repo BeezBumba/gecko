@@ -366,7 +366,7 @@ impl GxRenderer {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gx_pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -548,7 +548,7 @@ impl GxRenderer {
 
         let xfb_copy_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("xfb_copy_layout"),
-            bind_group_layouts: &[&xfb_copy_bind_group_layout],
+            bind_group_layouts: &[Some(&xfb_copy_bind_group_layout)],
             immediate_size: 0,
         });
         let xfb_copy_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -629,7 +629,7 @@ impl GxRenderer {
         });
         let efb_depth_resolve_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("efb_depth_pack_layout"),
-            bind_group_layouts: &[&efb_depth_resolve_bg_layout],
+            bind_group_layouts: &[Some(&efb_depth_resolve_bg_layout)],
             immediate_size: 0,
         });
         let efb_depth_resolve_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1004,30 +1004,45 @@ impl GxRenderer {
 
         let t0 = std::time::Instant::now();
 
-        let num_threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-            .min(keys.len());
-        let chunk_size = keys.len().div_ceil(num_threads);
+        // wgpu 29's WebGPU backend wraps JS handles in Rc<Cell<_>>, making
+        // Device/Queue !Send — so the threaded compile path can't even
+        // type-check on wasm32. Fall back to a sequential pass there.
+        #[cfg(not(target_arch = "wasm32"))]
+        let compiled: Vec<(pipeline::FullPipelineKey, wgpu::RenderPipeline)> = {
+            let num_threads = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .min(keys.len());
+            let chunk_size = keys.len().div_ceil(num_threads);
 
-        let self_ref = &*self;
-        let compiled: Vec<(pipeline::FullPipelineKey, wgpu::RenderPipeline)> = std::thread::scope(|s| {
-            let handles: Vec<_> = keys
-                .chunks(chunk_size)
-                .map(|chunk| {
-                    s.spawn(move || {
-                        chunk
-                            .iter()
-                            .map(|&k| {
-                                let module = &self_ref.shader_cache[&k.shader];
-                                (k, self_ref.create_pipeline(device, module, &k))
-                            })
-                            .collect::<Vec<_>>()
+            let self_ref = &*self;
+            std::thread::scope(|s| {
+                let handles: Vec<_> = keys
+                    .chunks(chunk_size)
+                    .map(|chunk| {
+                        s.spawn(move || {
+                            chunk
+                                .iter()
+                                .map(|&k| {
+                                    let module = &self_ref.shader_cache[&k.shader];
+                                    (k, self_ref.create_pipeline(device, module, &k))
+                                })
+                                .collect::<Vec<_>>()
+                        })
                     })
-                })
-                .collect();
-            handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
-        });
+                    .collect();
+                handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+            })
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        let compiled: Vec<(pipeline::FullPipelineKey, wgpu::RenderPipeline)> = keys
+            .iter()
+            .map(|&k| {
+                let module = &self.shader_cache[&k.shader];
+                (k, self.create_pipeline(device, module, &k))
+            })
+            .collect();
 
         for (k, p) in compiled {
             self.pipeline_cache.insert(k, p);

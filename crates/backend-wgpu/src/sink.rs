@@ -1,16 +1,25 @@
-use crate::GxRenderer;
+use gecko::host::GxAction;
 
-use gecko::host::{DrawData, DrawVertex, GxAction, RenderSink};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::GxRenderer;
+#[cfg(not(target_arch = "wasm32"))]
+use gecko::host::{DrawData, DrawVertex, RenderSink};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread::JoinHandle;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub type FrameReadyCallback = Box<dyn Fn(Instant) + Send + Sync>;
 
+#[cfg(not(target_arch = "wasm32"))]
 const WORK_QUEUE_LIMIT: usize = 4096;
 
 /// Holds the XFB output texture view that the render worker updates and the
 /// windowing thread reads for blitting.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Shared {
     pub output: Mutex<wgpu::TextureView>,
 }
@@ -24,6 +33,7 @@ pub enum TargetAspect {
     Ratio(f32),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ThreadedSink {
     work_tx: crossbeam_channel::Sender<WorkerCommand>,
     recycled_draw_data_rx: crossbeam_channel::Receiver<Box<DrawData>>,
@@ -32,6 +42,7 @@ pub struct ThreadedSink {
     scratch_sent_len: usize,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct RenderWorker {
     gx: GxRenderer,
     device: wgpu::Device,
@@ -41,11 +52,13 @@ struct RenderWorker {
     recycled_draw_data_tx: crossbeam_channel::Sender<Box<DrawData>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct ActionMessage {
     action: GxAction,
     vertices: Vec<DrawVertex>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct EfbDrainRequest {
     mem1_addr: usize,
     mem1_len: usize,
@@ -54,12 +67,14 @@ struct EfbDrainRequest {
     done_tx: crossbeam_channel::Sender<()>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 enum WorkerCommand {
     Action(ActionMessage),
     DrainEfbCopies(EfbDrainRequest),
     Shutdown,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl RenderWorker {
     fn run(mut self, work_rx: crossbeam_channel::Receiver<WorkerCommand>) {
         while let Ok(command) = work_rx.recv() {
@@ -122,6 +137,7 @@ impl RenderWorker {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ThreadedSink {
     fn pending_vertices(&mut self) -> Vec<DrawVertex> {
         if self.scratch.len() <= self.scratch_sent_len {
@@ -134,6 +150,7 @@ impl ThreadedSink {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl RenderSink for ThreadedSink {
     fn exec(&mut self, action: GxAction) {
         let resets_scratch = action_resets_vertex_scratch(&action);
@@ -177,6 +194,7 @@ impl RenderSink for ThreadedSink {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for ThreadedSink {
     fn drop(&mut self) {
         if let Some(worker_thread) = self.worker_thread.take() {
@@ -188,7 +206,7 @@ impl Drop for ThreadedSink {
     }
 }
 
-fn action_resets_vertex_scratch(action: &GxAction) -> bool {
+pub fn action_resets_vertex_scratch(action: &GxAction) -> bool {
     match action {
         GxAction::InvalidateCaches
         | GxAction::CopyXfb { .. }
@@ -200,6 +218,7 @@ fn action_resets_vertex_scratch(action: &GxAction) -> bool {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct Renderer {
     shared: Arc<Shared>,
@@ -213,6 +232,7 @@ pub struct Renderer {
     renderdoc: Arc<Mutex<crate::renderdoc_capture::RenderDocCapture>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Renderer {
     pub fn new(
         device: wgpu::Device,
@@ -256,7 +276,7 @@ impl Renderer {
         });
         let blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("blit_layout"),
-            bind_group_layouts: &[&blit_bind_group_layout],
+            bind_group_layouts: &[Some(&blit_bind_group_layout)],
             immediate_size: 0,
         });
         let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -392,6 +412,28 @@ impl Renderer {
     /// XFB to `self.target_aspect`. Called by the windowing thread on each
     /// redraw.
     pub fn blit(&self, queue: &wgpu::Queue, target: &wgpu::TextureView, target_size: (u32, u32)) {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("xfb_blit_encoder"),
+        });
+        self.blit_into_encoder(
+            &mut encoder,
+            target,
+            target_size,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
+        queue.submit([encoder.finish()]);
+    }
+
+    /// `blit` variant that writes into a caller-owned encoder, so the blit can
+    /// land inside someone else's frame command buffer (e.g. iced's shader
+    /// widget) instead of being submitted on its own.
+    pub fn blit_into_encoder(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        target_size: (u32, u32),
+        load: wgpu::LoadOp<wgpu::Color>,
+    ) {
         let output = self.shared.output.lock().unwrap();
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("blit_bg"),
@@ -409,9 +451,6 @@ impl Renderer {
         });
         drop(output);
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("xfb_blit_encoder"),
-        });
         encoder.push_debug_group("XFB Blit To Surface");
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -420,7 +459,7 @@ impl Renderer {
                     view: target,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -438,7 +477,6 @@ impl Renderer {
             rpass.draw(0..3, 0..1);
         }
         encoder.pop_debug_group();
-        queue.submit([encoder.finish()]);
     }
 }
 

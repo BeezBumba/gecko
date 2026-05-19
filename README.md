@@ -63,6 +63,23 @@ Prebuilt releases (including debug builds) can be downloaded [here](https://gith
 ./tinyapp --dsp dsp_rom.bin --coef dsp_coef.bin --dvd YourGame.rvz
 ```
 
+A more modern and friendly experience is provided via `gecko` ([short preview on YouTube](https://www.youtube.com/watch?v=wg62ie71JP0)):
+
+![launcher](images/launcher.png)
+
+It scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` files. Double-clicking on a row opens a dedicated player window for that game. The decoded GameCube IPL and DSP files are expected to be inside the `system` folder and **must** be named exactly as follows:
+
+```
+<gecko exe dir>/
+  config.toml                # settings
+  cache/library.bin          # cached library
+  system/                    # system file folder (!)
+    IPL.bin                  # GameCube only
+    dsp_rom.bin              # GameCube and Wii
+    dsp_coef.bin             # GameCube and Wii
+  fs/                        # Wii only (NAND from Dolphin or real console)
+```
+
 ### Controls
 
 Keybindings are currently hardcoded into `tinyapp` and `debugger`!
@@ -121,6 +138,7 @@ This is a table of the main projects. Refer to `crates/` to find out about all a
 
 | Crate       | Description                                                                                                                     |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `app`       | End-user library browser (binary name `gecko`): iced-based game list, double-click to play, per-game player window                |
 | `tinyapp`   | Lightweight emulator application with an egui/wgpu GUI, optional Lua scripting                                                  |
 | `debugger`  | Interactive GUI debugger built on egui with rendering support, hooks and scripting capabilities                                 |
 | `web`       | WebAssembly build of the emulator for browser deployment via wasm-bindgen, with optional debug UI                               |
@@ -132,7 +150,8 @@ This is a table of the main projects. Refer to `crates/` to find out about all a
 git submodule init && git submodule update
 
 cargo build -p multitool --release                               # multitool
-cargo build -p tinyapp --release                                 # main application
+cargo build -p tinyapp --release                                 # tinyapp
+cargo build -p gecko-app --release                               # library shell (binary: gecko)
 cargo build -p debugger --release                                # debugger
 wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 ```

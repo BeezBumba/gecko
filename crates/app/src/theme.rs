@@ -64,7 +64,7 @@ pub fn theme(palette: &Palette) -> Theme {
     let name = if palette.is_dark { "Gecko Dark" } else { "Gecko Light" };
     Theme::custom(
         name.to_owned(),
-        iced::theme::Palette {
+        iced::theme::palette::Seed {
             background: palette.bg,
             text: palette.text,
             primary: palette.accent,

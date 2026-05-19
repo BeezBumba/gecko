@@ -242,7 +242,7 @@ fn main() {
     } else if let Some(ref dvd_path) = args.dvd {
         let dvd_data = std::fs::read(dvd_path).expect("failed to read DVD");
         let dvd = image::load_dvd(dvd_data);
-        let game_id = self::game_id_from_header(dvd.header());
+        let game_id = dvd.header().game_id();
         if dvd.header().is_wii() {
             tracing::info!("Detected Wii disc, booting via apploader HLE");
             let builder = Wii::apploader_hle(dvd);
@@ -265,20 +265,6 @@ fn main() {
     } else {
         panic!("provide one of --dol, --ipl, or --dvd");
     }
-}
-
-fn game_id_from_header(header: &image::dvd::Header) -> String {
-    let mut buf = String::with_capacity(6);
-
-    for &b in &header.game_code {
-        buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
-    }
-
-    for &b in &header.maker_code {
-        buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
-    }
-
-    buf
 }
 
 fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args) {
@@ -332,9 +318,9 @@ fn run<const SYSTEM: SystemId>(
     game_id: Option<String>,
 ) {
     let target_aspect = resolve_aspect(&args.aspect, SYSTEM);
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
-        ..Default::default()
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

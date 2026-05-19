@@ -46,13 +46,23 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 ";
 
+/// One queued [`GxAction`] alongside the vertices appended to the sink's
+/// scratch buffer since the previous action. The main-thread drainer
+/// extends the renderer's `scratch_vertices` with `vertices` *before*
+/// processing `action`, so each draw's `base_vertex` indexes correctly
+/// even when an earlier action (e.g. `CopyXfb`) cleared the renderer's
+/// scratch mid-batch.
+struct ActionMessage {
+    action: GxAction,
+    vertices: Vec<DrawVertex>,
+}
+
 /// Shared between [`WebSink`] (running on the emulator side) and the main
 /// thread that drains the queue. The `epoch` is bumped each time the main
 /// thread drains; the sink uses it to know when to reset its mirrored
 /// vertex scratch.
 struct WebSinkShared {
-    actions: Vec<GxAction>,
-    scratch: Vec<DrawVertex>,
+    messages: Vec<ActionMessage>,
     epoch: u64,
 }
 
@@ -61,10 +71,16 @@ type WebSinkQueue = Arc<Mutex<WebSinkShared>>;
 /// RenderSink that queues actions for synchronous processing on the main thread.
 struct WebSink {
     shared: WebSinkQueue,
-    /// Mirror of `shared.scratch`, written by the gecko side via
-    /// [`RenderSink::vertex_scratch`]. Synced into `shared.scratch` on every
-    /// `exec`. Cleared when the main thread bumps `shared.epoch`.
+    /// Vertex scratch handed to the gecko side via
+    /// [`RenderSink::vertex_scratch`]. Cleared when the main thread bumps
+    /// `shared.epoch` (frame boundary) and again on any action that resets
+    /// the renderer's scratch — keeping the gecko side's `base_vertex` in
+    /// step with the per-message deltas we ship to the drainer.
     scratch: Vec<DrawVertex>,
+    /// How much of `scratch` has been shipped in a prior `exec` message.
+    /// New vertices appended past this index are the delta for the next
+    /// message.
+    scratch_sent_len: usize,
     last_epoch: u64,
 }
 
@@ -73,19 +89,29 @@ impl RenderSink for WebSink {
         let mut s = self.shared.lock().unwrap();
         if s.epoch != self.last_epoch {
             self.scratch.clear();
+            self.scratch_sent_len = 0;
             self.last_epoch = s.epoch;
         }
-        if self.scratch.len() > s.scratch.len() {
-            let start = s.scratch.len();
-            s.scratch.extend_from_slice(&self.scratch[start..]);
+        let vertices = if self.scratch.len() > self.scratch_sent_len {
+            self.scratch[self.scratch_sent_len..].to_vec()
+        } else {
+            Vec::new()
+        };
+        self.scratch_sent_len = self.scratch.len();
+        let resets = backend_wgpu::sink::action_resets_vertex_scratch(&action);
+        s.messages.push(ActionMessage { action, vertices });
+        drop(s);
+        if resets {
+            self.scratch.clear();
+            self.scratch_sent_len = 0;
         }
-        s.actions.push(action);
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
         let s = self.shared.lock().unwrap();
         if s.epoch != self.last_epoch {
             self.scratch.clear();
+            self.scratch_sent_len = 0;
             self.last_epoch = s.epoch;
         }
         drop(s);
@@ -119,9 +145,9 @@ fn now_ms() -> f64 {
 
 impl State {
     async fn new(window: Arc<Window>) -> Self {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
 
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -192,7 +218,7 @@ impl State {
         });
         let blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&blit_bind_group_layout],
+            bind_group_layouts: &[Some(&blit_bind_group_layout)],
             immediate_size: 0,
         });
         let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -304,22 +330,31 @@ impl State {
         #[cfg(not(feature = "debug"))]
         emulator.run_until_vsync();
 
-        // Drain queued GxActions and the matching vertex scratch.
-        let (actions, scratch): (Vec<GxAction>, Vec<DrawVertex>) = {
+        // Drain queued action messages.
+        let messages: Vec<ActionMessage> = {
             let mut s = action_queue.lock().unwrap();
             s.epoch = s.epoch.wrapping_add(1);
-            (std::mem::take(&mut s.actions), std::mem::take(&mut s.scratch))
+            std::mem::take(&mut s.messages)
         };
-        // Make the drained scratch the renderer's vertex buffer for this drain so
-        // each `Draw` action's `base_vertex` indexes into it correctly.
-        let _old = self.gx_renderer.replace_vertex_scratch(scratch);
-        for action in &actions {
-            self.gx_renderer.process_action(&self.device, &self.queue, action);
+        // Start the frame with an empty external scratch; each message
+        // contributes its vertex delta to it before its action runs, and
+        // actions that flush the renderer's scratch truncate the external
+        // one back to zero in lockstep.
+        let mut external_scratch = self.gx_renderer.replace_vertex_scratch(Vec::new());
+        external_scratch.clear();
+        for msg in messages {
+            external_scratch.extend_from_slice(&msg.vertices);
+            self.gx_renderer.process_action_with_external_scratch(
+                &self.device,
+                &self.queue,
+                &msg.action,
+                &mut external_scratch,
+            );
         }
 
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(_) => return,
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            _ => return,
         };
         let view = frame.texture.create_view(&Default::default());
 
@@ -538,13 +573,13 @@ pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8
 
     // Install the WebSink as the emulator's render sink.
     let action_queue: WebSinkQueue = Arc::new(Mutex::new(WebSinkShared {
-        actions: Vec::new(),
-        scratch: Vec::new(),
+        messages: Vec::new(),
         epoch: 0,
     }));
     emulator.render_sink = Box::new(WebSink {
         shared: action_queue.clone(),
         scratch: Vec::new(),
+        scratch_sent_len: 0,
         last_epoch: 0,
     });
 

@@ -64,6 +64,17 @@ impl Header {
     pub fn is_ntsc(&self) -> bool {
         matches!(self.game_code[3], b'E' | b'B' | b'N' | b'J' | b'W' | b'K' | b'Q' | b'T')
     }
+
+    pub fn game_id(&self) -> String {
+        let mut buf = String::with_capacity(6);
+        for &b in &self.game_code {
+            buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
+        }
+        for &b in &self.maker_code {
+            buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
+        }
+        buf
+    }
 }
 
 #[repr(C, packed)]

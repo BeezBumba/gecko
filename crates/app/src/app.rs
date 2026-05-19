@@ -1,20 +1,30 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use iced::theme::Mode;
 use iced::widget::{button, column, container, mouse_area, scrollable, stack, text};
-use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme};
+use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, window};
 
 use crate::cache::{self, LibraryCache};
 use crate::config::{self, Config};
 use crate::game::{CpuMode, Game, Platform, ThemePreference};
 use crate::library::{self, ScanProgress};
+use crate::player::{self, PlayerState, PlayerStatus};
 use crate::theme::{self, Palette};
 use crate::widgets::{game_row, menubar, search_bar, statusbar};
 
 const REPO_URL: &str = "https://github.com/ioncodes/gecko";
+const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Noop,
+    LibraryWindowOpened(window::Id),
+    PlayerWindowOpened(window::Id, Box<Game>, Arc<PlayerState>),
+    PlayerTick,
+    WindowClosed(window::Id),
     LibraryPicked(Platform, Option<PathBuf>),
     ScanRequested,
     ScanProgress(ScanProgress),
@@ -23,13 +33,20 @@ pub enum Message {
     MenuRescan,
     MenuQuit,
     MenuToggleCpu(CpuMode),
+    MenuToggleSkipIpl,
     MenuSetTheme(ThemePreference),
     MenuAbout,
     AboutClose,
     OpenRepo,
     GameClicked(usize),
+    LaunchPlayer(usize),
     SystemThemeLoaded(Mode),
     SystemThemeChanged(Mode),
+}
+
+pub struct PlayerWindow {
+    pub(crate) game: Game,
+    pub(crate) state: Arc<PlayerState>,
 }
 
 pub struct App {
@@ -44,10 +61,13 @@ pub struct App {
     about_open: bool,
     system_mode: Mode,
     palette: Palette,
+    last_click: Option<(usize, Instant)>,
+    library_window: Option<window::Id>,
+    players: HashMap<window::Id, PlayerWindow>,
 }
 
 impl App {
-    pub fn new(cli_gcn: Option<PathBuf>, cli_wii: Option<PathBuf>) -> (Self, Task<Message>) {
+    pub fn boot(cli_gcn: Option<PathBuf>, cli_wii: Option<PathBuf>) -> (Self, Task<Message>) {
         let config = config::load(&config::config_path());
         let cache = cache::load(&cache::cache_path());
 
@@ -70,9 +90,18 @@ impl App {
             about_open: false,
             system_mode: Mode::Light,
             palette,
+            last_click: None,
+            library_window: None,
+            players: HashMap::new(),
         };
 
+        let (_, open_lib) = window::open(window::Settings {
+            size: iced::Size::new(900.0, 720.0),
+            ..window::Settings::default()
+        });
+
         let mut tasks: Vec<Task<Message>> = Vec::new();
+        tasks.push(open_lib.map(Message::LibraryWindowOpened));
         tasks.push(iced::system::theme().map(Message::SystemThemeLoaded));
         if has_any_root {
             tasks.push(Task::done(Message::ScanRequested));
@@ -81,20 +110,58 @@ impl App {
         (app, Task::batch(tasks))
     }
 
-    pub fn title(&self) -> String {
-        "Gecko".to_owned()
+    pub fn title(&self, window_id: window::Id) -> String {
+        if Some(window_id) == self.library_window {
+            "Gecko".to_owned()
+        } else if let Some(player) = self.players.get(&window_id) {
+            format!("Gecko — {}", player.game.title)
+        } else {
+            "Gecko".to_owned()
+        }
     }
 
-    pub fn theme(&self) -> Theme {
+    pub fn theme(&self, _window_id: window::Id) -> Theme {
         theme::theme(&self.palette)
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced::system::theme_changes().map(Message::SystemThemeChanged)
+        let mut subs = vec![
+            iced::system::theme_changes().map(Message::SystemThemeChanged),
+            window::close_events().map(Message::WindowClosed),
+        ];
+
+        if !self.players.is_empty() {
+            subs.push(window::frames().map(|_| Message::PlayerTick));
+        }
+
+        Subscription::batch(subs)
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Noop => Task::none(),
+            Message::LibraryWindowOpened(id) => {
+                self.library_window = Some(id);
+                Task::none()
+            }
+            Message::PlayerWindowOpened(id, game, state) => {
+                tracing::info!(window = ?id, title = %game.title, "player window opened");
+                self.players.insert(id, PlayerWindow { game: *game, state });
+                Task::none()
+            }
+            Message::PlayerTick => Task::none(),
+            Message::WindowClosed(id) => {
+                if Some(id) == self.library_window {
+                    self.library_window = None;
+                    iced::exit()
+                } else if let Some(player) = self.players.remove(&id) {
+                    tracing::info!(window = ?id, "player window closed");
+                    player.state.shutdown();
+                    Task::none()
+                } else {
+                    Task::none()
+                }
+            }
             Message::LibraryPicked(_, None) => Task::none(),
             Message::LibraryPicked(platform, Some(path)) => {
                 match platform {
@@ -170,6 +237,11 @@ impl App {
                 self.persist_config();
                 Task::none()
             }
+            Message::MenuToggleSkipIpl => {
+                self.config.skip_ipl = !self.config.skip_ipl;
+                self.persist_config();
+                Task::none()
+            }
             Message::MenuSetTheme(pref) => {
                 self.config.theme = pref;
                 self.persist_config();
@@ -191,10 +263,34 @@ impl App {
                 Task::none()
             }
             Message::GameClicked(idx) => {
-                if let Some(game) = self.games.get(idx) {
-                    tracing::info!(path = %game.path.display(), title = %game.title, "game selected");
+                let now = Instant::now();
+                let is_double = self
+                    .last_click
+                    .is_some_and(|(prev, when)| prev == idx && now.duration_since(when) <= DOUBLE_CLICK_WINDOW);
+
+                if is_double {
+                    self.last_click = None;
+                    Task::done(Message::LaunchPlayer(idx))
+                } else {
+                    self.last_click = Some((idx, now));
+                    if let Some(game) = self.games.get(idx) {
+                        tracing::info!(path = %game.path.display(), title = %game.title, "game selected");
+                    }
+                    Task::none()
                 }
-                Task::none()
+            }
+            Message::LaunchPlayer(idx) => {
+                let Some(game) = self.games.get(idx).cloned() else {
+                    return Task::none();
+                };
+
+                let state = PlayerState::new(&game, &self.config);
+                let (_, open) = window::open(window::Settings {
+                    size: iced::Size::new(960.0, 720.0),
+                    ..window::Settings::default()
+                });
+
+                open.map(move |id| Message::PlayerWindowOpened(id, Box::new(game.clone()), state.clone()))
             }
             Message::SystemThemeLoaded(mode) | Message::SystemThemeChanged(mode) => {
                 self.system_mode = mode;
@@ -204,7 +300,17 @@ impl App {
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self, window_id: window::Id) -> Element<'_, Message> {
+        if Some(window_id) == self.library_window {
+            self.library_view()
+        } else if let Some(player) = self.players.get(&window_id) {
+            self.player_view(player)
+        } else {
+            container(text("")).width(Length::Fill).height(Length::Fill).into()
+        }
+    }
+
+    fn library_view(&self) -> Element<'_, Message> {
         let palette = &self.palette;
 
         let body: Element<'_, Message> = if self.games.is_empty() {
@@ -230,7 +336,7 @@ impl App {
         let bg = palette.bg;
         let text_color = palette.text;
         let main = column![
-            menubar::menubar(palette, self.config.cpu_mode, self.config.theme),
+            menubar::menubar(palette, self.config.cpu_mode, self.config.theme, self.config.skip_ipl),
             search_bar::search_bar(palette, &self.search),
             body,
             statusbar::statusbar(palette, self.config.cpu_mode, self.games.len(), self.scanning),
@@ -251,6 +357,42 @@ impl App {
         } else {
             root_element
         }
+    }
+
+    fn player_view<'a>(&'a self, player: &'a PlayerWindow) -> Element<'a, Message> {
+        let palette = &self.palette;
+        let bg = palette.bg;
+        let text_color = palette.text;
+
+        let status = player.state.status();
+        let shader: Element<'a, Message> = player::shader_widget(player.state.clone()).into();
+
+        let overlay: Option<Element<'a, Message>> = match &status {
+            PlayerStatus::Ready => None,
+            PlayerStatus::Booting => Some(self::overlay_card(
+                palette,
+                &format!("Loading {}", player.game.title),
+                Some("Decompressing disc and warming up CPU heatsink..."),
+                false,
+            )),
+            PlayerStatus::Failed(msg) => Some(self::overlay_card(palette, "Cannot start game", Some(msg), true)),
+        };
+
+        let body: Element<'a, Message> = if let Some(ov) = overlay {
+            stack![shader, ov].into()
+        } else {
+            shader
+        };
+
+        container(body)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(bg)),
+                text_color: Some(text_color),
+                ..container::Style::default()
+            })
+            .into()
     }
 
     fn effective_library_roots(&self) -> Vec<PathBuf> {
@@ -308,6 +450,65 @@ fn resolve_palette(pref: ThemePreference, system_mode: Mode) -> Palette {
         ThemePreference::System => system_mode,
     };
     Palette::for_mode(effective)
+}
+
+fn overlay_card(palette: &Palette, title: &str, detail: Option<&str>, error: bool) -> Element<'static, Message> {
+    let bg = palette.bg;
+    let border_2 = palette.border_2;
+    let text_color = palette.text;
+    let dim = palette.text_dim;
+    let accent = if error { palette.purple } else { palette.accent };
+
+    let backdrop_color = Color {
+        a: 0.55,
+        ..(if palette.is_dark { Color::BLACK } else { palette.text })
+    };
+
+    let mut card_col = column![text(title.to_owned()).size(20).color(text_color)].spacing(8);
+    card_col = card_col.push(
+        container(text(""))
+            .width(40)
+            .height(2)
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(accent)),
+                ..container::Style::default()
+            }),
+    );
+    if let Some(detail) = detail {
+        card_col = card_col.push(text(detail.to_owned()).size(12).color(dim));
+    }
+
+    let card: Element<'static, Message> = container(card_col.align_x(iced::Alignment::Center))
+        .width(Length::Fixed(420.0))
+        .padding(24)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(bg)),
+            border: Border {
+                color: border_2,
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into();
+
+    let backdrop: Element<'static, Message> = container(text(""))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(backdrop_color)),
+            ..container::Style::default()
+        })
+        .into();
+
+    let centered: Element<'static, Message> = container(card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into();
+
+    stack![backdrop, centered].into()
 }
 
 fn about_overlay(palette: &Palette) -> Element<'static, Message> {

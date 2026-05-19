@@ -113,9 +113,9 @@ impl RenderState {
         debugger_ui.debugger.tick(emulator);
 
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("surface error: {e}");
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            status => {
+                eprintln!("surface error: {status:?}");
                 #[cfg(feature = "renderdoc-capture")]
                 self.renderer.end_renderdoc_emulated_frame();
                 return;

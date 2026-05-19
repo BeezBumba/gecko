@@ -102,8 +102,10 @@ impl GxRenderer {
         let draw_off = layout.draw_offset as usize;
         let vertex_off = layout.vertex_offset as usize;
         let index_off = layout.index_offset as usize;
-        view[frame_off..frame_off + frame_uniform_bytes.len()].copy_from_slice(frame_uniform_bytes);
-        view[draw_off..draw_off + self.scratch_uniform_bytes.len()].copy_from_slice(&self.scratch_uniform_bytes);
+        view.slice(frame_off..frame_off + frame_uniform_bytes.len())
+            .copy_from_slice(frame_uniform_bytes);
+        view.slice(draw_off..draw_off + self.scratch_uniform_bytes.len())
+            .copy_from_slice(&self.scratch_uniform_bytes);
 
         for draw in &self.scratch_draws {
             let stride = draw.packed_vertex_stride as usize;
@@ -114,9 +116,9 @@ impl GxRenderer {
             for src_v in &self.scratch_vertices[src_base..src_end] {
                 let src_bytes = bytemuck::bytes_of(src_v);
 
-                view[cursor..cursor + 68].copy_from_slice(&src_bytes[..68]);
+                view.slice(cursor..cursor + 68).copy_from_slice(&src_bytes[..68]);
                 if texcoord_bytes > 0 {
-                    view[cursor + 68..cursor + 68 + texcoord_bytes]
+                    view.slice(cursor + 68..cursor + 68 + texcoord_bytes)
                         .copy_from_slice(&src_bytes[68..68 + texcoord_bytes]);
                 }
 
@@ -125,7 +127,7 @@ impl GxRenderer {
         }
 
         if !self.scratch_indices.is_empty() {
-            view[index_off..index_off + index_used as usize]
+            view.slice(index_off..index_off + index_used as usize)
                 .copy_from_slice(bytemuck::cast_slice(&self.scratch_indices));
         }
     }

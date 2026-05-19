@@ -450,7 +450,7 @@ fn main() {
     } else if let Some(ref dvd_path) = args.dvd {
         let dvd_data = std::fs::read(dvd_path).expect("failed to read DVD");
         let dvd = image::load_dvd(dvd_data);
-        game_id = Some(game_id_from_header(dvd.header()));
+        game_id = Some(dvd.header().game_id());
         if dvd.header().is_wii() {
             eprintln!("Detected Wii disc, booting via apploader HLE");
             EmulatorVariant::Wii(Wii::apploader_hle(dvd).build())
@@ -493,9 +493,9 @@ fn main() {
     emulator.install_audio_sink(Box::new(WavAudioSink::create("dump.wav", emulated_rate)));
 
     // Create wgpu resources before the event loop (adapter without a surface).
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
-        ..Default::default()
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -574,20 +574,6 @@ fn main() {
     app.emulator.install_audio_sink(Box::new(EmptyAudioSink));
 
     std::mem::forget(app);
-}
-
-fn game_id_from_header(header: &image::dvd::Header) -> String {
-    let mut buf = String::with_capacity(6);
-
-    for &b in &header.game_code {
-        buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
-    }
-
-    for &b in &header.maker_code {
-        buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
-    }
-
-    buf
 }
 
 #[inline(always)]

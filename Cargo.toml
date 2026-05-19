@@ -38,12 +38,17 @@ exclude = [
 ]
 
 [patch.crates-io]
-egui = { git = "https://github.com/ioncodes/egui.git" }
-epaint = { git = "https://github.com/ioncodes/egui.git" }
-emath = { git = "https://github.com/ioncodes/egui.git" }
-ecolor = { git = "https://github.com/ioncodes/egui.git" }
-egui-wgpu = { git = "https://github.com/ioncodes/egui.git" }
-egui-winit = { git = "https://github.com/ioncodes/egui.git" }
+iced_core = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_widget = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_runtime = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_graphics = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_renderer = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_winit = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_wgpu = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_tiny_skia = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_futures = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_program = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
+iced_debug = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
 
 [profile.release]
 codegen-units = 1

@@ -7,6 +7,6 @@ edition = "2024"
 gecko = { path = "../gecko" }
 image = { path = "../image" }
 backend-wgpu = { path = "../backend-wgpu" }
-wgpu = "28.0.0"
+wgpu = "29.0.3"
 pollster = "0.4.0"
 png = "0.18.1"

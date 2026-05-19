@@ -270,16 +270,16 @@ impl GxRenderer {
         let depth_stencil = if key.z_enable {
             Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: key.z_write,
-                depth_compare: helpers::map_compare_func(key.z_func),
+                depth_write_enabled: Some(key.z_write),
+                depth_compare: Some(helpers::map_compare_func(key.z_func)),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             })
         } else {
             Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             })

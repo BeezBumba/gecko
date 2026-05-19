@@ -4,13 +4,63 @@ use serde::{Deserialize, Serialize};
 
 use crate::game::{CpuMode, ThemePreference};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub gcn_library: Option<PathBuf>,
     pub wii_library: Option<PathBuf>,
     pub cpu_mode: CpuMode,
     pub theme: ThemePreference,
+    pub system_dir: Option<PathBuf>,
+    pub dsp_rom: Option<PathBuf>,
+    pub dsp_coef: Option<PathBuf>,
+    pub ipl: Option<PathBuf>,
+    #[serde(default = "self::default_skip_ipl")]
+    pub skip_ipl: bool,
+}
+
+fn default_skip_ipl() -> bool {
+    true
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            gcn_library: None,
+            wii_library: None,
+            cpu_mode: CpuMode::default(),
+            theme: ThemePreference::default(),
+            system_dir: None,
+            dsp_rom: None,
+            dsp_coef: None,
+            ipl: None,
+            skip_ipl: self::default_skip_ipl(),
+        }
+    }
+}
+
+pub const DSP_ROM_FILE: &str = "dsp_rom.bin";
+pub const DSP_COEF_FILE: &str = "dsp_coef.bin";
+pub const IPL_FILE: &str = "IPL.bin";
+
+impl Config {
+    pub fn system_dir_resolved(&self) -> PathBuf {
+        if let Some(dir) = self.system_dir.as_ref() {
+            return dir.clone();
+        }
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|p| p.join("system")))
+            .unwrap_or_else(|| PathBuf::from("system"))
+    }
+
+    pub fn resolve_in_dir(override_path: &Option<PathBuf>, system_dir: &Path, name: &str) -> Option<PathBuf> {
+        if let Some(p) = override_path {
+            return Some(p.clone());
+        }
+        let candidate = system_dir.join(name);
+        candidate.exists().then_some(candidate)
+    }
 }
 
 pub fn config_path() -> PathBuf {

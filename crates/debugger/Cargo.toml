@@ -15,12 +15,12 @@ dbglib = { path = "../dbglib" }
 backend-wgpu = { path = "../backend-wgpu" }
 crossbeam-channel = "0.5.15"
 ctrlc = "3.5.2"
-wgpu = "28.0.0"
+wgpu = "29.0.3"
 winit = "0.30.13"
 pollster = "0.4.0"
-egui = "0.33.3"
-egui-wgpu = "0.33.3"
-egui-winit = { version = "0.33.3", features = ["wayland", "x11"] }
-egui-phosphor = { version = "0.11.0", features = ["fill"] }
+egui = "0.34.2"
+egui-wgpu = "0.34.2"
+egui-winit = { version = "0.34.2", features = ["wayland", "x11"] }
+egui-phosphor = { version = "0.12.0", features = ["fill"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 clap = { version = "4.6.0", features = ["derive"] }

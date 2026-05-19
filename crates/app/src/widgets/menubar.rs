@@ -6,17 +6,21 @@ use crate::app::Message;
 use crate::game::{CpuMode, Platform, ThemePreference};
 use crate::theme::Palette;
 
-pub fn menubar(palette: &Palette, cpu: CpuMode, theme_pref: ThemePreference) -> Element<'static, Message> {
+pub fn menubar(
+    palette: &Palette,
+    cpu: CpuMode,
+    theme_pref: ThemePreference,
+    skip_ipl: bool,
+) -> Element<'static, Message> {
     let bar_bg = palette.bg_2;
     let border = palette.border;
     let border_2 = palette.border_2;
     let surface = palette.surface;
-    let surface_2 = palette.surface_2;
     let bar = MenuBar::new(vec![
         Item::with_menu(self::top_label(palette, "File"), self::file_menu(palette)),
         Item::with_menu(
             self::top_label(palette, "Settings"),
-            self::settings_menu(palette, cpu, theme_pref),
+            self::settings_menu(palette, cpu, theme_pref, skip_ipl),
         ),
         Item::with_menu(self::top_label(palette, "About"), self::about_menu(palette)),
     ])
@@ -36,7 +40,7 @@ pub fn menubar(palette: &Palette, cpu: CpuMode, theme_pref: ThemePreference) -> 
             radius: 8.0.into(),
         },
         menu_shadow: iced::Shadow::default(),
-        path: Background::Color(surface_2),
+        path: Background::Color(surface),
         path_border: Border {
             radius: 0.0.into(),
             ..Border::default()
@@ -75,6 +79,7 @@ fn top_label(palette: &Palette, label: &'static str) -> Element<'static, Message
             bottom: 6.0,
             left: 11.0,
         })
+        .on_press(Message::Noop)
         .style(move |_, status| self::top_button_style(status, hover, text_color))
         .into()
 }
@@ -194,6 +199,7 @@ fn settings_menu(
     palette: &Palette,
     cpu: CpuMode,
     theme_pref: ThemePreference,
+    skip_ipl: bool,
 ) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
     Menu::new(vec![
         Item::new(self::section_header(palette, "Execution Engine")),
@@ -208,6 +214,14 @@ fn settings_menu(
             "Interpreter",
             Message::MenuToggleCpu(CpuMode::Interpreter),
             Some(cpu == CpuMode::Interpreter),
+        )),
+        Item::new(self::separator(palette)),
+        Item::new(self::section_header(palette, "Boot")),
+        Item::new(self::menu_item(
+            palette,
+            "Skip IPL (GameCube)",
+            Message::MenuToggleSkipIpl,
+            Some(skip_ipl),
         )),
         Item::new(self::separator(palette)),
         Item::new(self::section_header(palette, "Theme")),

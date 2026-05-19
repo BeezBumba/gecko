@@ -3,6 +3,7 @@ mod cache;
 mod config;
 mod game;
 mod library;
+mod player;
 mod theme;
 mod widgets;
 
@@ -22,19 +23,18 @@ struct Args {
 
 fn main() -> iced::Result {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")))
         .init();
 
     let args = Args::parse();
 
-    iced::application(
-        move || app::App::new(args.gcn.clone(), args.wii.clone()),
+    iced::daemon(
+        move || app::App::boot(args.gcn.clone(), args.wii.clone()),
         app::App::update,
         app::App::view,
     )
     .title(app::App::title)
     .theme(app::App::theme)
     .subscription(app::App::subscription)
-    .window_size((1100.0, 720.0))
     .run()
 }
