@@ -96,6 +96,14 @@
             cursor: not-allowed;
         }
 
+        #warning {
+            margin-top: 4px;
+            color: #f7b267;
+            font-size: 13px;
+            max-width: 700px;
+            text-align: center;
+        }
+
         canvas {
             width: 100vw;
             height: 100vh;
@@ -115,17 +123,36 @@
 <body>
     <!-- shoutout to hazel, vxpm, geo, pdawg, lycoder and everyone else :> -->
 
-    <div id="setup">
+        <div id="setup">
         <div class="file-row">
-            <label class="file-label">IPL / DOL:</label>
-            <label class="file-picker">
-                <span>Choose file</span>
-                <input type="file" id="input-rom" accept=".dol,.bin">
-            </label>
-            <span class="name" id="rom-name">none</span>
+            <label class="file-label">Boot Mode:</label>
+            <select id="boot-mode" class="file-picker">
+                <option value="dol">DOL</option>
+                <option value="ipl">IPL</option>
+                <option value="disc">Disc</option>
+            </select>
+            <span class="name">choose how to boot</span>
         </div>
 
         <div class="file-row">
+            <label class="file-label" id="primary-label">DOL:</label>
+            <label class="file-picker">
+                <span>Choose file</span>
+                <input type="file" id="input-primary" accept=".dol,.bin,.ipl,.iso,.rvz,.zip">
+            </label>
+            <span class="name" id="primary-name">none</span>
+        </div>
+
+        <div class="file-row" id="disc-row" style="display:none">
+            <label class="file-label">Disc (opt):</label>
+            <label class="file-picker">
+                <span>Choose file</span>
+                <input type="file" id="input-disc" accept=".iso,.rvz,.zip">
+            </label>
+            <span class="name" id="disc-name">none</span>
+        </div>
+
+        <div class="file-row" id="dsp-row">
             <label class="file-label">DSP IROM:</label>
             <label class="file-picker">
                 <span>Choose file</span>
@@ -135,6 +162,7 @@
         </div>
 
         <button id="start" disabled>Start</button>
+        <div id="warning"></div>
     </div>
 
     <script type="module">
@@ -143,15 +171,23 @@
         async function run() {
             await init();
 
-            let romData = null;
-            let romName = '';
+            let primaryData = null;
+            let primaryName = '';
+            let discData = null;
+            let discName = '';
             let dspData = null;
 
-            const inputRom = document.getElementById('input-rom');
+            const bootMode = document.getElementById('boot-mode');
+            const inputPrimary = document.getElementById('input-primary');
+            const inputDisc = document.getElementById('input-disc');
             const inputDsp = document.getElementById('input-dsp');
-            const romNameEl = document.getElementById('rom-name');
+            const primaryLabel = document.getElementById('primary-label');
+            const primaryNameEl = document.getElementById('primary-name');
+            const discNameEl = document.getElementById('disc-name');
             const dspNameEl = document.getElementById('dsp-name');
+            const discRow = document.getElementById('disc-row');
             const startBtn = document.getElementById('start');
+            const warningEl = document.getElementById('warning');
 
             function readFile(file) {
                 return new Promise((resolve) => {
@@ -161,13 +197,55 @@
                 });
             }
 
-            inputRom.addEventListener('change', async (e) => {
+            function updateModeUi() {
+                const mode = bootMode.value;
+                if (mode === 'dol') {
+                    primaryLabel.textContent = 'DOL:';
+                    inputPrimary.accept = '.dol';
+                    discRow.style.display = 'none';
+                    warningEl.textContent = '';
+                } else if (mode === 'ipl') {
+                    primaryLabel.textContent = 'IPL:';
+                    inputPrimary.accept = '.bin,.ipl';
+                    discRow.style.display = 'flex';
+                    warningEl.textContent = '';
+                } else {
+                    primaryLabel.textContent = 'Disc:';
+                    inputPrimary.accept = '.iso,.rvz,.zip';
+                    discRow.style.display = 'none';
+                    warningEl.textContent = 'Wii discs are detected automatically. Wii browser boot is currently experimental and may fail without browser-compatible NAND/IOS filesystem support.';
+                }
+                startBtn.disabled = !primaryData;
+            }
+
+            bootMode.addEventListener('change', () => {
+                primaryData = null;
+                primaryName = '';
+                discData = null;
+                discName = '';
+                inputPrimary.value = '';
+                inputDisc.value = '';
+                primaryNameEl.textContent = 'none';
+                discNameEl.textContent = 'none';
+                updateModeUi();
+            });
+
+            inputPrimary.addEventListener('change', async (e) => {
                 if (e.target.files.length > 0) {
                     const file = e.target.files[0];
-                    romData = await readFile(file);
-                    romName = file.name;
-                    romNameEl.textContent = file.name;
+                    primaryData = await readFile(file);
+                    primaryName = file.name;
+                    primaryNameEl.textContent = file.name;
                     startBtn.disabled = false;
+                }
+            });
+
+            inputDisc.addEventListener('change', async (e) => {
+                if (e.target.files.length > 0) {
+                    const file = e.target.files[0];
+                    discData = await readFile(file);
+                    discName = file.name;
+                    discNameEl.textContent = file.name;
                 }
             });
 
@@ -180,10 +258,23 @@
             });
 
             startBtn.addEventListener('click', () => {
-                if (!romData) return;
-                document.getElementById('setup').style.display = 'none';
-                start_emulator(romData, romName, dspData ?? undefined);
+                if (!primaryData) return;
+                try {
+                    start_emulator(
+                        bootMode.value,
+                        primaryData,
+                        primaryName,
+                        discData ?? undefined,
+                        discName || undefined,
+                        dspData ?? undefined,
+                    );
+                    document.getElementById('setup').style.display = 'none';
+                } catch (err) {
+                    warningEl.textContent = `Failed to start emulator: ${err}`;
+                }
             });
+
+            updateModeUi();
         }
 
         run();
