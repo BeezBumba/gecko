@@ -40,6 +40,7 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - Lua scripting system for runtime introspection
 - A beautiful yet advanced egui-based debugging UI
 - Symbol parsing from ELFs and IDA Pro databases
+- IDA Pro loaders for DOL and Apploader
 - RenderDoc captures with all sorts of debug markers
 - ISO and RVZ support; also supports either packed as a ZIP
 - Included multitool, supports:
@@ -82,7 +83,7 @@ It scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` f
 
 ### Controls
 
-Keybindings are currently hardcoded into `tinyapp` and `debugger`!
+Keybindings are currently hardcoded!
 
 #### GameCube
 

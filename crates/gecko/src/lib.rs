@@ -21,7 +21,7 @@ pub mod wii;
 
 pub use gamecube::GameCube;
 pub use input::HostInput;
-pub use system::{GC, System, SystemId, WII};
+pub use system::{ExecutionMode, GC, System, SystemId, WII};
 pub use wii::Wii;
 
 #[cfg(feature = "hooks")]

@@ -21,6 +21,7 @@ struct BootParams {
     coef_path: Option<PathBuf>,
     ipl_path: Option<PathBuf>,
     skip_ipl: bool,
+    execution_mode: gecko::ExecutionMode,
 }
 
 struct Initialized {
@@ -76,6 +77,7 @@ impl PlayerState {
                 coef_path: coef,
                 ipl_path: ipl,
                 skip_ipl: config.skip_ipl,
+                execution_mode: config.cpu_mode.into(),
             })),
             initialized: OnceLock::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -295,6 +297,7 @@ fn configure_emu<const S: gecko::system::SystemId>(
     params: &BootParams,
     sink: backend_wgpu::sink::ThreadedSink,
 ) {
+    emu.set_execution_mode(params.execution_mode);
     self::load_dsp_roms(emu, params.dsp_path.as_deref(), params.coef_path.as_deref());
     emu.render_sink = Box::new(sink);
 }

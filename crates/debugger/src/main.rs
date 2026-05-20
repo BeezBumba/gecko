@@ -71,6 +71,13 @@ impl EmulatorVariant {
         }
     }
 
+    fn set_execution_mode(&mut self, mode: gecko::ExecutionMode) {
+        match self {
+            Self::Gc(e) => e.set_execution_mode(mode),
+            Self::Wii(e) => e.set_execution_mode(mode),
+        }
+    }
+
     fn install_audio_sink(&mut self, sink: Box<dyn gecko::audio::AudioSink>) {
         match self {
             Self::Gc(e) => e.audio_sink = sink,
@@ -380,6 +387,10 @@ struct Args {
     /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch
     #[arg(long, default_value = "auto")]
     aspect: String,
+
+    /// Force interpreter dispatch for CPU/DSP/Vertex (default: JIT)
+    #[arg(long)]
+    interpreter: bool,
 }
 
 fn initial_window_size(target_aspect: TargetAspect) -> (u32, u32) {
@@ -461,6 +472,12 @@ fn main() {
     } else {
         panic!("provide one of --dol, --ipl, or --dvd");
     };
+
+    emulator.set_execution_mode(if args.interpreter {
+        gecko::ExecutionMode::Interpreter
+    } else {
+        gecko::ExecutionMode::Jit
+    });
 
     if let Some(ref dsp_path) = args.dsp {
         let dsp_data = std::fs::read(dsp_path).expect("failed to read DSP IROM");

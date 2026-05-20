@@ -18,7 +18,7 @@ use crate::flipper::gx::regs::{
     AlphaCompare, BlendMode, ChanCtrl, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode,
 };
 use crate::host::{GxAction, LightData, TextureKey, XfbPart};
-use crate::system::{System, SystemId};
+use crate::system::{ExecutionMode, System, SystemId};
 use rustc_hash::FxHashMap;
 
 pub struct GraphicsProcessor {
@@ -94,6 +94,7 @@ pub struct GraphicsProcessor {
     // sends. Keyed by the same `TextureKey` sent to the renderer in
     // [`GxAction::LoadTexture`].
     pub texture_hashes: FxHashMap<TextureKey, u64>,
+    pub execution_mode: ExecutionMode,
 }
 
 /// A single EFB-to-XFB copy, stored until `present_xfb` computes the layout.
@@ -175,6 +176,7 @@ impl GraphicsProcessor {
             #[cfg(feature = "gx-stats")]
             stats: GxStats::default(),
             texture_hashes: FxHashMap::default(),
+            execution_mode: ExecutionMode::default(),
         }
     }
 }

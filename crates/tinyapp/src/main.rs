@@ -166,6 +166,10 @@ struct Args {
     /// Show a small centered window and block until space is pressed before booting
     #[arg(long)]
     wait: bool,
+
+    /// Force interpreter dispatch for CPU/DSP/Vertex (default: JIT)
+    #[arg(long)]
+    interpreter: bool,
 }
 
 fn resolve_aspect(arg: &str, system: SystemId) -> TargetAspect {
@@ -268,6 +272,12 @@ fn main() {
 }
 
 fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args) {
+    emulator.set_execution_mode(if args.interpreter {
+        gecko::ExecutionMode::Interpreter
+    } else {
+        gecko::ExecutionMode::Jit
+    });
+
     if let Some(ref dsp_path) = args.dsp {
         let dsp_data = std::fs::read(dsp_path).expect("failed to read DSP IROM");
         emulator.dsp.load_irom(&dsp_data);

@@ -28,9 +28,18 @@ pub type SystemId = u8;
 pub const GC: SystemId = 0;
 pub const WII: SystemId = 1;
 
+/// This only matters if `jit` feature is enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExecutionMode {
+    #[default]
+    Jit,
+    Interpreter,
+}
+
 pub struct System<const SYSTEM: SystemId> {
     pub vsync_pending: bool,
     pub vi_present_seen_this_frame: bool,
+    pub execution_mode: ExecutionMode,
     pub gekko: Gekko,
     pub scheduler: Scheduler<SYSTEM>,
     pub mmio: Mmio<SYSTEM>,
@@ -87,6 +96,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         System {
             vsync_pending: false,
             vi_present_seen_this_frame: false,
+            execution_mode: ExecutionMode::default(),
             gekko: Gekko::new(entrypoint),
             scheduler,
             mmio: Mmio::new(),
@@ -188,6 +198,12 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self.gekko.pc = self.gekko.nia;
     }
 
+    /// To JIT or not to JIT, that is the question.
+    pub fn set_execution_mode(&mut self, mode: ExecutionMode) {
+        self.execution_mode = mode;
+        self.gx.execution_mode = mode;
+    }
+
     /// Drain pending scheduler events, then execute one CPU instruction.
     #[inline(always)]
     pub fn step(&mut self) {
@@ -215,15 +231,13 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         while !self.vsync_pending {
             self.scheduler.refresh_deadline();
             #[cfg(feature = "jit")]
-            {
+            if self.execution_mode == ExecutionMode::Jit {
                 self.run_until_deadline_jit();
+            } else {
+                self.run_until_deadline_interp();
             }
             #[cfg(not(feature = "jit"))]
-            {
-                while self.scheduler.cycles < self.scheduler.next_deadline() {
-                    self.step_cpu();
-                }
-            }
+            self.run_until_deadline_interp();
             // Drain all events that are now due
             self.drain_events();
         }
@@ -515,6 +529,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 Ok(path) => tracing::info!("pprof samples written to {}", path.display()),
                 Err(err) => tracing::warn!(?err, "pprof sample dump failed"),
             }
+        }
+    }
+
+    #[inline(always)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
+    fn run_until_deadline_interp(&mut self) {
+        while self.scheduler.cycles < self.scheduler.next_deadline() {
+            self.step_cpu();
         }
     }
 

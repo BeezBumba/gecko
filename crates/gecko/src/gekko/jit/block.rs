@@ -126,6 +126,7 @@ pub fn classify_terminator(instr: Instruction) -> Option<TermKind> {
             _ => None,
         },
         31 => match instr.xo10() {
+            146 => Some(TermKind::Mtmsr),
             467 => {
                 let spr_num = instr.spr_swapped() as u16;
                 if mtspr_is_block_safe(spr_num) {

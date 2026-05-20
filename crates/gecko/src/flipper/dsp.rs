@@ -21,7 +21,7 @@ pub mod lut_wii {
 
 use crate::flipper::dsp::instruction::Instruction;
 use crate::mmio::Mmio;
-use crate::system::{System, SystemId};
+use crate::system::{ExecutionMode, System, SystemId};
 
 #[cfg(feature = "jit")]
 pub const DSP_JIT_CHAIN_BUDGET: u32 = 16;
@@ -339,8 +339,26 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         true
     }
 
-    #[cfg(feature = "jit")]
     pub fn execute_dsp_batch(&mut self) {
+        #[cfg(feature = "jit")]
+        if self.execution_mode == ExecutionMode::Jit {
+            self.execute_dsp_batch_jit();
+            return;
+        }
+        self.execute_dsp_batch_interp();
+    }
+
+    pub fn drain_dsp_synchronous(&mut self, max_steps: u32) {
+        #[cfg(feature = "jit")]
+        if self.execution_mode == ExecutionMode::Jit {
+            self.drain_dsp_synchronous_jit(max_steps);
+            return;
+        }
+        self.drain_dsp_synchronous_interp(max_steps);
+    }
+
+    #[cfg(feature = "jit")]
+    fn execute_dsp_batch_jit(&mut self) {
         if self.dsp.csr.reset() || self.dsp.csr.halt() {
             self::refresh_interrupts(self);
             return;
@@ -398,9 +416,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self::refresh_interrupts(self);
     }
 
-    #[cfg(not(feature = "jit"))]
     #[inline(always)]
-    pub fn execute_dsp_batch(&mut self) {
+    fn execute_dsp_batch_interp(&mut self) {
         for _ in 0..crate::scheduler::DSP_BATCH_SIZE {
             if !self.step_dsp_instruction() {
                 break;
@@ -410,7 +427,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     #[cfg(feature = "jit")]
-    pub fn drain_dsp_synchronous(&mut self, max_steps: u32) {
+    fn drain_dsp_synchronous_jit(&mut self, max_steps: u32) {
         let already_busy = self.dsp.mailbox_to_cpu_hi.busy();
 
         if self.dsp.csr.reset() || self.dsp.csr.halt() {
@@ -473,8 +490,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self::refresh_interrupts(self);
     }
 
-    #[cfg(not(feature = "jit"))]
-    pub fn drain_dsp_synchronous(&mut self, max_steps: u32) {
+    fn drain_dsp_synchronous_interp(&mut self, max_steps: u32) {
         let already_busy = self.dsp.mailbox_to_cpu_hi.busy();
 
         for _ in 0..max_steps {

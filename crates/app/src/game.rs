@@ -116,6 +116,15 @@ impl CpuMode {
     }
 }
 
+impl From<CpuMode> for gecko::ExecutionMode {
+    fn from(mode: CpuMode) -> Self {
+        match mode {
+            CpuMode::Jit => gecko::ExecutionMode::Jit,
+            CpuMode::Interpreter => gecko::ExecutionMode::Interpreter,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemePreference {

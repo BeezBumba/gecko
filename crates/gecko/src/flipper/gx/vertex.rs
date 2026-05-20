@@ -4,7 +4,7 @@ use super::regs::{self, *};
 use super::{GraphicsProcessor, draw};
 use crate::host::{DrawData, DrawVertex, GxAction, RenderSink};
 use crate::mmio::{Mmio, RamView};
-use crate::system::SystemId;
+use crate::system::{ExecutionMode, SystemId};
 use std::io::{Cursor, Read};
 
 #[cfg(feature = "jit")]
@@ -715,7 +715,7 @@ fn dispatch_decode<const SYSTEM: SystemId>(
     verts: &mut Vec<DrawVertex>,
 ) {
     #[cfg(feature = "jit")]
-    {
+    if gp.execution_mode == ExecutionMode::Jit {
         let vat_index = (cmd & 0b111) as usize;
         let key = jit::VtxKey::from_cp_regs(&gp.cp_regs, vat_index);
         let view = mmio.ram_view();
