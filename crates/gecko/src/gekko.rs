@@ -7,6 +7,8 @@ pub mod interpreter;
 pub mod irq;
 #[cfg(feature = "jit")]
 pub mod jit;
+#[cfg(all(not(feature = "jit"), target_arch = "wasm32"))]
+pub mod jiterpreter;
 pub mod msr;
 pub mod spr;
 pub mod sr;

@@ -49,6 +49,7 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - Various built-in diagnostics for JIT and GX
 - [Support for web browser](https://gecko.layle.dev)
   - [incl. debugging capabilities](https://gecko.layle.dev/dbg)
+  - Web loader now supports DOL, IPL, ISO, RVZ, and ZIP (containing ISO/RVZ)
 
 There is currently **no way to save games** for GameCube. Wii save games are supported naturally via NAND.
 
@@ -217,6 +218,11 @@ so the underlying flag of the same name is what actually toggles the behavior. F
 | Flag    | Default | Description                                                                                                                              |
 | ------- | :-----: | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `debug` |   off   | Bundles the in-browser debugger UI (pulls in `dbglib` and `egui-phosphor`). Enabled for the [`/dbg`](https://gecko.layle.dev/dbg) build. |
+
+Web-specific notes:
+- The browser build uses `gecko` with `default-features = false`, so native Cranelift JIT backends are disabled in web builds.
+- Runtime PPC/DSP JIT in `gecko` currently uses `cranelift_jit` with host ISA/executable memory assumptions and is not browser-compatible.
+- Wii disc boot can be selected in web, but full compatibility still depends on a wasm-compatible NAND/IOS filesystem backend.
 
 #### `tinybench`
 

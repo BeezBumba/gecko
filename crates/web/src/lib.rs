@@ -8,8 +8,10 @@ use gecko::HostInput;
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER, STICK_MAX, STICK_MIN, TRIGGER_MAX, TRIGGER_MIN};
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
+use gecko::system::{GC, WII};
 use gecko::host::{DrawVertex, GxAction, RenderSink};
-use image::Dol;
+use gecko::wii::Wii;
+use image::{Dol, load_dvd};
 use wasm_bindgen::prelude::*;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -304,7 +306,7 @@ impl State {
 
     fn render(
         &mut self,
-        emulator: &mut GameCube,
+        emulator: &mut EmulatorVariant,
         action_queue: &WebSinkQueue,
         #[cfg(feature = "debug")] debug_state: &mut debug_ui::DebugState,
         window: &Window,
@@ -318,7 +320,7 @@ impl State {
         while self.fps_history.front().is_some_and(|e| elapsed - e[0] > 5.0) {
             self.fps_history.pop_front();
         }
-        let native_hz = match emulator.vi.dcr.video_format().refresh_rate() {
+        let native_hz = match emulator.refresh_rate() {
             RefreshRate::Hz60 => 60.0_f64,
             RefreshRate::Hz50 => 50.0_f64,
         };
@@ -326,7 +328,7 @@ impl State {
 
         // Run emulation (queues GxActions into the WebSink).
         #[cfg(feature = "debug")]
-        debug_state.tick(emulator);
+        emulator.tick_with_debug(debug_state);
         #[cfg(not(feature = "debug"))]
         emulator.run_until_vsync();
 
@@ -378,7 +380,7 @@ impl State {
                 });
 
             #[cfg(feature = "debug")]
-            debug_state.show(&ctx, emulator);
+            emulator.show_debug(debug_state, &ctx);
         });
 
         self.egui_winit
@@ -475,8 +477,73 @@ impl State {
 // shared between async wgpu init and the winit event loop
 type SharedState = Rc<RefCell<Option<State>>>;
 
+enum EmulatorVariant {
+    Gc(GameCube),
+    Wii(Wii),
+}
+
+impl EmulatorVariant {
+    fn system_id(&self) -> gecko::system::SystemId {
+        match self {
+            Self::Gc(_) => GC,
+            Self::Wii(_) => WII,
+        }
+    }
+
+    fn apply_host_input(&mut self, input: &HostInput) {
+        match self {
+            Self::Gc(emu) => emu.apply_host_input(input),
+            Self::Wii(emu) => emu.apply_host_input(input),
+        }
+    }
+
+    fn run_until_vsync(&mut self) {
+        match self {
+            Self::Gc(emu) => emu.run_until_vsync(),
+            Self::Wii(emu) => emu.run_until_vsync(),
+        }
+    }
+
+    fn refresh_rate(&self) -> RefreshRate {
+        match self {
+            Self::Gc(emu) => emu.vi.dcr.video_format().refresh_rate(),
+            Self::Wii(emu) => emu.vi.dcr.video_format().refresh_rate(),
+        }
+    }
+
+    fn render_sink_mut(&mut self) -> &mut Box<dyn RenderSink> {
+        match self {
+            Self::Gc(emu) => &mut emu.render_sink,
+            Self::Wii(emu) => &mut emu.render_sink,
+        }
+    }
+
+    fn load_dsp_irom(&mut self, irom: &[u8]) {
+        match self {
+            Self::Gc(emu) => emu.dsp.load_irom(irom),
+            Self::Wii(emu) => emu.dsp.load_irom(irom),
+        }
+    }
+
+    #[cfg(feature = "debug")]
+    fn tick_with_debug(&mut self, debug_state: &mut debug_ui::DebugState) {
+        if let Self::Gc(emu) = self {
+            debug_state.tick(emu);
+        } else {
+            self.run_until_vsync();
+        }
+    }
+
+    #[cfg(feature = "debug")]
+    fn show_debug(&self, debug_state: &mut debug_ui::DebugState, ctx: &egui::Context) {
+        if let Self::Gc(emu) = self {
+            debug_state.show(ctx, emu);
+        }
+    }
+}
+
 struct App {
-    emulator: GameCube,
+    emulator: EmulatorVariant,
     input: HostInput,
     action_queue: WebSinkQueue,
     window: Option<Arc<Window>>,
@@ -526,11 +593,11 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state.is_pressed();
-                if let PhysicalKey::Code(key) = event.physical_key {
-                    if let HostInput::Gc(pad) = &mut self.input {
-                        update_pad(pad, key, pressed);
-                    }
-                    self.emulator.apply_host_input(&self.input);
+                    if let PhysicalKey::Code(key) = event.physical_key {
+                        if let HostInput::Gc(pad) = &mut self.input {
+                            update_pad(pad, key, pressed);
+                        }
+                        self.emulator.apply_host_input(&self.input);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -553,22 +620,86 @@ impl ApplicationHandler for App {
 }
 
 #[wasm_bindgen]
-pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8>>) {
+pub fn start_emulator(
+    boot_mode: String,
+    primary_data: &[u8],
+    primary_name: String,
+    disc_data: Option<Vec<u8>>,
+    disc_name: Option<String>,
+    dsp_irom: Option<Vec<u8>>,
+) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
 
-    let name = filename.to_lowercase();
-    let mut emulator = if name.ends_with(".bin") || name.ends_with(".ipl") {
-        GameCube::with_ipl(rom_data, false)
-    } else {
-        let dol = Dol::parse(rom_data.to_vec());
-        GameCube::with_image(&dol)
+    // NOTE: Baseline web profiling points:
+    // - frame loop: `State::render`
+    // - action queue drain: `State::render` message drain block
+    // - boot dispatch: `start_emulator`
+    //
+    // Browser hard blocker for native JIT:
+    // gecko web builds with `default-features = false`, so Cranelift native JIT
+    // backends are disabled; `cranelift_jit` in PPC/DSP JIT paths targets host ISA
+    // and executable memory and is not browser-compatible.
+    web_sys::console::warn_1(
+        &"PPC wasm jiterpreter prototype enabled (tiered decode-cache + interpreter fallback); native JIT is disabled in browser builds."
+            .into(),
+    );
+
+    let mode = boot_mode.to_ascii_lowercase();
+    let primary_name_lc = primary_name.to_ascii_lowercase();
+    let mut emulator = match mode.as_str() {
+        "dol" => {
+            let dol = Dol::parse(primary_data.to_vec());
+            EmulatorVariant::Gc(GameCube::with_image(&dol))
+        }
+        "ipl" => {
+            let mut emu = GameCube::with_ipl(primary_data, false);
+            if let Some(disc_bytes) = disc_data {
+                emu.insert_dvd(load_dvd(disc_bytes));
+            }
+            EmulatorVariant::Gc(emu)
+        }
+        "disc" => {
+            let dvd = load_dvd(primary_data.to_vec());
+            if dvd.header().is_wii() {
+                web_sys::console::warn_1(
+                    &"Wii disc detected. Browser Wii support requires a wasm-compatible NAND FS backend and may not boot yet."
+                        .into(),
+                );
+                EmulatorVariant::Wii(Wii::apploader_hle(dvd).build())
+            } else {
+                EmulatorVariant::Gc(GameCube::with_ipl_hle(dvd))
+            }
+        }
+        _ => {
+            // Backward-compatible fallback for older pages passing only filename semantics.
+            if primary_name_lc.ends_with(".bin") || primary_name_lc.ends_with(".ipl") {
+                EmulatorVariant::Gc(GameCube::with_ipl(primary_data, false))
+            } else if primary_name_lc.ends_with(".iso")
+                || primary_name_lc.ends_with(".rvz")
+                || primary_name_lc.ends_with(".zip")
+            {
+                let dvd = load_dvd(primary_data.to_vec());
+                if dvd.header().is_wii() {
+                    EmulatorVariant::Wii(Wii::apploader_hle(dvd).build())
+                } else {
+                    EmulatorVariant::Gc(GameCube::with_ipl_hle(dvd))
+                }
+            } else {
+                let dol = Dol::parse(primary_data.to_vec());
+                EmulatorVariant::Gc(GameCube::with_image(&dol))
+            }
+        }
     };
 
     if let Some(irom) = dsp_irom {
-        emulator.dsp.load_irom(&irom);
+        emulator.load_dsp_irom(&irom);
     }
 
-    let input = HostInput::gc_connected();
+    if let Some(name) = disc_name {
+        web_sys::console::log_1(&format!("Loaded disc: {name}").into());
+    }
+
+    let input = HostInput::neutral_for(emulator.system_id());
     emulator.apply_host_input(&input);
 
     // Install the WebSink as the emulator's render sink.
@@ -576,7 +707,7 @@ pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8
         messages: Vec::new(),
         epoch: 0,
     }));
-    emulator.render_sink = Box::new(WebSink {
+    *emulator.render_sink_mut() = Box::new(WebSink {
         shared: action_queue.clone(),
         scratch: Vec::new(),
         scratch_sent_len: 0,
@@ -595,6 +726,7 @@ pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8
     };
 
     event_loop.spawn_app(app);
+    Ok(())
 }
 
 fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
