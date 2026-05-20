@@ -13,6 +13,7 @@ pub struct LuaHost {
     flags: HookFlags,
     #[cfg(feature = "hooks-mut-traps")]
     refresh_requested: Arc<AtomicBool>,
+    log_buffer: Arc<Mutex<Vec<String>>>,
     cpu_pre: CpuHookDispatch,
     cpu_post: CpuHookDispatch,
     bus_read_pre: BusHookDispatch,
@@ -156,9 +157,12 @@ impl LuaHost {
         let lua = Lua::new();
         #[cfg(feature = "hooks-mut-traps")]
         let refresh_requested = Arc::new(AtomicBool::new(false));
+        let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
-        let log_fn = lua.create_function(|_, msg: String| {
+        let log_buffer_fn = Arc::clone(&log_buffer);
+        let log_fn = lua.create_function(move |_, msg: String| {
             tracing::info!(target: "lua", "{}", msg);
+            log_buffer_fn.lock().unwrap().push(format!("[lua] {msg}"));
             Ok(())
         })?;
         lua.globals().set("log", log_fn)?;
@@ -205,6 +209,7 @@ impl LuaHost {
             flags: HookFlags::empty(),
             #[cfg(feature = "hooks-mut-traps")]
             refresh_requested,
+            log_buffer,
             cpu_pre: CpuHookDispatch::default(),
             cpu_post: CpuHookDispatch::default(),
             bus_read_pre: BusHookDispatch::default(),
@@ -214,6 +219,23 @@ impl LuaHost {
         };
         host.reload_dispatches()?;
         Ok(host)
+    }
+
+    fn push_log(&self, message: String) {
+        self.log_buffer.lock().unwrap().push(message);
+    }
+
+    fn log_hook_error(&self, hook_name: &str, context: String, err: &mlua::Error) {
+        tracing::error!(target: "script", hook = hook_name, %context, error = %err, "script hook failed");
+        self.push_log(format!("[lua] error: {hook_name} hook failed ({context}): {err}"));
+    }
+
+    #[cfg(feature = "hooks-mut-traps")]
+    fn log_dispatch_reload_error(&self, action: &'static str, err: mlua::Error) -> String {
+        let message = format!("{action}: {err}");
+        tracing::error!(target: "script", error = %err, "{action}");
+        self.push_log(format!("[lua] error: {message}"));
+        message
     }
 
     fn reload_dispatches(&mut self) -> LuaResult<HookState> {
@@ -398,10 +420,6 @@ fn annotate_hook_error(hook_name: &str, err: mlua::Error) -> mlua::Error {
     mlua::Error::runtime(format!("{hook_name} failed: {err}"))
 }
 
-fn log_hook_error(hook_name: &str, err: &mlua::Error) {
-    tracing::error!(hook = hook_name, error = %err, "script hook failed");
-}
-
 fn load_optional_table(parent: &Table, key: &str, context: &str) -> LuaResult<Option<Table>> {
     match parent.get::<Value>(key)? {
         Value::Nil => Ok(None),
@@ -507,7 +525,8 @@ impl<const SYSTEM: SystemId> Host<SYSTEM> for LuaHost {
 
     #[cfg(feature = "hooks-mut-traps")]
     fn force_refresh_traps(&mut self) -> Result<HookState, String> {
-        self.reload_dispatches().map_err(|err| err.to_string())
+        self.reload_dispatches()
+            .map_err(|err| self.log_dispatch_reload_error("failed to reload script traps", err))
     }
 
     #[cfg(feature = "hooks-mut-traps")]
@@ -516,7 +535,14 @@ impl<const SYSTEM: SystemId> Host<SYSTEM> for LuaHost {
             return Ok(None);
         }
 
-        self.reload_dispatches().map(Some).map_err(|err| err.to_string())
+        self.reload_dispatches()
+            .map(Some)
+            .map_err(|err| self.log_dispatch_reload_error("failed to apply requested script trap refresh", err))
+    }
+
+    fn drain_logs(&mut self) -> Vec<String> {
+        let mut logs = self.log_buffer.lock().unwrap();
+        std::mem::take(&mut *logs)
     }
 
     fn on_cpu_pre(&mut self, emu: &mut System<SYSTEM>) {
@@ -524,7 +550,7 @@ impl<const SYSTEM: SystemId> Host<SYSTEM> for LuaHost {
         if let Some(callback) = self.cpu_pre.get(&pc)
             && let Err(err) = self.call_cpu_hook("cpu_pre", callback, emu)
         {
-            log_hook_error("cpu_pre", &err);
+            self.log_hook_error("cpu_pre", format!("pc={pc:08X}"), &err);
         }
     }
 
@@ -533,7 +559,7 @@ impl<const SYSTEM: SystemId> Host<SYSTEM> for LuaHost {
         if let Some(callback) = self.cpu_post.get(&pc)
             && let Err(err) = self.call_cpu_hook("cpu_post", callback, emu)
         {
-            log_hook_error("cpu_post", &err);
+            self.log_hook_error("cpu_post", format!("pc={pc:08X}"), &err);
         }
     }
 
@@ -542,7 +568,11 @@ impl<const SYSTEM: SystemId> Host<SYSTEM> for LuaHost {
         match self.call_bus_read_pre_hook("bus_read_pre", callback, emu, virt_addr, phys_addr, size) {
             Ok(value) => value,
             Err(err) => {
-                log_hook_error("bus_read_pre", &err);
+                self.log_hook_error(
+                    "bus_read_pre",
+                    format!("virt={virt_addr:08X} phys={phys_addr:08X} size={size}"),
+                    &err,
+                );
                 None
             }
         }
@@ -560,7 +590,11 @@ impl<const SYSTEM: SystemId> Host<SYSTEM> for LuaHost {
             match self.call_bus_read_post_hook("bus_read_post", callback, emu, virt_addr, phys_addr, size, value) {
                 Ok(Some(v)) => return v,
                 Ok(None) => {}
-                Err(err) => log_hook_error("bus_read_post", &err),
+                Err(err) => self.log_hook_error(
+                    "bus_read_post",
+                    format!("virt={virt_addr:08X} phys={phys_addr:08X} size={size} value={value:08X}"),
+                    &err,
+                ),
             }
         }
         value
@@ -582,7 +616,11 @@ impl<const SYSTEM: SystemId> Host<SYSTEM> for LuaHost {
             Ok(Some(updated)) => updated,
             Ok(None) => value,
             Err(err) => {
-                log_hook_error("bus_write_pre", &err);
+                self.log_hook_error(
+                    "bus_write_pre",
+                    format!("virt={virt_addr:08X} phys={phys_addr:08X} size={size} value={value:08X}"),
+                    &err,
+                );
                 value
             }
         }
@@ -593,7 +631,11 @@ impl<const SYSTEM: SystemId> Host<SYSTEM> for LuaHost {
             && let Err(err) =
                 self.call_bus_write_post_hook("bus_write_post", callback, emu, virt_addr, phys_addr, size, value)
         {
-            log_hook_error("bus_write_post", &err);
+            self.log_hook_error(
+                "bus_write_post",
+                format!("virt={virt_addr:08X} phys={phys_addr:08X} size={size} value={value:08X}"),
+                &err,
+            );
         }
     }
 }
