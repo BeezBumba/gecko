@@ -8,7 +8,7 @@ assignees: ''
 ---
 
 **Describe the bug**
-A clear and concise description of what the bug is.
+A clear and concise description of what the bug is. Does it reproduce with both JIT and interpreter?
 
 **Game/Homebrew**
 If applicable, what game/homebrew caused the bug. Include the exact name of the file used, incl. the region if relevant. Optionally, include a MD5 or SHA256 hash of the image (RVZ/ISO). Does this affect Wii or GameCube?
