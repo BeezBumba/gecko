@@ -639,6 +639,10 @@ pub fn start_emulator(
     // gecko web builds with `default-features = false`, so Cranelift native JIT
     // backends are disabled; `cranelift_jit` in PPC/DSP JIT paths targets host ISA
     // and executable memory and is not browser-compatible.
+    web_sys::console::warn_1(
+        &"PPC wasm jiterpreter prototype enabled (tiered decode-cache + interpreter fallback); native JIT is disabled in browser builds."
+            .into(),
+    );
 
     let mode = boot_mode.to_ascii_lowercase();
     let primary_name_lc = primary_name.to_ascii_lowercase();

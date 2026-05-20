@@ -65,6 +65,8 @@ pub struct System<const SYSTEM: SystemId> {
 
     #[cfg(feature = "jit")]
     pub jit: Option<Box<crate::gekko::jit::JitEngine<SYSTEM>>>,
+    #[cfg(all(not(feature = "jit"), target_arch = "wasm32"))]
+    pub jiterpreter: Option<Box<crate::gekko::jiterpreter::Jiterpreter<SYSTEM>>>,
 
     #[cfg(feature = "fps-counter")]
     pub fps_counter: FpsCounter,
@@ -117,6 +119,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
             #[cfg(feature = "jit")]
             jit: None,
+            #[cfg(all(not(feature = "jit"), target_arch = "wasm32"))]
+            jiterpreter: None,
 
             #[cfg(feature = "fps-counter")]
             fps_counter: FpsCounter::new(),
@@ -220,8 +224,15 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
             #[cfg(not(feature = "jit"))]
             {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    self.run_until_deadline_jiterpreter();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
                 while self.scheduler.cycles < self.scheduler.next_deadline() {
                     self.step_cpu();
+                }
                 }
             }
             // Drain all events that are now due
@@ -556,6 +567,35 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
 
         self.jit = Some(jit);
+    }
+
+    #[cfg(all(not(feature = "jit"), target_arch = "wasm32"))]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
+    fn run_until_deadline_jiterpreter(&mut self) {
+        let mut jiterpreter = match self.jiterpreter.take() {
+            Some(engine) => engine,
+            None => Box::new(crate::gekko::jiterpreter::Jiterpreter::<SYSTEM>::new()),
+        };
+
+        while self.scheduler.cycles < self.scheduler.next_deadline() {
+            if self.gekko.msr.external_interrupt_enable() {
+                if self.pi.interrupt_pending() {
+                    self.cause_external_interrupt();
+                    self.scheduler.cycles += 2;
+                    continue;
+                }
+
+                if self.gekko.dec.interrupt_pending() {
+                    self.cause_decrementer_interrupt();
+                    self.scheduler.cycles += 2;
+                    continue;
+                }
+            }
+
+            jiterpreter.run_block(self);
+        }
+
+        self.jiterpreter = Some(jiterpreter);
     }
 
     pub fn frame_size(&self) -> (usize, usize) {
