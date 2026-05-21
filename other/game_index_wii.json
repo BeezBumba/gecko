@@ -107,6 +107,12 @@
       "filename": "Mario Party 8 (USA) (Rev 1)"
     }
   ],
+  "RMCE": [
+    {
+      "internal_name": "MarioKartWii",
+      "filename": "Mario Kart Wii (USA) (En,Fr,Es)"
+    }
+  ],
   "RMGE": [
     {
       "internal_name": "SUPER MARIO GALAXY",
