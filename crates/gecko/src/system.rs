@@ -22,6 +22,12 @@ use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
 use crate::starlet::Starlet;
 use image::Executable;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
+#[cfg(target_arch = "wasm32")]
+const CORE_PERF_DRAIN_EVENTS_SAMPLE_EVERY: u64 = 64;
+#[cfg(target_arch = "wasm32")]
+const CORE_PERF_DSP_BATCH_SAMPLE_EVERY: u64 = 64;
 
 pub type SystemId = u8;
 
@@ -34,6 +40,28 @@ pub enum ExecutionMode {
     #[default]
     Jit,
     Interpreter,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CorePerfSnapshot {
+    pub run_interp_ms: f64,
+    pub drain_events_ms: f64,
+    pub dsp_batch_ms: f64,
+    pub step_cpu_calls: u64,
+    pub drain_events_calls: u64,
+    pub dsp_batch_calls: u64,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Default)]
+struct CorePerfAcc {
+    run_interp_ms: f64,
+    drain_events_ms: f64,
+    dsp_batch_ms: f64,
+    step_cpu_calls: u64,
+    drain_events_calls: u64,
+    dsp_batch_calls: u64,
 }
 
 pub struct System<const SYSTEM: SystemId> {
@@ -89,6 +117,9 @@ pub struct System<const SYSTEM: SystemId> {
 
     #[cfg(feature = "profile")]
     pub pprof_session: Option<crate::profile::IpSampler>,
+
+    #[cfg(target_arch = "wasm32")]
+    core_perf: CorePerfAcc,
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
@@ -142,11 +173,48 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
             #[cfg(feature = "profile")]
             pprof_session: None,
+
+            #[cfg(target_arch = "wasm32")]
+            core_perf: CorePerfAcc::default(),
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    pub fn core_perf_record_dsp_batch_ms(&mut self, ms: f64) {
+        self.core_perf.dsp_batch_ms += ms * CORE_PERF_DSP_BATCH_SAMPLE_EVERY as f64;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    pub fn core_perf_note_dsp_batch(&mut self) -> bool {
+        self.core_perf.dsp_batch_calls = self.core_perf.dsp_batch_calls.saturating_add(1);
+        self.core_perf
+            .dsp_batch_calls
+            .is_multiple_of(CORE_PERF_DSP_BATCH_SAMPLE_EVERY)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn core_perf_take_window(&mut self) -> CorePerfSnapshot {
+        let snapshot = CorePerfSnapshot {
+            run_interp_ms: self.core_perf.run_interp_ms,
+            drain_events_ms: self.core_perf.drain_events_ms,
+            dsp_batch_ms: self.core_perf.dsp_batch_ms,
+            step_cpu_calls: self.core_perf.step_cpu_calls,
+            drain_events_calls: self.core_perf.drain_events_calls,
+            dsp_batch_calls: self.core_perf.dsp_batch_calls,
+        };
+        self.core_perf = CorePerfAcc::default();
+        snapshot
     }
 
     #[inline(always)]
     pub fn step_cpu(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.core_perf.step_cpu_calls = self.core_perf.step_cpu_calls.saturating_add(1);
+        }
+
         if self.gekko.msr.external_interrupt_enable() {
             // Deliver external interrupt when EE=1 and any enabled PI interrupt is pending
             if self.pi.interrupt_pending() {
@@ -196,6 +264,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
 
         self.gekko.pc = self.gekko.nia;
+
     }
 
     /// To JIT or not to JIT, that is the question.
@@ -535,8 +604,16 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn run_until_deadline_interp(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        let perf_start = Instant::now();
+
         while self.scheduler.cycles < self.scheduler.next_deadline() {
             self.step_cpu();
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.core_perf.run_interp_ms += perf_start.elapsed().as_secs_f64() * 1000.0;
         }
     }
 
@@ -618,8 +695,30 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn drain_events(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        let perf_start = {
+            self.core_perf.drain_events_calls = self.core_perf.drain_events_calls.saturating_add(1);
+            if self
+                .core_perf
+                .drain_events_calls
+                .is_multiple_of(CORE_PERF_DRAIN_EVENTS_SAMPLE_EVERY)
+            {
+                Some(Instant::now())
+            } else {
+                None
+            }
+        };
+
         while let Some(f) = self.scheduler.poll() {
             f(self);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(start) = perf_start {
+                self.core_perf.drain_events_ms +=
+                    start.elapsed().as_secs_f64() * 1000.0 * CORE_PERF_DRAIN_EVENTS_SAMPLE_EVERY as f64;
+            }
         }
     }
 

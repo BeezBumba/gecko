@@ -4,7 +4,9 @@ use super::regs::{self, *};
 use super::{GraphicsProcessor, draw};
 use crate::host::{DrawData, DrawVertex, GxAction, RenderSink};
 use crate::mmio::{Mmio, RamView};
-use crate::system::{ExecutionMode, SystemId};
+use crate::system::SystemId;
+#[cfg(feature = "jit")]
+use crate::system::ExecutionMode;
 use std::io::{Cursor, Read};
 
 #[cfg(feature = "jit")]

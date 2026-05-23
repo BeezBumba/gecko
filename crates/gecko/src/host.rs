@@ -230,6 +230,10 @@ pub trait RenderSink: Send {
         let _ = ram;
     }
 
+    /// Called after one emulated frame boundary (typically vblank).
+    /// Sinks can override to flush batched actions produced during the frame.
+    fn frame_boundary(&mut self) {}
+
     /// Acquire a `DrawData` box for the next draw call. The default impl
     /// allocates fresh. Real renderers override to recycle boxes that come
     /// back through [`Self::exec`] as `GxAction::Draw(box)`. The caller

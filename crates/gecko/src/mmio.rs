@@ -6,6 +6,7 @@ pub mod traits;
 
 use crate::system::{SystemId, WII};
 use constants::*;
+#[cfg(feature = "jit")]
 use rustc_hash::FxHashSet;
 
 pub const FASTMEM_LUT_PAGES: usize = 1 << 15;

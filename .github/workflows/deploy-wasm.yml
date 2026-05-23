@@ -50,6 +50,7 @@ jobs:
         run: |
           mkdir -p _site/dbg
           cp crates/web/index.html _site/
+          cp crates/web/_headers _site/
           cp -r crates/web/pkg _site/pkg
           cp crates/web/index.html _site/dbg/
           sed -i 's|./pkg/gecko_web.js|../pkg-dbg/gecko_web.js|' _site/dbg/index.html

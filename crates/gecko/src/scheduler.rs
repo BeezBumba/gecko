@@ -4,6 +4,9 @@ use crate::flipper::vi::regs::RefreshRate;
 use crate::system::{self, System, SystemId};
 
 pub const TIMEBASE_DIVISOR: u64 = 12;
+#[cfg(target_arch = "wasm32")]
+pub const DSP_BATCH_SIZE: u64 = 2048;
+#[cfg(not(target_arch = "wasm32"))]
 pub const DSP_BATCH_SIZE: u64 = 1024;
 
 #[inline(always)]
@@ -91,8 +94,12 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
 
     /// Insert an event keeping the deque sorted by deadline (earliest first).
     pub fn schedule_at(&mut self, deadline: u64, f: ScheduledFn<SYSTEM>) {
-        let pos = self.events.partition_point(|e| e.deadline <= deadline);
-        self.events.insert(pos, ScheduledEvent { deadline, f });
+        if self.events.back().is_none_or(|e| e.deadline <= deadline) {
+            self.events.push_back(ScheduledEvent { deadline, f });
+        } else {
+            let pos = self.events.partition_point(|e| e.deadline <= deadline);
+            self.events.insert(pos, ScheduledEvent { deadline, f });
+        }
         self.next_deadline = self.next_deadline.min(deadline);
     }
 
@@ -185,7 +192,18 @@ pub const fn dsp_batch_interval(system: SystemId) -> u64 {
 }
 
 pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    #[cfg(target_arch = "wasm32")]
+    let perf_start = sys.core_perf_note_dsp_batch().then(web_time::Instant::now);
+
     sys.execute_dsp_batch();
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(start) = perf_start {
+            sys.core_perf_record_dsp_batch_ms(start.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+
     if sys.dsp.csr.halt() || sys.dsp.csr.reset() {
         return;
     }

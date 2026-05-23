@@ -506,6 +506,7 @@ pub fn snap_size_to_aspect(requested: (u32, u32), target_aspect: TargetAspect) -
 /// sub-rect with the requested width:height, leaving the cleared surface
 /// visible as letterbox/pillarbox bars.
 #[inline(always)]
+#[allow(dead_code)]
 pub(crate) fn viewport_for_aspect(target_size: (u32, u32), target_aspect: TargetAspect) -> (f32, f32, f32, f32) {
     let (w, h) = (target_size.0.max(1) as f32, target_size.1.max(1) as f32);
     match target_aspect {

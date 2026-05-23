@@ -42,29 +42,38 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             ctx.gekko.write_gpr(instr.rd(), ra.wrapping_add_signed(simm));
         }
         OP_ORI | OP_ORIS => {
+            let rs = instr.rs();
+            let ra = instr.ra();
+            let uimm = instr.uimm() as u32;
             let imm = if OP == OP_ORIS {
-                (instr.uimm() as u32) << 16
+                uimm << 16
             } else {
-                instr.uimm() as u32
+                uimm
             };
-            ctx.gekko.write_gpr(instr.ra(), ctx.gekko.read_gpr(instr.rs()) | imm);
+            ctx.gekko.write_gpr(ra, ctx.gekko.read_gpr(rs) | imm);
         }
         OP_XORI | OP_XORIS => {
+            let rs = instr.rs();
+            let ra = instr.ra();
+            let uimm = instr.uimm() as u32;
             let imm = if OP == OP_XORIS {
-                (instr.uimm() as u32) << 16
+                uimm << 16
             } else {
-                instr.uimm() as u32
+                uimm
             };
-            ctx.gekko.write_gpr(instr.ra(), ctx.gekko.read_gpr(instr.rs()) ^ imm);
+            ctx.gekko.write_gpr(ra, ctx.gekko.read_gpr(rs) ^ imm);
         }
         OP_ANDI_DOT | OP_ANDIS_DOT => {
+            let rs = instr.rs();
+            let ra = instr.ra();
+            let uimm = instr.uimm() as u32;
             let mask = if OP == OP_ANDIS_DOT {
-                (instr.uimm() as u32) << 16
+                uimm << 16
             } else {
-                instr.uimm() as u32
+                uimm
             };
-            let val = ctx.gekko.read_gpr(instr.rs()) & mask;
-            ctx.gekko.write_gpr(instr.ra(), val);
+            let val = ctx.gekko.read_gpr(rs) & mask;
+            ctx.gekko.write_gpr(ra, val);
             ctx.gekko.update_cr0(val);
         }
         OP_SUBFX => {

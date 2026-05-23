@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 
 [features]
 debug = ["dep:dbglib", "dep:egui-phosphor"]
+web-threads = []
 
 [dependencies]
 gecko = { path = "../gecko", default-features = false }

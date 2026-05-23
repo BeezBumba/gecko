@@ -1,7 +1,46 @@
-use crate::gekko::condition::BranchControl;
 use crate::gekko::instruction::Instruction;
 use crate::gekko::lut::*;
 use crate::system::{System, SystemId};
+
+#[inline(always)]
+fn eval_bo<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, bo: u8, bi: u8) -> bool {
+    let cond = ctx.gekko.cr.get_bit(bi);
+    match bo & 0b11110 {
+        0b00000 => {
+            let ctr = ctx.gekko.spr.ctr.wrapping_sub(1);
+            ctx.gekko.spr.ctr = ctr;
+            ctr != 0 && !cond
+        }
+        0b00010 => {
+            let ctr = ctx.gekko.spr.ctr.wrapping_sub(1);
+            ctx.gekko.spr.ctr = ctr;
+            ctr == 0 && !cond
+        }
+        0b00100 | 0b00110 => !cond,
+        0b01000 => {
+            let ctr = ctx.gekko.spr.ctr.wrapping_sub(1);
+            ctx.gekko.spr.ctr = ctr;
+            ctr != 0 && cond
+        }
+        0b01010 => {
+            let ctr = ctx.gekko.spr.ctr.wrapping_sub(1);
+            ctx.gekko.spr.ctr = ctr;
+            ctr == 0 && cond
+        }
+        0b01100 | 0b01110 => cond,
+        0b10000 | 0b11000 => {
+            let ctr = ctx.gekko.spr.ctr.wrapping_sub(1);
+            ctx.gekko.spr.ctr = ctr;
+            ctr != 0
+        }
+        0b10010 | 0b11010 => {
+            let ctr = ctx.gekko.spr.ctr.wrapping_sub(1);
+            ctx.gekko.spr.ctr = ctr;
+            ctr == 0
+        }
+        _ => true,
+    }
+}
 
 #[inline(always)]
 pub fn branch<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
@@ -17,15 +56,7 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
             }
         }
         OP_BCX => {
-            let ctrl = BranchControl::from_bo(instr.bo());
-            tracing::trace!("Branch control: {ctrl:?}");
-
-            if ctrl.should_decrement_ctr() {
-                ctx.gekko.spr.ctr = ctx.gekko.spr.ctr.wrapping_sub(1);
-            }
-
-            let condition = ctx.gekko.cr.get_bit(instr.bi());
-            if !ctrl.should_branch(ctx.gekko.spr.ctr, condition) {
+            if !eval_bo(ctx, instr.bo(), instr.bi()) {
                 return;
             }
 
@@ -39,15 +70,7 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
             }
         }
         OP_BCLRX => {
-            let ctrl = BranchControl::from_bo(instr.bo());
-            tracing::trace!("Branch control: {ctrl:?}");
-
-            if ctrl.should_decrement_ctr() {
-                ctx.gekko.spr.ctr = ctx.gekko.spr.ctr.wrapping_sub(1);
-            }
-
-            let condition = ctx.gekko.cr.get_bit(instr.bi());
-            if !ctrl.should_branch(ctx.gekko.spr.ctr, condition) {
+            if !eval_bo(ctx, instr.bo(), instr.bi()) {
                 return;
             }
 

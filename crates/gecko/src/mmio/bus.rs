@@ -4,8 +4,8 @@ use crate::mmio::constants::{
     AI_BASE, AI_END, CP_BASE, CP_END, DI_BASE, DI_END, DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE, GX_FIFO_END,
     HOLLYWOOD_COMPAT_BASE, HOLLYWOOD_COMPAT_END, HOLLYWOOD_GPIO_ARM_BASE, HOLLYWOOD_GPIO_ARM_END,
     HOLLYWOOD_GPIO_PPC_BASE, HOLLYWOOD_GPIO_PPC_END, HOLLYWOOD_IRQ_BASE, HOLLYWOOD_IRQ_END, HOLLYWOOD_PLL_AI_BASE,
-    HOLLYWOOD_PLL_AI_END, HW_HOLLYWOOD_BASE, HW_HOLLYWOOD_END, HW_REG_BASE, HW_REG_END, IPC_BASE, IPC_END, MI_BASE,
-    MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_END, SI_BASE, SI_END, VI_BASE, VI_END,
+    HOLLYWOOD_PLL_AI_END, HW_HOLLYWOOD_BASE, HW_HOLLYWOOD_END, HW_REG_BASE, HW_REG_END, IPC_BASE, IPC_END, MEM2_BASE,
+    MEM2_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_END, SI_BASE, SI_END, VI_BASE, VI_END,
 };
 use crate::system::{System, SystemId, WII};
 
@@ -80,6 +80,20 @@ macro_rules! bus_write_hooks {
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
+    #[inline(always)]
+    fn fast_translate_addr_hint(&self, ea: u32) -> Option<u32> {
+        let top = ea >> 28;
+        if top == 0x8 || top == 0xC {
+            return Some(ea & 0x3FFF_FFFF);
+        }
+
+        if SYSTEM == WII && (top == 0x9 || top == 0xD) {
+            return Some(ea & 0x3FFF_FFFF);
+        }
+
+        None
+    }
+
     /// Translate a virtual address to physical using DBAT registers.
     /// Falls back to simple masking if no BAT matches.
     #[inline(always)]
@@ -95,39 +109,57 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             return ea & 0x3FFFFFFF;
         }
 
-        // Check DBATs. GC has 4, Wii's Broadway has 8 (extended BATs).
-        let mut dbats: [(u32, u32); 8] = [
-            (self.gekko.spr.dbat0u, self.gekko.spr.dbat0l),
-            (self.gekko.spr.dbat1u, self.gekko.spr.dbat1l),
-            (self.gekko.spr.dbat2u, self.gekko.spr.dbat2l),
-            (self.gekko.spr.dbat3u, self.gekko.spr.dbat3l),
-            (0, 0),
-            (0, 0),
-            (0, 0),
-            (0, 0),
-        ];
-        if SYSTEM == WII {
-            dbats[4] = (self.gekko.spr.dbat4u, self.gekko.spr.dbat4l);
-            dbats[5] = (self.gekko.spr.dbat5u, self.gekko.spr.dbat5l);
-            dbats[6] = (self.gekko.spr.dbat6u, self.gekko.spr.dbat6l);
-            dbats[7] = (self.gekko.spr.dbat7u, self.gekko.spr.dbat7l);
+        // Wii MEM2 aliases are also direct maskable mappings.
+        // Hitting this path avoids per-access DBAT table setup/scans for
+        // common 0x9000_0000/0xD000_0000 traffic.
+        if SYSTEM == WII && (top == 0x9 || top == 0xD) {
+            return ea & 0x3FFFFFFF;
         }
 
-        for (batu, batl) in dbats {
-            // Valid in supervisor (Vs) or problem (Vp) mode
+        #[inline(always)]
+        fn try_translate_bat(ea: u32, batu: u32, batl: u32) -> Option<u32> {
+            // Valid in supervisor (Vs) or problem (Vp) mode.
             if (batu & 0x3) == 0 {
-                continue;
+                return None;
             }
 
             let bl = (batu >> 2) & 0x7FF; // block length mask
             let bepi = batu >> 17; // upper 15 bits of EA
             let ea_upper = ea >> 17;
 
-            // Check if EA falls within this BAT's range
             // Match condition: (EA >> 17) & ~BL == BEPI & ~BL
-            if (ea_upper & !bl) == (bepi & !bl) {
-                let brpn = batl >> 17; // upper 15 bits of PA
-                let pa = (brpn | (ea_upper & bl)) << 17 | (ea & 0x1FFFF);
+            if (ea_upper & !bl) != (bepi & !bl) {
+                return None;
+            }
+
+            let brpn = batl >> 17; // upper 15 bits of PA
+            Some((brpn | (ea_upper & bl)) << 17 | (ea & 0x1FFFF))
+        }
+
+        if let Some(pa) = try_translate_bat(ea, self.gekko.spr.dbat0u, self.gekko.spr.dbat0l) {
+            return pa;
+        }
+        if let Some(pa) = try_translate_bat(ea, self.gekko.spr.dbat1u, self.gekko.spr.dbat1l) {
+            return pa;
+        }
+        if let Some(pa) = try_translate_bat(ea, self.gekko.spr.dbat2u, self.gekko.spr.dbat2l) {
+            return pa;
+        }
+        if let Some(pa) = try_translate_bat(ea, self.gekko.spr.dbat3u, self.gekko.spr.dbat3l) {
+            return pa;
+        }
+
+        if SYSTEM == WII {
+            if let Some(pa) = try_translate_bat(ea, self.gekko.spr.dbat4u, self.gekko.spr.dbat4l) {
+                return pa;
+            }
+            if let Some(pa) = try_translate_bat(ea, self.gekko.spr.dbat5u, self.gekko.spr.dbat5l) {
+                return pa;
+            }
+            if let Some(pa) = try_translate_bat(ea, self.gekko.spr.dbat6u, self.gekko.spr.dbat6l) {
+                return pa;
+            }
+            if let Some(pa) = try_translate_bat(ea, self.gekko.spr.dbat7u, self.gekko.spr.dbat7l) {
                 return pa;
             }
         }
@@ -152,10 +184,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     pub fn read_u8(&mut self, addr: u32) -> u8 {
-        let phys = self.translate_addr(addr);
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
         bus_read_hooks!(self, addr, phys, 1, {
             if phys <= RAM_END {
                 self.mmio.ram_read_u8(phys)
+            } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys) {
+                self.mmio.phys_read_u8(phys)
             } else {
                 self.read_u8_mmio(phys, addr)
             }
@@ -164,10 +200,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     pub fn read_u16(&mut self, addr: u32) -> u16 {
-        let phys = self.translate_addr(addr);
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
         bus_read_hooks!(self, addr, phys, 2, {
             if phys <= RAM_END - 1 {
                 self.mmio.ram_read_u16(phys)
+            } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 1).contains(&phys) {
+                self.mmio.phys_read_u16(phys)
             } else {
                 self.read_u16_mmio(phys, addr)
             }
@@ -176,10 +216,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     pub fn read_u32(&mut self, addr: u32) -> u32 {
-        let phys = self.translate_addr(addr);
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
         bus_read_hooks!(self, addr, phys, 4, {
             if phys <= RAM_END - 3 {
                 self.mmio.ram_read_u32(phys)
+            } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 3).contains(&phys) {
+                self.mmio.phys_read_u32(phys)
             } else {
                 self.read_u32_mmio(phys, addr)
             }
@@ -190,12 +234,16 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     pub fn write_u8(&mut self, addr: u32, val: u8) {
-        let phys = self.translate_addr(addr);
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
         bus_write_hooks!(self, addr, phys, 1, val, {
             if phys <= RAM_END {
                 self.mmio.ram_write_u8(phys, val);
                 #[cfg(feature = "jit")]
                 self.mmio.queue_icbi_for_range(phys, 1);
+            } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys) {
+                self.mmio.phys_write_u8(phys, val);
             } else {
                 self.write_u8_mmio(phys, addr, val);
             }
@@ -204,12 +252,16 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     pub fn write_u16(&mut self, addr: u32, val: u16) {
-        let phys = self.translate_addr(addr);
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
         bus_write_hooks!(self, addr, phys, 2, val, {
             if phys <= RAM_END - 1 {
                 self.mmio.ram_write_u16(phys, val);
                 #[cfg(feature = "jit")]
                 self.mmio.queue_icbi_for_range(phys, 2);
+            } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 1).contains(&phys) {
+                self.mmio.phys_write_u16(phys, val);
             } else {
                 self.write_u16_mmio(phys, addr, val);
             }
@@ -218,12 +270,16 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     pub fn write_u32(&mut self, addr: u32, val: u32) {
-        let phys = self.translate_addr(addr);
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
         bus_write_hooks!(self, addr, phys, 4, val, {
             if phys <= RAM_END - 3 {
                 self.mmio.ram_write_u32(phys, val);
                 #[cfg(feature = "jit")]
                 self.mmio.queue_icbi_for_range(phys, 4);
+            } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 3).contains(&phys) {
+                self.mmio.phys_write_u32(phys, val);
             } else {
                 self.write_u32_mmio(phys, addr, val);
             }

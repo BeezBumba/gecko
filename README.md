@@ -157,6 +157,26 @@ cargo build -p debugger --release                                # debugger
 wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 ```
 
+### Web performance (threaded build)
+
+If you want maximum web performance, build a threaded wasm variant and host it behind cross-origin isolation headers.
+
+```sh
+RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128" \
+  wasm-pack build crates/web --target web --out-dir pkg --out-name gecko_web --release -- --features web-threads
+```
+
+Required response headers for the page and wasm/js assets:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+`crates/web/_headers` is included for static hosts that support header files (for example Cloudflare Pages or Netlify).
+
+GitHub Pages does not support custom response headers for this use case, so a pthread-enabled build will not initialize there.
+
 > Release builds compile out all tracing output (the `gecko` crate pins `tracing` with `release_max_level_off`), so `--release` binaries are silent. Build with `--profile dev` if you want log messages.
 
 ### Features

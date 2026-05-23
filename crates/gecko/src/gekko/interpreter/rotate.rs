@@ -14,17 +14,17 @@ pub fn rotate<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
     let rs = ctx.gekko.read_gpr(instr.rs());
     let mb = instr.mb() as u32;
     let me = instr.me() as u32;
+    let m = mask(mb, me);
 
     let res = match OP {
-        OP_RLWINMX => rs.rotate_left(instr.sh() as u32) & mask(mb, me),
+        OP_RLWINMX => rs.rotate_left(instr.sh() as u32) & m,
         OP_RLWIMIX => {
-            let m = mask(mb, me);
             let r = rs.rotate_left(instr.sh() as u32);
             (r & m) | (ctx.gekko.read_gpr(instr.ra()) & !m)
         }
         OP_RLWNMX => {
             let sh = ctx.gekko.read_gpr(instr.rb()) & 0x1F;
-            rs.rotate_left(sh) & mask(mb, me)
+            rs.rotate_left(sh) & m
         }
         _ => todo!("Rotate instruction with OP = {OP:#x}"),
     };
