@@ -877,6 +877,7 @@ impl GxRenderer {
         (buf, capacity)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn return_readback_staging(&mut self, buf: wgpu::Buffer, capacity: u64) {
         const MAX_PER_BUCKET: usize = 8;
         let bucket = self.efb_readback_staging_pool.entry(capacity).or_default();
@@ -885,6 +886,7 @@ impl GxRenderer {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn drain_pending_writebacks(
         &mut self,
         device: &wgpu::Device,

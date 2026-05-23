@@ -280,6 +280,7 @@ pub(crate) struct DrawRecord {
     pub packed_vertex_stride: u32,
 }
 
+#[allow(dead_code)]
 pub(crate) struct PendingWriteback {
     pub dest_addr: Address,
     pub staging: wgpu::Buffer,

@@ -156,7 +156,7 @@
     </div>
 
     <script type="module">
-        import init, { start_emulator } from './pkg/web.js';
+        import init, { start_emulator_file } from './pkg/web.js';
 
         async function run() {
             window.addEventListener('error', (event) => {
@@ -169,7 +169,7 @@
             await init();
             console.log('[web] wasm init complete');
 
-            let romData = null;
+            let romFile = null;
             let romName = '';
             let dspData = null;
             let coefData = null;
@@ -197,7 +197,7 @@
                 if (e.target.files.length > 0) {
                     const file = e.target.files[0];
                     console.log('[web] selected ROM/disc:', file.name, 'bytes=', file.size);
-                    romData = await readFile(file);
+                    romFile = file;
                     romName = file.name;
                     romNameEl.textContent = file.name;
                     startBtn.disabled = false;
@@ -231,15 +231,17 @@
                 }
             });
 
-            startBtn.addEventListener('click', () => {
-                if (!romData) return;
+            startBtn.addEventListener('click', async () => {
+                if (!romFile) return;
                 console.log('[web] launching emulator for', romName);
                 document.getElementById('setup').style.display = 'none';
+                startBtn.disabled = true;
                 try {
-                    start_emulator(romData, romName, dspData ?? undefined, coefData ?? undefined, iplData ?? undefined);
+                    await start_emulator_file(romFile, dspData ?? undefined, coefData ?? undefined, iplData ?? undefined);
                 } catch (err) {
                     console.error('[web] start_emulator failed:', err);
                     document.getElementById('setup').style.display = 'flex';
+                    startBtn.disabled = false;
                 }
             });
         }

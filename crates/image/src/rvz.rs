@@ -1,4 +1,6 @@
 use crate::dvd::{Apploader, DVD_APPLOADER_OFFSET, DVD_APPLOADER_SIZE, DVD_HEADER_OFFSET, DVD_HEADER_SIZE, Header};
+use std::io::{Read, Seek, SeekFrom};
+use std::sync::Mutex;
 use zerocopy::FromBytes;
 
 const RVZ_MAGIC: [u8; 4] = [b'R', b'V', b'Z', 0x01];
@@ -79,69 +81,96 @@ pub struct Rvz {
     groups: Vec<GroupEntry>,
     partitions: Vec<WiiPartition>,
     data_partition: Option<usize>,
-    file_data: Vec<u8>,
+    reader: Mutex<Box<dyn ReadSeek + Send>>,
 }
+
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
 
 impl Rvz {
     pub fn parse(data: Vec<u8>) -> Self {
-        assert!(data.len() >= H1_SIZE, "RVZ file too small for header");
-        assert_eq!(&data[0..4], &RVZ_MAGIC, "not an RVZ file (bad magic)");
+        let cursor = std::io::Cursor::new(data);
+        Self::parse_from_reader(cursor)
+    }
 
-        let iso_size = self::be64(&data, H1_ISO_FILE_SIZE);
+    pub fn parse_from_reader<R>(mut reader: R) -> Self
+    where
+        R: Read + Seek + Send + 'static,
+    {
+        let h = self::read_vec_at_mut(&mut reader, 0, H1_SIZE + 0x200);
+        assert!(h.len() >= H1_SIZE, "RVZ file too small for header");
+        assert_eq!(&h[0..4], &RVZ_MAGIC, "not an RVZ file (bad magic)");
+
+        let reader = Mutex::new(Box::new(reader) as Box<dyn ReadSeek + Send>);
+
+        let iso_size = self::be64(&h, H1_ISO_FILE_SIZE);
         let h2 = H1_SIZE;
 
-        let disc_type = self::be32(&data, h2 + H2_DISC_TYPE);
+        let disc_type = self::be32(&h, h2 + H2_DISC_TYPE);
         assert!(
             disc_type == 1 || disc_type == 2,
             "unsupported RVZ disc_type={disc_type} (1=GameCube, 2=Wii)"
         );
 
-        let compression = match self::be32(&data, h2 + H2_COMPRESSION_TYPE) {
+        let compression = match self::be32(&h, h2 + H2_COMPRESSION_TYPE) {
             0 => Compression::None,
             5 => Compression::Zstd,
             other => panic!("unsupported RVZ compression type {other} (only None/Zstd supported)"),
         };
-        let chunk_size = self::be32(&data, h2 + H2_CHUNK_SIZE);
+        let chunk_size = self::be32(&h, h2 + H2_CHUNK_SIZE);
 
         let mut disc_header = [0u8; 0x80];
-        disc_header.copy_from_slice(&data[h2 + H2_DISC_HEADER..h2 + H2_DISC_HEADER + 0x80]);
+        disc_header.copy_from_slice(&h[h2 + H2_DISC_HEADER..h2 + H2_DISC_HEADER + 0x80]);
 
-        let num_raw_data = self::be32(&data, h2 + H2_NUM_RAW_DATA);
-        let raw_data_off = self::be64(&data, h2 + H2_RAW_DATA_OFFSET);
-        let raw_data_compressed_size = self::be32(&data, h2 + H2_RAW_DATA_SIZE);
-        let num_groups = self::be32(&data, h2 + H2_NUM_GROUPS);
-        let groups_off = self::be64(&data, h2 + H2_GROUPS_OFFSET);
-        let groups_compressed_size = self::be32(&data, h2 + H2_GROUPS_SIZE);
+        let num_raw_data = self::be32(&h, h2 + H2_NUM_RAW_DATA);
+        let raw_data_off = self::be64(&h, h2 + H2_RAW_DATA_OFFSET);
+        let raw_data_compressed_size = self::be32(&h, h2 + H2_RAW_DATA_SIZE);
+        let num_groups = self::be32(&h, h2 + H2_NUM_GROUPS);
+        let groups_off = self::be64(&h, h2 + H2_GROUPS_OFFSET);
+        let groups_compressed_size = self::be32(&h, h2 + H2_GROUPS_SIZE);
 
+        let raw_data_payload = self::read_vec_at(
+            &reader,
+            raw_data_off,
+            raw_data_compressed_size as usize,
+        );
         let raw_data_blob = self::decompress_metadata(
-            &data[raw_data_off as usize..raw_data_off as usize + raw_data_compressed_size as usize],
+            &raw_data_payload,
             compression,
             (num_raw_data as usize) * RAW_DATA_ENTRY_SIZE,
         );
         let raw_data = self::parse_raw_data(&raw_data_blob, num_raw_data);
 
+        let groups_payload = self::read_vec_at(
+            &reader,
+            groups_off,
+            groups_compressed_size as usize,
+        );
         let groups_blob = self::decompress_metadata(
-            &data[groups_off as usize..groups_off as usize + groups_compressed_size as usize],
+            &groups_payload,
             compression,
             (num_groups as usize) * RVZ_GROUP_ENTRY_SIZE,
         );
         let groups = self::parse_groups(&groups_blob, num_groups);
 
         let (partitions, data_partition) = if disc_type == 2 {
-            let num_partitions = self::be32(&data, h2 + H2_NUM_PARTITIONS);
-            let partition_entry_size = self::be32(&data, h2 + H2_PARTITION_ENTRY_SIZE) as usize;
-            let partition_entries_off = self::be64(&data, h2 + H2_PARTITION_ENTRIES_OFFSET) as usize;
+            let num_partitions = self::be32(&h, h2 + H2_NUM_PARTITIONS);
+            let partition_entry_size = self::be32(&h, h2 + H2_PARTITION_ENTRY_SIZE) as usize;
+            let partition_entries_off = self::be64(&h, h2 + H2_PARTITION_ENTRIES_OFFSET);
             assert!(
                 partition_entry_size >= RVZ_PARTITION_ENTRY_SIZE,
                 "RVZ partition_entry_size {partition_entry_size} smaller than expected baseline {RVZ_PARTITION_ENTRY_SIZE}"
             );
-            let partitions_blob =
-                &data[partition_entries_off..partition_entries_off + (num_partitions as usize) * partition_entry_size];
-            let partitions = self::parse_partitions(partitions_blob, num_partitions, partition_entry_size);
+            let partitions_blob = self::read_vec_at(
+                &reader,
+                partition_entries_off,
+                (num_partitions as usize) * partition_entry_size,
+            );
+            let partitions = self::parse_partitions(&partitions_blob, num_partitions, partition_entry_size);
             assert!(!partitions.is_empty(), "Wii RVZ has no partitions");
 
             let data_idx = self::pick_data_partition(
-                &data,
+                &reader,
                 &disc_header,
                 chunk_size,
                 compression,
@@ -151,7 +180,7 @@ impl Rvz {
             );
             (partitions, Some(data_idx))
         } else {
-            let num_partitions = self::be32(&data, h2 + H2_NUM_PARTITIONS);
+            let num_partitions = self::be32(&h, h2 + H2_NUM_PARTITIONS);
             assert_eq!(num_partitions, 0, "GameCube RVZ should have no partitions");
             (Vec::new(), None)
         };
@@ -160,7 +189,7 @@ impl Rvz {
             None => {
                 let mut header_bytes = [0u8; DVD_HEADER_SIZE];
                 self::read_into(
-                    &data,
+                    &reader,
                     &disc_header,
                     chunk_size,
                     compression,
@@ -173,7 +202,7 @@ impl Rvz {
 
                 let mut apploader_bytes = [0u8; DVD_APPLOADER_SIZE];
                 self::read_into(
-                    &data,
+                    &reader,
                     &disc_header,
                     chunk_size,
                     compression,
@@ -192,7 +221,7 @@ impl Rvz {
 
                 let mut header_bytes = [0u8; DVD_HEADER_SIZE];
                 self::read_partition_decrypted(
-                    &data,
+                    &reader,
                     chunk_size,
                     compression,
                     &groups,
@@ -205,7 +234,7 @@ impl Rvz {
 
                 let mut apploader_bytes = [0u8; DVD_APPLOADER_SIZE];
                 self::read_partition_decrypted(
-                    &data,
+                    &reader,
                     chunk_size,
                     compression,
                     &groups,
@@ -230,7 +259,7 @@ impl Rvz {
             groups,
             partitions,
             data_partition,
-            file_data: data,
+            reader,
         }
     }
 }
@@ -295,7 +324,7 @@ fn decompress_metadata(payload: &[u8], compression: Compression, expected: usize
 }
 
 fn read_into(
-    file: &[u8],
+    reader: &Mutex<Box<dyn ReadSeek + Send>>,
     disc_header: &[u8; 0x80],
     chunk_size: u32,
     compression: Compression,
@@ -329,7 +358,7 @@ fn read_into(
         let this_chunk_size = core::cmp::min(chunk_size as u64, rd.data_size - group_offset_in_data) as usize;
 
         let group = &groups[(rd.group_index + group_idx) as usize];
-        let chunk = self::decompress_group(file, group, this_chunk_size, compression, group_offset_in_data);
+        let chunk = self::decompress_group(reader, group, this_chunk_size, compression, group_offset_in_data);
 
         let byte_off_in_chunk = (within - group_offset_in_data) as usize;
         let avail = this_chunk_size - byte_off_in_chunk;
@@ -343,7 +372,7 @@ fn read_into(
 }
 
 fn decompress_group(
-    file: &[u8],
+    reader: &Mutex<Box<dyn ReadSeek + Send>>,
     group: &GroupEntry,
     this_chunk_size: usize,
     file_compression: Compression,
@@ -353,9 +382,7 @@ fn decompress_group(
         return vec![0u8; this_chunk_size];
     }
 
-    let start = group.file_offset as usize;
-    let end = start + group.stored_size as usize;
-    let payload = &file[start..end];
+    let payload = self::read_vec_at(reader, group.file_offset, group.stored_size as usize);
 
     let effective = if group.is_compressed {
         file_compression
@@ -444,7 +471,7 @@ fn parse_partitions(blob: &[u8], count: u32, entry_size: usize) -> Vec<WiiPartit
 }
 
 fn pick_data_partition(
-    file: &[u8],
+    reader: &Mutex<Box<dyn ReadSeek + Send>>,
     disc_header: &[u8; 0x80],
     chunk_size: u32,
     compression: Compression,
@@ -454,7 +481,7 @@ fn pick_data_partition(
 ) -> usize {
     let mut group_table = [0u8; 32];
     self::read_into(
-        file,
+        reader,
         disc_header,
         chunk_size,
         compression,
@@ -474,7 +501,7 @@ fn pick_data_partition(
 
         let mut entries = vec![0u8; (num as usize) * 8];
         self::read_into(
-            file,
+            reader,
             disc_header,
             chunk_size,
             compression,
@@ -512,7 +539,7 @@ fn partition_user_size(partition: &WiiPartition) -> u64 {
 }
 
 fn read_partition_decrypted(
-    file: &[u8],
+    reader: &Mutex<Box<dyn ReadSeek + Send>>,
     chunk_size: u32,
     compression: Compression,
     groups: &[GroupEntry],
@@ -559,7 +586,7 @@ fn read_partition_decrypted(
         let chunk_disc_offset_enc = (slot.first_sector as u64 + chunk_first_sector_in_slot) * WII_BLOCK_TOTAL_SIZE;
 
         let chunk =
-            self::decompress_partition_chunk(file, group, this_chunk_user_size, compression, chunk_disc_offset_enc);
+            self::decompress_partition_chunk(reader, group, this_chunk_user_size, compression, chunk_disc_offset_enc);
 
         let byte_off_in_chunk = (within_slot - chunk_idx * chunk_user_size) as usize;
         let avail = this_chunk_user_size - byte_off_in_chunk;
@@ -573,7 +600,7 @@ fn read_partition_decrypted(
 }
 
 fn decompress_partition_chunk(
-    file: &[u8],
+    reader: &Mutex<Box<dyn ReadSeek + Send>>,
     group: &GroupEntry,
     this_chunk_user_size: usize,
     file_compression: Compression,
@@ -583,9 +610,7 @@ fn decompress_partition_chunk(
         return vec![0u8; this_chunk_user_size];
     }
 
-    let start = group.file_offset as usize;
-    let end = start + group.stored_size as usize;
-    let payload = &file[start..end];
+    let payload = self::read_vec_at(reader, group.file_offset, group.stored_size as usize);
 
     let effective = if group.is_compressed {
         file_compression
@@ -739,7 +764,7 @@ impl crate::Dvd for Rvz {
 
         match self.data_partition {
             None => self::read_into(
-                &self.file_data,
+                &self.reader,
                 &self.disc_header,
                 self.chunk_size,
                 self.compression,
@@ -749,7 +774,7 @@ impl crate::Dvd for Rvz {
                 buf,
             ),
             Some(idx) => self::read_partition_decrypted(
-                &self.file_data,
+                &self.reader,
                 self.chunk_size,
                 self.compression,
                 &self.groups,
@@ -776,7 +801,7 @@ impl crate::Dvd for Rvz {
         );
 
         self::read_into(
-            &self.file_data,
+            &self.reader,
             &self.disc_header,
             self.chunk_size,
             self.compression,
@@ -786,6 +811,22 @@ impl crate::Dvd for Rvz {
             buf,
         );
     }
+}
+
+fn read_vec_at(reader: &Mutex<Box<dyn ReadSeek + Send>>, offset: u64, len: usize) -> Vec<u8> {
+    let mut guard = reader.lock().expect("failed to lock RVZ reader");
+    self::read_vec_at_mut(&mut **guard, offset, len)
+}
+
+fn read_vec_at_mut<R: Read + Seek + ?Sized>(reader: &mut R, offset: u64, len: usize) -> Vec<u8> {
+    let mut out = vec![0u8; len];
+    reader
+        .seek(SeekFrom::Start(offset))
+        .expect("failed to seek RVZ reader");
+    reader
+        .read_exact(&mut out)
+        .expect("failed to read RVZ bytes");
+    out
 }
 
 #[inline(always)]

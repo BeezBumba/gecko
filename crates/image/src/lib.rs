@@ -15,9 +15,11 @@ pub mod loader;
 pub mod symbols;
 
 pub use dol::Dol;
-pub use iso::Iso;
+pub use iso::{Iso, IsoStream};
 #[cfg(feature = "rvz")]
 pub use rvz::Rvz;
+
+use std::io::{Read, Seek, SeekFrom};
 
 use dvd::{Apploader, Header};
 
@@ -114,6 +116,49 @@ pub fn load_dvd(data: Vec<u8>) -> Box<dyn Dvd> {
     } else {
         Box::new(Iso::parse(data))
     }
+}
+
+/// Reader/seek-based DVD loader.
+///
+/// ISO images are parsed directly from the reader (no full-image
+/// materialization). ZIP/RVZ currently fall back to a materialized path.
+pub fn load_dvd_from_reader<R>(mut reader: R) -> Box<dyn Dvd>
+where
+    R: Read + Seek + Send + 'static,
+{
+    reader
+        .seek(SeekFrom::Start(0))
+        .expect("failed to seek disc reader to start");
+
+    let mut magic = [0u8; 4];
+    reader
+        .read_exact(&mut magic)
+        .expect("failed to read disc magic from reader");
+
+    reader
+        .seek(SeekFrom::Start(0))
+        .expect("failed to rewind disc reader");
+
+    // ZIP still needs a materialized path for now.
+    if &magic == b"PK\x03\x04" {
+        let mut data = Vec::new();
+        reader
+            .read_to_end(&mut data)
+            .expect("failed to read materialized disc image from reader");
+        return load_dvd(data);
+    }
+
+    // RVZ is temporarily kept on the materialized path to preserve runtime
+    // stability while the reader-backed implementation is hardened.
+    if &magic == b"RVZ\x01" {
+        let mut data = Vec::new();
+        reader
+            .read_to_end(&mut data)
+            .expect("failed to read RVZ image from reader");
+        return load_dvd(data);
+    }
+
+    Box::new(IsoStream::parse_from_reader(reader))
 }
 
 fn extract_from_zip(data: Vec<u8>) -> Vec<u8> {

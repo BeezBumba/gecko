@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::io::{Read, Seek, SeekFrom};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -12,6 +13,8 @@ use gecko::host::{DrawVertex, GxAction, RenderSink};
 use image::Dol;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::js_sys::{ArrayBuffer, Uint8Array};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -53,6 +56,149 @@ fn web_log(message: impl AsRef<str>) {
 
 fn web_warn(message: impl AsRef<str>) {
     web_sys::console::warn_1(&JsValue::from_str(message.as_ref()));
+}
+
+const ROM_CHUNK_SIZE_BYTES: usize = 4 * 1024 * 1024;
+
+struct JsArrayReader {
+    data: Uint8Array,
+    pos: u64,
+    len: u64,
+}
+
+impl JsArrayReader {
+    fn new(data: Uint8Array) -> Self {
+        let len = data.length() as u64;
+        Self { data, pos: 0, len }
+    }
+}
+
+// wasm32 web build runs this on a single thread; this adapter must satisfy
+// image::load_dvd_from_reader's Send bound to plug into IsoStream.
+unsafe impl Send for JsArrayReader {}
+
+impl Read for JsArrayReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() || self.pos >= self.len {
+            return Ok(0);
+        }
+
+        let remaining = (self.len - self.pos) as usize;
+        let n = remaining.min(buf.len());
+        let start = self.pos as u32;
+        let end = (self.pos as usize + n) as u32;
+
+        let slice = self.data.subarray(start, end);
+        slice.copy_to(&mut buf[..n]);
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+impl Seek for JsArrayReader {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let base: i128 = match pos {
+            SeekFrom::Start(v) => v as i128,
+            SeekFrom::End(v) => self.len as i128 + v as i128,
+            SeekFrom::Current(v) => self.pos as i128 + v as i128,
+        };
+
+        if base < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "negative seek position",
+            ));
+        }
+
+        let next = base as u64;
+        self.pos = next.min(self.len);
+        Ok(self.pos)
+    }
+}
+
+async fn read_file_chunked(file: &web_sys::File, chunk_size: usize) -> Result<Vec<u8>, JsValue> {
+    let total_size = file.size() as u64;
+    let mut out = Vec::new();
+    // Reserve a small initial buffer to avoid a massive upfront allocation
+    // that can OOM/abort the wasm module for larger images.
+    let initial_reserve = (chunk_size.saturating_mul(2)).min(16 * 1024 * 1024);
+    out.try_reserve(initial_reserve)
+        .map_err(|_| JsValue::from_str("failed to reserve initial ROM buffer"))?;
+    let mut offset = 0u64;
+    let mut next_log_at = 32u64 * 1024 * 1024;
+
+    while offset < total_size {
+        let end = (offset + chunk_size as u64).min(total_size);
+        let slice = file.slice_with_f64_and_f64(offset as f64, end as f64)?;
+        let buf = JsFuture::from(slice.array_buffer()).await?;
+        let arr = Uint8Array::new(&buf);
+        let chunk_len = arr.length() as usize;
+
+        // Keep growth predictable for large images: avoid geometric Vec growth
+        // that can request a much larger contiguous allocation than needed.
+        out.try_reserve_exact(chunk_len)
+            .map_err(|_| JsValue::from_str("out of memory while extending ROM buffer"))?;
+
+        let start = out.len();
+        out.resize(start + chunk_len, 0);
+        arr.copy_to(&mut out[start..]);
+        offset = end;
+
+        if offset >= next_log_at || offset == total_size {
+            web_log(format!(
+                "[web] file ingest progress: {} / {} bytes ({:.1}%)",
+                offset,
+                total_size,
+                if total_size > 0 {
+                    (offset as f64 * 100.0) / total_size as f64
+                } else {
+                    100.0
+                }
+            ));
+            next_log_at = next_log_at.saturating_add(32u64 * 1024 * 1024);
+        }
+    }
+
+    Ok(out)
+}
+
+async fn read_file_into_js_buffer_chunked(
+    file: &web_sys::File,
+    chunk_size: usize,
+) -> Result<ArrayBuffer, JsValue> {
+    let total_size = file.size() as u64;
+    if total_size > u32::MAX as u64 {
+        return Err(JsValue::from_str("ROM too large for JS typed array indexing"));
+    }
+
+    let out = Uint8Array::new_with_length(total_size as u32);
+    let mut offset = 0u64;
+    let mut next_log_at = 32u64 * 1024 * 1024;
+
+    while offset < total_size {
+        let end = (offset + chunk_size as u64).min(total_size);
+        let slice = file.slice_with_f64_and_f64(offset as f64, end as f64)?;
+        let buf = JsFuture::from(slice.array_buffer()).await?;
+        let arr = Uint8Array::new(&buf);
+        out.set(&arr, offset as u32);
+        offset = end;
+
+        if offset >= next_log_at || offset == total_size {
+            web_log(format!(
+                "[web] JS buffer ingest progress: {} / {} bytes ({:.1}%)",
+                offset,
+                total_size,
+                if total_size > 0 {
+                    (offset as f64 * 100.0) / total_size as f64
+                } else {
+                    100.0
+                }
+            ));
+            next_log_at = next_log_at.saturating_add(32u64 * 1024 * 1024);
+        }
+    }
+
+    Ok(out.buffer())
 }
 
 /// One queued [`GxAction`] alongside the vertices appended to the sink's
@@ -673,15 +819,13 @@ impl ApplicationHandler for App {
     }
 }
 
-#[wasm_bindgen]
-pub fn start_emulator(
-    rom_data: &[u8],
+fn boot_emulator_from_bytes(
+    rom_data: Vec<u8>,
     filename: String,
     dsp_irom: Option<Vec<u8>>,
     dsp_coef: Option<Vec<u8>>,
     gc_ipl: Option<Vec<u8>>,
 ) {
-    console_error_panic_hook::set_once();
     web_log(format!(
         "[web] start_emulator file='{}' bytes={} dsp_irom={} dsp_coef={} gc_ipl={}",
         filename,
@@ -694,14 +838,22 @@ pub fn start_emulator(
     let name = filename.to_lowercase();
     let mut emulator = if name.ends_with(".bin") || name.ends_with(".ipl") {
         web_log("[web] boot path: GameCube IPL");
-        EmulatorInstance::Gc(GameCube::with_ipl(rom_data, false))
+        EmulatorInstance::Gc(GameCube::with_ipl(&rom_data, false))
     } else if name.ends_with(".dol") {
         web_log("[web] boot path: GameCube DOL");
-        let dol = Dol::parse(rom_data.to_vec());
+        let dol = Dol::parse(rom_data);
         EmulatorInstance::Gc(GameCube::with_image(&dol))
     } else if name.ends_with(".iso") || name.ends_with(".rvz") || name.ends_with(".zip") {
         web_log("[web] boot path: Disc image");
-        let dvd = image::load_dvd(rom_data.to_vec());
+        // RVZ currently routes through a materialized parser in image::load_dvd.
+        // Using load_dvd_from_reader here would force an additional full read_to_end
+        // copy in the RVZ fallback path, which can OOM on web.
+        let dvd = if name.ends_with(".rvz") {
+            image::load_dvd(rom_data)
+        } else {
+            let cursor = std::io::Cursor::new(rom_data);
+            image::load_dvd_from_reader(cursor)
+        };
         let header = dvd.header();
         let game_name = String::from_utf8_lossy(&header.game_name)
             .trim_end_matches('\0')
@@ -773,6 +925,141 @@ pub fn start_emulator(
     };
 
     event_loop.spawn_app(app);
+}
+
+fn boot_emulator_from_iso_array_buffer(
+    rom_data: ArrayBuffer,
+    filename: String,
+    dsp_irom: Option<Vec<u8>>,
+    dsp_coef: Option<Vec<u8>>,
+    gc_ipl: Option<Vec<u8>>,
+) {
+    let rom_len = Uint8Array::new(&rom_data).length();
+    web_log(format!(
+        "[web] start_emulator ISO(JS buffer) file='{}' bytes={} dsp_irom={} dsp_coef={} gc_ipl={}",
+        filename,
+        rom_len,
+        dsp_irom.as_ref().map(|v| v.len()).unwrap_or(0),
+        dsp_coef.as_ref().map(|v| v.len()).unwrap_or(0),
+        gc_ipl.as_ref().map(|v| v.len()).unwrap_or(0)
+    ));
+
+    let reader = JsArrayReader::new(Uint8Array::new(&rom_data));
+    let dvd = image::load_dvd_from_reader(reader);
+    let header = dvd.header();
+    let game_name = String::from_utf8_lossy(&header.game_name)
+        .trim_end_matches('\0')
+        .to_string();
+    web_log(format!(
+        "[web] disc header game_id={} is_wii={} is_gc={} disk_id={} version={} name='{}'",
+        header.game_id(),
+        header.is_wii(),
+        header.is_gc(),
+        header.disk_id,
+        header.version,
+        game_name
+    ));
+
+    let mut emulator = if dvd.header().is_wii() {
+        web_log("[web] selected Wii apploader HLE");
+        EmulatorInstance::Wii(Wii::apploader_hle(dvd).build())
+    } else {
+        match gc_ipl.as_ref() {
+            Some(ipl) => {
+                web_log("[web] selected GameCube real IPL boot (skip enabled)");
+                let mut emulator = GameCube::with_ipl(ipl, true);
+                emulator.insert_dvd(dvd);
+                EmulatorInstance::Gc(emulator)
+            }
+            None => {
+                web_log("[web] selected GameCube IPL HLE (no GC IPL provided)");
+                EmulatorInstance::Gc(GameCube::with_ipl_hle(dvd))
+            }
+        }
+    };
+
+    if let Some(irom) = dsp_irom {
+        emulator.load_dsp_irom(&irom);
+        web_log("[web] loaded DSP IROM");
+    }
+
+    if let Some(coef) = dsp_coef {
+        emulator.load_dsp_coef(&coef);
+        web_log("[web] loaded DSP COEF");
+    }
+
+    let input = emulator.neutral_input();
+    emulator.apply_host_input(&input);
+    web_log("[web] host input initialized");
+
+    let action_queue: WebSinkQueue = Arc::new(Mutex::new(WebSinkShared {
+        messages: Vec::new(),
+    }));
+    emulator.set_render_sink(Box::new(WebSink {
+        shared: action_queue.clone(),
+        scratch: Vec::new(),
+        scratch_sent_len: 0,
+    }));
+
+    let event_loop = EventLoop::new().unwrap();
+    web_log("[web] event loop created; spawning app");
+    let app = App {
+        emulator,
+        input,
+        action_queue,
+        window: None,
+        state: Rc::new(RefCell::new(None)),
+        #[cfg(feature = "debug")]
+        debug_state: debug_ui::DebugState::default(),
+    };
+
+    event_loop.spawn_app(app);
+}
+
+#[wasm_bindgen]
+pub fn start_emulator(
+    rom_data: &[u8],
+    filename: String,
+    dsp_irom: Option<Vec<u8>>,
+    dsp_coef: Option<Vec<u8>>,
+    gc_ipl: Option<Vec<u8>>,
+) {
+    console_error_panic_hook::set_once();
+    boot_emulator_from_bytes(rom_data.to_vec(), filename, dsp_irom, dsp_coef, gc_ipl);
+}
+
+#[wasm_bindgen]
+pub async fn start_emulator_file(
+    rom_file: web_sys::File,
+    dsp_irom: Option<Vec<u8>>,
+    dsp_coef: Option<Vec<u8>>,
+    gc_ipl: Option<Vec<u8>>,
+) -> Result<(), JsValue> {
+    console_error_panic_hook::set_once();
+
+    let filename = rom_file.name();
+    web_log(format!(
+        "[web] start_emulator_file file='{}' size={} chunk={}B",
+        filename,
+        rom_file.size(),
+        ROM_CHUNK_SIZE_BYTES
+    ));
+
+    let name = filename.to_lowercase();
+
+    if name.ends_with(".iso") {
+        web_log("[web] ingest strategy: ISO -> JS ArrayBuffer + reader-backed parser");
+        let rom_data = read_file_into_js_buffer_chunked(&rom_file, ROM_CHUNK_SIZE_BYTES).await?;
+        boot_emulator_from_iso_array_buffer(rom_data, filename, dsp_irom, dsp_coef, gc_ipl);
+        return Ok(());
+    }
+
+    // Transitional loader: read browser File into wasm memory in chunks to avoid
+    // large one-shot JS ArrayBuffer allocations and peak-memory spikes.
+    web_log("[web] ingest strategy: materialize in wasm buffer");
+    let rom_data = read_file_chunked(&rom_file, ROM_CHUNK_SIZE_BYTES).await?;
+    boot_emulator_from_bytes(rom_data, filename, dsp_irom, dsp_coef, gc_ipl);
+    Ok(())
 }
 
 fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
