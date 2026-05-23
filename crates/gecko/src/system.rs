@@ -33,6 +33,8 @@ pub const WII: SystemId = 1;
 pub enum ExecutionMode {
     #[default]
     Jit,
+    #[cfg(target_arch = "wasm32")]
+    RuntimeWasm,
     Interpreter,
 }
 
@@ -74,6 +76,9 @@ pub struct System<const SYSTEM: SystemId> {
 
     #[cfg(feature = "jit")]
     pub jit: Option<Box<crate::gekko::jit::JitEngine<SYSTEM>>>,
+
+    #[cfg(target_arch = "wasm32")]
+    pub runtime_wasm: crate::runtime_wasm::RuntimeWasmState<SYSTEM>,
 
     #[cfg(feature = "fps-counter")]
     pub fps_counter: FpsCounter,
@@ -128,6 +133,9 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             #[cfg(feature = "jit")]
             jit: None,
 
+            #[cfg(target_arch = "wasm32")]
+            runtime_wasm: crate::runtime_wasm::RuntimeWasmState::new(),
+
             #[cfg(feature = "fps-counter")]
             fps_counter: FpsCounter::new(),
 
@@ -147,6 +155,21 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     pub fn step_cpu(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if self.execution_mode == ExecutionMode::RuntimeWasm {
+            let pc = self.gekko.pc;
+            let hit_count = self.runtime_wasm.record_block_hit(pc);
+            if hit_count == crate::runtime_wasm::HOT_BLOCK_THRESHOLD {
+                let trace = crate::runtime_wasm::discover_trace(self, pc);
+                self.runtime_wasm.clear_hot_candidate(pc);
+                if let crate::runtime_wasm::BlockCompileDecision::Fallback { pc, reason } =
+                    self.runtime_wasm.compile_trace(trace)
+                {
+                    self.runtime_wasm.note_fallback(pc, reason);
+                }
+            }
+        }
+
         if self.gekko.msr.external_interrupt_enable() {
             // Deliver external interrupt when EE=1 and any enabled PI interrupt is pending
             if self.pi.interrupt_pending() {
@@ -230,14 +253,17 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self.prepare_frame();
         while !self.vsync_pending {
             self.scheduler.refresh_deadline();
-            #[cfg(feature = "jit")]
-            if self.execution_mode == ExecutionMode::Jit {
-                self.run_until_deadline_jit();
-            } else {
-                self.run_until_deadline_interp();
+            match self.execution_mode {
+                #[cfg(feature = "jit")]
+                ExecutionMode::Jit => self.run_until_deadline_jit(),
+                #[cfg(all(not(feature = "jit"), target_arch = "wasm32"))]
+                ExecutionMode::Jit => self.run_until_deadline_interp(),
+                #[cfg(all(not(feature = "jit"), not(target_arch = "wasm32")))]
+                ExecutionMode::Jit => self.run_until_deadline_interp(),
+                #[cfg(target_arch = "wasm32")]
+                ExecutionMode::RuntimeWasm => self.run_until_deadline_runtime_wasm(),
+                ExecutionMode::Interpreter => self.run_until_deadline_interp(),
             }
-            #[cfg(not(feature = "jit"))]
-            self.run_until_deadline_interp();
             // Drain all events that are now due
             self.drain_events();
         }
@@ -538,6 +564,97 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         while self.scheduler.cycles < self.scheduler.next_deadline() {
             self.step_cpu();
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
+    fn run_until_deadline_runtime_wasm(&mut self) {
+        self.runtime_wasm.begin_slice(self.scheduler.cycles, self.scheduler.next_deadline());
+
+        while self.scheduler.cycles < self.scheduler.next_deadline() {
+            if self.gekko.msr.external_interrupt_enable() {
+                if self.pi.interrupt_pending() {
+                    self.cause_external_interrupt();
+                    self.scheduler.cycles += 2;
+                    continue;
+                }
+
+                if self.gekko.dec.interrupt_pending() {
+                    self.cause_decrementer_interrupt();
+                    self.scheduler.cycles += 2;
+                    continue;
+                }
+            }
+
+            if self.execute_runtime_wasm_block() {
+                continue;
+            }
+
+            self.step_cpu();
+        }
+
+        while let Some(pc) = self.runtime_wasm.poll_hot_candidate() {
+            let trace = crate::runtime_wasm::discover_trace(self, pc);
+            let decision = self.runtime_wasm.compile_trace(trace);
+            match decision {
+                crate::runtime_wasm::BlockCompileDecision::Compileable(fingerprint) => {
+                    if self.runtime_wasm.lookup(&fingerprint).is_none() {
+                        tracing::debug!(
+                            pc = format!("{:08X}", fingerprint.pc),
+                            instr_count = fingerprint.instr_count,
+                            "runtime wasm block eligible for future compilation"
+                        );
+                    }
+                }
+                crate::runtime_wasm::BlockCompileDecision::Fallback { pc, reason } => {
+                    self.runtime_wasm.note_fallback(pc, reason);
+                }
+            }
+        }
+
+        for line in self.mmio.pending_runtime_wasm_icbi.drain() {
+            self.runtime_wasm.invalidate_phys_line(line);
+        }
+
+        self.runtime_wasm.end_slice(self.scheduler.cycles);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn execute_runtime_wasm_block(&mut self) -> bool {
+        let sys_ptr = self as *mut _;
+        let pc = self.gekko.pc;
+        let cr = self.gekko.cr.raw();
+        let ctr = self.gekko.spr.ctr;
+        let lr = self.gekko.spr.lr;
+        let so = u32::from(self.gekko.spr.xer.summary_overflow());
+        let ov = u32::from(self.gekko.spr.xer.overflow());
+        let ca = u32::from(self.gekko.spr.xer.carry());
+
+        let Some((next_gprs, next_cr, next_ctr, next_pc, last_pc, next_lr, next_so, next_ov, next_ca, executed_instrs)) = self
+            .runtime_wasm
+            .execute_compiled(sys_ptr, pc, &self.gekko.gprs, cr, ctr, lr, so, ov, ca)
+        else {
+            return false;
+        };
+
+        self.gekko.gprs = next_gprs;
+        self.gekko.cr = crate::gekko::condition::ConditionRegister::from(next_cr);
+        self.gekko.spr.ctr = next_ctr;
+        self.gekko.spr.lr = next_lr;
+        self.gekko.spr.xer = self
+            .gekko
+            .spr
+            .xer
+            .with_summary_overflow(next_so != 0)
+            .with_overflow(next_ov != 0)
+            .with_carry(next_ca != 0);
+        self.gekko.cia = last_pc;
+        self.gekko.nia = next_pc;
+        self.gekko.pc = next_pc;
+        self.runtime_wasm.note_compiled_execution(executed_instrs);
+        self.scheduler.cycles += executed_instrs.saturating_mul(2);
+        executed_instrs != 0
     }
 
     /// JIT inner loop: runs compiled blocks back-to-back until

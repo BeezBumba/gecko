@@ -8,7 +8,7 @@ use egui::ViewportId;
 use gecko::HostInput;
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER, STICK_MAX, STICK_MIN, TRIGGER_MAX, TRIGGER_MIN};
 use gecko::flipper::vi::regs::RefreshRate;
-use gecko::{GC, GameCube, WII, Wii};
+use gecko::{ExecutionMode, GC, GameCube, WII, Wii};
 use gecko::host::{DrawVertex, GxAction, RenderSink};
 use image::Dol;
 use wasm_bindgen::prelude::*;
@@ -261,6 +261,13 @@ enum EmulatorInstance {
 }
 
 impl EmulatorInstance {
+    fn set_execution_mode(&mut self, mode: ExecutionMode) {
+        match self {
+            Self::Gc(emulator) => emulator.set_execution_mode(mode),
+            Self::Wii(emulator) => emulator.set_execution_mode(mode),
+        }
+    }
+
     fn refresh_rate(&self) -> RefreshRate {
         match self {
             Self::Gc(emulator) => emulator.vi.dcr.video_format().refresh_rate(),
@@ -313,7 +320,7 @@ impl EmulatorInstance {
     fn telemetry_line(&self) -> String {
         match self {
             Self::Gc(emulator) => format!(
-                "sys=GC pc={:08X} nia={:08X} cycles={} ee={} vsync_pending={} pi_pending={} pi_intsr={:08X} pi_intmr={:08X} di_irq_active={} di_tstart={} di_status={:08X} di_cover={:08X} di_cmd0={:08X} di_cmd1={:08X} di_cmd2={:08X} di_dma_addr={:08X} di_dma_len={:08X} dvd_present={}",
+                "sys=GC pc={:08X} nia={:08X} cycles={} ee={} vsync_pending={} pi_pending={} pi_intsr={:08X} pi_intmr={:08X} di_irq_active={} di_tstart={} di_status={:08X} di_cover={:08X} di_cmd0={:08X} di_cmd1={:08X} di_cmd2={:08X} di_dma_addr={:08X} di_dma_len={:08X} dvd_present={}{}",
                 emulator.gekko.pc,
                 emulator.gekko.nia,
                 emulator.scheduler.cycles,
@@ -334,10 +341,11 @@ impl EmulatorInstance {
                 emulator.di.cmdbuf2,
                 emulator.di.dma_address.raw(),
                 emulator.di.dma_length.raw(),
-                emulator.di.dvd.is_some()
+                emulator.di.dvd.is_some(),
+                runtime_wasm_telemetry_suffix(emulator)
             ),
             Self::Wii(emulator) => format!(
-                "sys=WII pc={:08X} nia={:08X} cycles={} ee={} vsync_pending={} pi_pending={} pi_intsr={:08X} pi_intmr={:08X} di_irq_active={} di_tstart={} di_status={:08X} di_cover={:08X} di_cmd0={:08X} di_cmd1={:08X} di_cmd2={:08X} di_dma_addr={:08X} di_dma_len={:08X} dvd_present={}",
+                "sys=WII pc={:08X} nia={:08X} cycles={} ee={} vsync_pending={} pi_pending={} pi_intsr={:08X} pi_intmr={:08X} di_irq_active={} di_tstart={} di_status={:08X} di_cover={:08X} di_cmd0={:08X} di_cmd1={:08X} di_cmd2={:08X} di_dma_addr={:08X} di_dma_len={:08X} dvd_present={}{}",
                 emulator.gekko.pc,
                 emulator.gekko.nia,
                 emulator.scheduler.cycles,
@@ -358,10 +366,44 @@ impl EmulatorInstance {
                 emulator.di.cmdbuf2,
                 emulator.di.dma_address.raw(),
                 emulator.di.dma_length.raw(),
-                emulator.di.dvd.is_some()
+                emulator.di.dvd.is_some(),
+                runtime_wasm_telemetry_suffix(emulator)
             ),
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn runtime_wasm_telemetry_suffix<const SYSTEM: u8>(emulator: &gecko::system::System<SYSTEM>) -> String {
+    if emulator.execution_mode != gecko::system::ExecutionMode::RuntimeWasm {
+        return String::new();
+    }
+
+    let stats = emulator.runtime_wasm.stats();
+    let top_fallbacks = emulator
+        .runtime_wasm
+        .top_fallback_reasons(3)
+        .into_iter()
+        .map(|(reason, count)| format!("{}:{}", gecko::runtime_wasm::format_fallback_reason(reason), count))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        " rw_exec={} rw_exec_instrs={} rw_compile_attempts={} rw_blocks={} rw_unprofitable={} rw_unsupported={} rw_shared_rebuilds={} rw_shared_dispatch_blocks={} rw_top_fallbacks={}",
+        stats.compiled_executions,
+        stats.compiled_execution_instrs,
+        stats.compile_attempts,
+        stats.compiled_blocks,
+        stats.unprofitable_fallbacks,
+        stats.unsupported_fallbacks,
+        stats.shared_rebuilds,
+        stats.shared_dispatch_blocks,
+        top_fallbacks,
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn runtime_wasm_telemetry_suffix<const SYSTEM: u8>(_emulator: &gecko::system::System<SYSTEM>) -> String {
+    String::new()
 }
 
 struct State {
@@ -597,13 +639,11 @@ impl State {
         } else {
             self.empty_action_streak = 0;
         }
-        if self.frame_index == 1 || self.frame_index % 120 == 0 {
-            web_log(format!(
-                "[web] frame={} fps={:.1} queued_actions={} empty_action_streak={}",
-                self.frame_index, fps, action_count, self.empty_action_streak
-            ));
-            web_log(format!("[web] {}", emulator.telemetry_line()));
-        }
+        web_log(format!(
+            "[web] frame={} fps={:.1} queued_actions={} empty_action_streak={}",
+            self.frame_index, fps, action_count, self.empty_action_streak
+        ));
+        web_log(format!("[web] {}", emulator.telemetry_line()));
         for msg in messages {
             self.queued_vertices.extend_from_slice(&msg.vertices);
             self.gx_renderer.process_action_with_external_scratch(
@@ -901,6 +941,8 @@ fn boot_emulator_from_bytes(
     let input = emulator.neutral_input();
     emulator.apply_host_input(&input);
     web_log("[web] host input initialized");
+    emulator.set_execution_mode(ExecutionMode::RuntimeWasm);
+    web_log("[web] selected runtime WASM execution tier");
 
     // Install the WebSink as the emulator's render sink.
     let action_queue: WebSinkQueue = Arc::new(Mutex::new(WebSinkShared {
@@ -991,6 +1033,8 @@ fn boot_emulator_from_iso_array_buffer(
     let input = emulator.neutral_input();
     emulator.apply_host_input(&input);
     web_log("[web] host input initialized");
+    emulator.set_execution_mode(ExecutionMode::RuntimeWasm);
+    web_log("[web] selected runtime WASM execution tier");
 
     let action_queue: WebSinkQueue = Arc::new(Mutex::new(WebSinkShared {
         messages: Vec::new(),

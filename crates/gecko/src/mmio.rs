@@ -6,7 +6,7 @@ pub mod traits;
 
 use crate::system::{SystemId, WII};
 use constants::*;
-#[cfg(feature = "jit")]
+#[cfg(any(feature = "jit", target_arch = "wasm32"))]
 use rustc_hash::FxHashSet;
 
 pub const FASTMEM_LUT_PAGES: usize = 1 << 15;
@@ -39,6 +39,8 @@ pub struct Mmio<const SYSTEM: SystemId> {
     pub pending_icbi: FxHashSet<u32>,
     #[cfg(feature = "jit")]
     pub jit_dirty: u8,
+    #[cfg(target_arch = "wasm32")]
+    pub pending_runtime_wasm_icbi: FxHashSet<u32>,
 }
 
 /// Read-only view over MEM1 plus (on Wii) MEM2, addressed by physical
@@ -163,6 +165,8 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             pending_icbi: FxHashSet::default(),
             #[cfg(feature = "jit")]
             jit_dirty: 0,
+            #[cfg(target_arch = "wasm32")]
+            pending_runtime_wasm_icbi: FxHashSet::default(),
         }
     }
 
@@ -247,6 +251,8 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             "write_u8"
         );
         slice[offset] = value;
+        #[cfg(target_arch = "wasm32")]
+        self.queue_runtime_wasm_icbi_for_range(addr, 1);
     }
 
     #[inline(always)]
@@ -258,6 +264,8 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             "write_u16"
         );
         unsafe { write_be_u16_unchecked(slice.as_mut_ptr().add(offset), value) };
+        #[cfg(target_arch = "wasm32")]
+        self.queue_runtime_wasm_icbi_for_range(addr, 2);
     }
 
     #[inline(always)]
@@ -269,6 +277,8 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             "write_u32"
         );
         unsafe { write_be_u32_unchecked(slice.as_mut_ptr().add(offset), value) };
+        #[cfg(target_arch = "wasm32")]
+        self.queue_runtime_wasm_icbi_for_range(addr, 4);
     }
 
     #[inline(always)]
@@ -384,6 +394,16 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             if self.is_code_chunk(line) {
                 self.pending_icbi.insert(line);
                 self.jit_dirty = 1;
+            }
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    pub fn queue_runtime_wasm_icbi_for_range(&mut self, phys: u32, len: u32) {
+        Self::for_each_code_line(phys, len, |line| {
+            if self.is_code_chunk(line) {
+                self.pending_runtime_wasm_icbi.insert(line);
             }
         });
     }

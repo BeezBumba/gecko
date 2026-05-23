@@ -12,6 +12,7 @@ pub mod input;
 pub mod ipl;
 pub mod jit_cache;
 pub mod mmio;
+pub mod runtime_wasm;
 #[cfg(any(feature = "jit-stats", feature = "profile", feature = "gx-stats"))]
 pub mod profile;
 pub mod scheduler;
