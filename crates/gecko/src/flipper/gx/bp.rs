@@ -12,7 +12,6 @@ impl GraphicsProcessor {
 
         let old = self.bp_regs[idx];
         let val = (old & !self.bp_mask) | (raw_val & self.bp_mask);
-        let changed = val != old;
         self.bp_regs[idx] = val;
         if idx == BP_BP_MASK {
             self.bp_mask = val & 0x00ff_ffff;
@@ -30,11 +29,6 @@ impl GraphicsProcessor {
             value = format!("{val:08X}"),
             "BP register write"
         );
-
-        // This seems to improve performance in quite some games!
-        if !changed && !self::bp_write_has_side_effect(idx) {
-            return;
-        }
 
         // TX_SETIMAGE3 is written last for each texture slot, so we use it as
         // the trigger to snapshot the full texture descriptor
@@ -580,14 +574,6 @@ impl GraphicsProcessor {
         self.cur_scissor_offset_x = reg.x() as i32 * 2 - 342;
         self.cur_scissor_offset_y = reg.y() as i32 * 2 - 342;
     }
-}
-
-#[inline(always)]
-fn bp_write_has_side_effect(idx: usize) -> bool {
-    matches!(
-        idx,
-        BP_LOAD_TLUT1 | BP_PE_DONE | BP_PE_TOKEN | BP_PE_TOKEN_INT | BP_PE_COPY_CMD
-    )
 }
 
 fn slot_palette(palette_mem: &[u16], tmem_offset: u16) -> &[u16] {
