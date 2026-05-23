@@ -16,6 +16,8 @@ use crate::system::{System, SystemId, WII};
 pub const IPC_EINVAL: i32 = -4;
 pub const IPC_ENOENT: i32 = -6;
 
+pub const IPC_HUNG: i32 = i32::MIN;
+
 pub struct DeviceContext<'a> {
     pub mmio: &'a mut Mmio<{ WII }>,
     pub scheduler: &'a mut Scheduler<{ WII }>,
@@ -153,5 +155,11 @@ pub fn deliver_response<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_pa
         irq_mask = sys.hollywood.irq.mask.raw(),
         "deliver_response: posting reply"
     );
+    crate::hollywood::irq::assert_ipc(sys);
+}
+
+pub fn deliver_ack<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.hollywood.ipc.ppcctrl = sys.hollywood.ipc.ppcctrl.with_arm_post_ack(true);
+    tracing::debug!("deliver_ack: relaunch without reply");
     crate::hollywood::irq::assert_ipc(sys);
 }
