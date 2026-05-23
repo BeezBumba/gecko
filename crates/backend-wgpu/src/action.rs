@@ -111,6 +111,7 @@ impl GxRenderer {
             let start = self.scratch_vertices.len();
             self.scratch_vertices.extend_from_slice(&external_scratch[start..]);
         }
+
         self.process_action(device, queue, action);
         if self.scratch_vertices.len() < external_scratch.len() {
             external_scratch.truncate(self.scratch_vertices.len());

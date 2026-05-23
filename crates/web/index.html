@@ -117,10 +117,10 @@
 
     <div id="setup">
         <div class="file-row">
-            <label class="file-label">IPL / DOL:</label>
+            <label class="file-label">ROM / Disc:</label>
             <label class="file-picker">
                 <span>Choose file</span>
-                <input type="file" id="input-rom" accept=".dol,.bin">
+                <input type="file" id="input-rom" accept=".dol,.bin,.ipl,.iso,.rvz,.zip">
             </label>
             <span class="name" id="rom-name">none</span>
         </div>
@@ -134,23 +134,55 @@
             <span class="name" id="dsp-name">none</span>
         </div>
 
+        <div class="file-row">
+            <label class="file-label">DSP COEF:</label>
+            <label class="file-picker">
+                <span>Choose file</span>
+                <input type="file" id="input-coef" accept=".bin">
+            </label>
+            <span class="name" id="coef-name">none</span>
+        </div>
+
+        <div class="file-row">
+            <label class="file-label">GC IPL:</label>
+            <label class="file-picker">
+                <span>Choose file</span>
+                <input type="file" id="input-ipl" accept=".bin,.ipl">
+            </label>
+            <span class="name" id="ipl-name">optional</span>
+        </div>
+
         <button id="start" disabled>Start</button>
     </div>
 
     <script type="module">
-        import init, { start_emulator } from './pkg/gecko_web.js';
+        import init, { start_emulator } from './pkg/web.js';
 
         async function run() {
+            window.addEventListener('error', (event) => {
+                console.error('[web] window error:', event.message, event.error);
+            });
+            window.addEventListener('unhandledrejection', (event) => {
+                console.error('[web] unhandled rejection:', event.reason);
+            });
+
             await init();
+            console.log('[web] wasm init complete');
 
             let romData = null;
             let romName = '';
             let dspData = null;
+            let coefData = null;
+            let iplData = null;
 
             const inputRom = document.getElementById('input-rom');
             const inputDsp = document.getElementById('input-dsp');
+            const inputCoef = document.getElementById('input-coef');
+            const inputIpl = document.getElementById('input-ipl');
             const romNameEl = document.getElementById('rom-name');
             const dspNameEl = document.getElementById('dsp-name');
+            const coefNameEl = document.getElementById('coef-name');
+            const iplNameEl = document.getElementById('ipl-name');
             const startBtn = document.getElementById('start');
 
             function readFile(file) {
@@ -164,6 +196,7 @@
             inputRom.addEventListener('change', async (e) => {
                 if (e.target.files.length > 0) {
                     const file = e.target.files[0];
+                    console.log('[web] selected ROM/disc:', file.name, 'bytes=', file.size);
                     romData = await readFile(file);
                     romName = file.name;
                     romNameEl.textContent = file.name;
@@ -174,15 +207,40 @@
             inputDsp.addEventListener('change', async (e) => {
                 if (e.target.files.length > 0) {
                     const file = e.target.files[0];
+                    console.log('[web] selected DSP IROM:', file.name, 'bytes=', file.size);
                     dspData = await readFile(file);
                     dspNameEl.textContent = file.name;
                 }
             });
 
+            inputCoef.addEventListener('change', async (e) => {
+                if (e.target.files.length > 0) {
+                    const file = e.target.files[0];
+                    console.log('[web] selected DSP COEF:', file.name, 'bytes=', file.size);
+                    coefData = await readFile(file);
+                    coefNameEl.textContent = file.name;
+                }
+            });
+
+            inputIpl.addEventListener('change', async (e) => {
+                if (e.target.files.length > 0) {
+                    const file = e.target.files[0];
+                    console.log('[web] selected GC IPL:', file.name, 'bytes=', file.size);
+                    iplData = await readFile(file);
+                    iplNameEl.textContent = file.name;
+                }
+            });
+
             startBtn.addEventListener('click', () => {
                 if (!romData) return;
+                console.log('[web] launching emulator for', romName);
                 document.getElementById('setup').style.display = 'none';
-                start_emulator(romData, romName, dspData ?? undefined);
+                try {
+                    start_emulator(romData, romName, dspData ?? undefined, coefData ?? undefined, iplData ?? undefined);
+                } catch (err) {
+                    console.error('[web] start_emulator failed:', err);
+                    document.getElementById('setup').style.display = 'flex';
+                }
             });
         }
 

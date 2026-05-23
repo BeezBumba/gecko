@@ -146,7 +146,19 @@ fn process_dvd_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd: Co
         Command::DriveInfo => {
             let dst = sys.di.dma_address.address();
             let buffer = sys.mmio.phys_slice_mut(dst, 0x20);
-            buffer.copy_from_slice(&[0x69; 0x20]); // TODO: Drive Info?
+
+            // Emulate a plausible GC optical drive INQUIRY payload.
+            // Some IPL paths keep polling this command until a sane descriptor
+            // is returned, so avoid placeholder bytes here.
+            let mut info = [0u8; 0x20];
+            info[0] = 0x05; // MMC/DVD device type
+            info[1] = 0x80; // removable media
+            info[3] = 0x21; // response data format
+            info[4] = 0x1B; // additional length
+            info[8..16].copy_from_slice(b"MATSHITA");
+            info[16..32].copy_from_slice(b"DVD-ROM SR-8184 ");
+            buffer.copy_from_slice(&info);
+
             #[cfg(feature = "jit")]
             sys.mmio.queue_icbi_for_range(dst, 0x20);
         }

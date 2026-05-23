@@ -7,10 +7,11 @@ use egui::ViewportId;
 use gecko::HostInput;
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER, STICK_MAX, STICK_MIN, TRIGGER_MAX, TRIGGER_MIN};
 use gecko::flipper::vi::regs::RefreshRate;
-use gecko::gamecube::GameCube;
+use gecko::{GC, GameCube, WII, Wii};
 use gecko::host::{DrawVertex, GxAction, RenderSink};
 use image::Dol;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsValue;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -46,6 +47,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 ";
 
+fn web_log(message: impl AsRef<str>) {
+    web_sys::console::log_1(&JsValue::from_str(message.as_ref()));
+}
+
+fn web_warn(message: impl AsRef<str>) {
+    web_sys::console::warn_1(&JsValue::from_str(message.as_ref()));
+}
+
 /// One queued [`GxAction`] alongside the vertices appended to the sink's
 /// scratch buffer since the previous action. The main-thread drainer
 /// extends the renderer's `scratch_vertices` with `vertices` *before*
@@ -57,13 +66,8 @@ struct ActionMessage {
     vertices: Vec<DrawVertex>,
 }
 
-/// Shared between [`WebSink`] (running on the emulator side) and the main
-/// thread that drains the queue. The `epoch` is bumped each time the main
-/// thread drains; the sink uses it to know when to reset its mirrored
-/// vertex scratch.
 struct WebSinkShared {
     messages: Vec<ActionMessage>,
-    epoch: u64,
 }
 
 type WebSinkQueue = Arc<Mutex<WebSinkShared>>;
@@ -72,26 +76,19 @@ type WebSinkQueue = Arc<Mutex<WebSinkShared>>;
 struct WebSink {
     shared: WebSinkQueue,
     /// Vertex scratch handed to the gecko side via
-    /// [`RenderSink::vertex_scratch`]. Cleared when the main thread bumps
-    /// `shared.epoch` (frame boundary) and again on any action that resets
-    /// the renderer's scratch — keeping the gecko side's `base_vertex` in
-    /// step with the per-message deltas we ship to the drainer.
+    /// [`RenderSink::vertex_scratch`]. This mirrors the native sink: it
+    /// grows across queued actions and is only cleared when an action
+    /// resets the renderer's scratch.
     scratch: Vec<DrawVertex>,
     /// How much of `scratch` has been shipped in a prior `exec` message.
     /// New vertices appended past this index are the delta for the next
     /// message.
     scratch_sent_len: usize,
-    last_epoch: u64,
 }
 
 impl RenderSink for WebSink {
     fn exec(&mut self, action: GxAction) {
         let mut s = self.shared.lock().unwrap();
-        if s.epoch != self.last_epoch {
-            self.scratch.clear();
-            self.scratch_sent_len = 0;
-            self.last_epoch = s.epoch;
-        }
         let vertices = if self.scratch.len() > self.scratch_sent_len {
             self.scratch[self.scratch_sent_len..].to_vec()
         } else {
@@ -108,14 +105,116 @@ impl RenderSink for WebSink {
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
-        let s = self.shared.lock().unwrap();
-        if s.epoch != self.last_epoch {
-            self.scratch.clear();
-            self.scratch_sent_len = 0;
-            self.last_epoch = s.epoch;
-        }
-        drop(s);
         &mut self.scratch
+    }
+}
+
+enum EmulatorInstance {
+    Gc(GameCube),
+    Wii(Wii),
+}
+
+impl EmulatorInstance {
+    fn refresh_rate(&self) -> RefreshRate {
+        match self {
+            Self::Gc(emulator) => emulator.vi.dcr.video_format().refresh_rate(),
+            Self::Wii(emulator) => emulator.vi.dcr.video_format().refresh_rate(),
+        }
+    }
+
+    fn apply_host_input(&mut self, input: &HostInput) {
+        match self {
+            Self::Gc(emulator) => emulator.apply_host_input(input),
+            Self::Wii(emulator) => emulator.apply_host_input(input),
+        }
+    }
+
+    fn run_until_vsync(&mut self) {
+        match self {
+            Self::Gc(emulator) => emulator.run_until_vsync(),
+            Self::Wii(emulator) => emulator.run_until_vsync(),
+        }
+    }
+
+    fn load_dsp_irom(&mut self, irom: &[u8]) {
+        match self {
+            Self::Gc(emulator) => emulator.dsp.load_irom(irom),
+            Self::Wii(emulator) => emulator.dsp.load_irom(irom),
+        }
+    }
+
+    fn load_dsp_coef(&mut self, coef: &[u8]) {
+        match self {
+            Self::Gc(emulator) => emulator.dsp.load_coef(coef),
+            Self::Wii(emulator) => emulator.dsp.load_coef(coef),
+        }
+    }
+
+    fn neutral_input(&self) -> HostInput {
+        match self {
+            Self::Gc(_) => HostInput::neutral_for(GC),
+            Self::Wii(_) => HostInput::neutral_for(WII),
+        }
+    }
+
+    fn set_render_sink(&mut self, sink: Box<dyn RenderSink>) {
+        match self {
+            Self::Gc(emulator) => emulator.render_sink = sink,
+            Self::Wii(emulator) => emulator.render_sink = sink,
+        }
+    }
+
+    fn telemetry_line(&self) -> String {
+        match self {
+            Self::Gc(emulator) => format!(
+                "sys=GC pc={:08X} nia={:08X} cycles={} ee={} vsync_pending={} pi_pending={} pi_intsr={:08X} pi_intmr={:08X} di_irq_active={} di_tstart={} di_status={:08X} di_cover={:08X} di_cmd0={:08X} di_cmd1={:08X} di_cmd2={:08X} di_dma_addr={:08X} di_dma_len={:08X} dvd_present={}",
+                emulator.gekko.pc,
+                emulator.gekko.nia,
+                emulator.scheduler.cycles,
+                emulator.gekko.msr.external_interrupt_enable(),
+                emulator.vsync_pending,
+                emulator.pi.interrupt_pending(),
+                emulator.pi.intsr.raw(),
+                emulator.pi.intmr.raw(),
+                (emulator.di.status.break_complete() && emulator.di.status.break_complete_mask())
+                    || (emulator.di.status.device_error() && emulator.di.status.device_error_mask())
+                    || (emulator.di.status.transfer_complete() && emulator.di.status.transfer_complete_mask())
+                    || (emulator.di.cover.cover_interrupt() && emulator.di.cover.cover_interrupt_mask()),
+                emulator.di.control.tstart(),
+                emulator.di.status.raw(),
+                emulator.di.cover.raw(),
+                emulator.di.cmdbuf0,
+                emulator.di.cmdbuf1,
+                emulator.di.cmdbuf2,
+                emulator.di.dma_address.raw(),
+                emulator.di.dma_length.raw(),
+                emulator.di.dvd.is_some()
+            ),
+            Self::Wii(emulator) => format!(
+                "sys=WII pc={:08X} nia={:08X} cycles={} ee={} vsync_pending={} pi_pending={} pi_intsr={:08X} pi_intmr={:08X} di_irq_active={} di_tstart={} di_status={:08X} di_cover={:08X} di_cmd0={:08X} di_cmd1={:08X} di_cmd2={:08X} di_dma_addr={:08X} di_dma_len={:08X} dvd_present={}",
+                emulator.gekko.pc,
+                emulator.gekko.nia,
+                emulator.scheduler.cycles,
+                emulator.gekko.msr.external_interrupt_enable(),
+                emulator.vsync_pending,
+                emulator.pi.interrupt_pending(),
+                emulator.pi.intsr.raw(),
+                emulator.pi.intmr.raw(),
+                (emulator.di.status.break_complete() && emulator.di.status.break_complete_mask())
+                    || (emulator.di.status.device_error() && emulator.di.status.device_error_mask())
+                    || (emulator.di.status.transfer_complete() && emulator.di.status.transfer_complete_mask())
+                    || (emulator.di.cover.cover_interrupt() && emulator.di.cover.cover_interrupt_mask()),
+                emulator.di.control.tstart(),
+                emulator.di.status.raw(),
+                emulator.di.cover.raw(),
+                emulator.di.cmdbuf0,
+                emulator.di.cmdbuf1,
+                emulator.di.cmdbuf2,
+                emulator.di.dma_address.raw(),
+                emulator.di.dma_length.raw(),
+                emulator.di.dvd.is_some()
+            ),
+        }
     }
 }
 
@@ -134,6 +233,9 @@ struct State {
     fps_history: VecDeque<[f64; 2]>,
     start_ms: f64,
     last_frame_ms: f64,
+    frame_index: u64,
+    empty_action_streak: u64,
+    queued_vertices: Vec<DrawVertex>,
 }
 
 fn now_ms() -> f64 {
@@ -291,6 +393,9 @@ impl State {
             fps_history: VecDeque::new(),
             start_ms: now,
             last_frame_ms: now,
+            frame_index: 0,
+            empty_action_streak: 0,
+            queued_vertices: Vec::new(),
         }
     }
 
@@ -304,11 +409,13 @@ impl State {
 
     fn render(
         &mut self,
-        emulator: &mut GameCube,
+        emulator: &mut EmulatorInstance,
         action_queue: &WebSinkQueue,
         #[cfg(feature = "debug")] debug_state: &mut debug_ui::DebugState,
         window: &Window,
     ) {
+        self.frame_index = self.frame_index.wrapping_add(1);
+
         let now = now_ms();
         let delta = (now - self.last_frame_ms) / 1000.0;
         self.last_frame_ms = now;
@@ -318,7 +425,7 @@ impl State {
         while self.fps_history.front().is_some_and(|e| elapsed - e[0] > 5.0) {
             self.fps_history.pop_front();
         }
-        let native_hz = match emulator.vi.dcr.video_format().refresh_rate() {
+        let native_hz = match emulator.refresh_rate() {
             RefreshRate::Hz60 => 60.0_f64,
             RefreshRate::Hz50 => 50.0_f64,
         };
@@ -326,35 +433,47 @@ impl State {
 
         // Run emulation (queues GxActions into the WebSink).
         #[cfg(feature = "debug")]
-        debug_state.tick(emulator);
+        match emulator {
+            EmulatorInstance::Gc(emulator) => debug_state.tick(emulator),
+            EmulatorInstance::Wii(emulator) => emulator.run_until_vsync(),
+        }
         #[cfg(not(feature = "debug"))]
         emulator.run_until_vsync();
 
         // Drain queued action messages.
         let messages: Vec<ActionMessage> = {
             let mut s = action_queue.lock().unwrap();
-            s.epoch = s.epoch.wrapping_add(1);
             std::mem::take(&mut s.messages)
         };
-        // Start the frame with an empty external scratch; each message
-        // contributes its vertex delta to it before its action runs, and
-        // actions that flush the renderer's scratch truncate the external
-        // one back to zero in lockstep.
-        let mut external_scratch = self.gx_renderer.replace_vertex_scratch(Vec::new());
-        external_scratch.clear();
+        let action_count = messages.len();
+        if action_count == 0 {
+            self.empty_action_streak = self.empty_action_streak.saturating_add(1);
+        } else {
+            self.empty_action_streak = 0;
+        }
+        if self.frame_index == 1 || self.frame_index % 120 == 0 {
+            web_log(format!(
+                "[web] frame={} fps={:.1} queued_actions={} empty_action_streak={}",
+                self.frame_index, fps, action_count, self.empty_action_streak
+            ));
+            web_log(format!("[web] {}", emulator.telemetry_line()));
+        }
         for msg in messages {
-            external_scratch.extend_from_slice(&msg.vertices);
+            self.queued_vertices.extend_from_slice(&msg.vertices);
             self.gx_renderer.process_action_with_external_scratch(
                 &self.device,
                 &self.queue,
                 &msg.action,
-                &mut external_scratch,
+                &mut self.queued_vertices,
             );
         }
 
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            _ => return,
+            _ => {
+                web_warn("[web] failed to acquire swapchain texture");
+                return;
+            }
         };
         let view = frame.texture.create_view(&Default::default());
 
@@ -378,7 +497,9 @@ impl State {
                 });
 
             #[cfg(feature = "debug")]
-            debug_state.show(&ctx, emulator);
+            if let EmulatorInstance::Gc(emulator) = emulator {
+                debug_state.show(&ctx, emulator);
+            }
         });
 
         self.egui_winit
@@ -476,7 +597,7 @@ impl State {
 type SharedState = Rc<RefCell<Option<State>>>;
 
 struct App {
-    emulator: GameCube,
+    emulator: EmulatorInstance,
     input: HostInput,
     action_queue: WebSinkQueue,
     window: Option<Arc<Window>>,
@@ -553,37 +674,94 @@ impl ApplicationHandler for App {
 }
 
 #[wasm_bindgen]
-pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8>>) {
+pub fn start_emulator(
+    rom_data: &[u8],
+    filename: String,
+    dsp_irom: Option<Vec<u8>>,
+    dsp_coef: Option<Vec<u8>>,
+    gc_ipl: Option<Vec<u8>>,
+) {
     console_error_panic_hook::set_once();
+    web_log(format!(
+        "[web] start_emulator file='{}' bytes={} dsp_irom={} dsp_coef={} gc_ipl={}",
+        filename,
+        rom_data.len(),
+        dsp_irom.as_ref().map(|v| v.len()).unwrap_or(0),
+        dsp_coef.as_ref().map(|v| v.len()).unwrap_or(0),
+        gc_ipl.as_ref().map(|v| v.len()).unwrap_or(0)
+    ));
 
     let name = filename.to_lowercase();
     let mut emulator = if name.ends_with(".bin") || name.ends_with(".ipl") {
-        GameCube::with_ipl(rom_data, false)
-    } else {
+        web_log("[web] boot path: GameCube IPL");
+        EmulatorInstance::Gc(GameCube::with_ipl(rom_data, false))
+    } else if name.ends_with(".dol") {
+        web_log("[web] boot path: GameCube DOL");
         let dol = Dol::parse(rom_data.to_vec());
-        GameCube::with_image(&dol)
+        EmulatorInstance::Gc(GameCube::with_image(&dol))
+    } else if name.ends_with(".iso") || name.ends_with(".rvz") || name.ends_with(".zip") {
+        web_log("[web] boot path: Disc image");
+        let dvd = image::load_dvd(rom_data.to_vec());
+        let header = dvd.header();
+        let game_name = String::from_utf8_lossy(&header.game_name)
+            .trim_end_matches('\0')
+            .to_string();
+        web_log(format!(
+            "[web] disc header game_id={} is_wii={} is_gc={} disk_id={} version={} name='{}'",
+            header.game_id(),
+            header.is_wii(),
+            header.is_gc(),
+            header.disk_id,
+            header.version,
+            game_name
+        ));
+        if dvd.header().is_wii() {
+            web_log("[web] selected Wii apploader HLE");
+            EmulatorInstance::Wii(Wii::apploader_hle(dvd).build())
+        } else {
+            match gc_ipl.as_ref() {
+                Some(ipl) => {
+                    web_log("[web] selected GameCube real IPL boot (skip enabled)");
+                    let mut emulator = GameCube::with_ipl(ipl, true);
+                    emulator.insert_dvd(dvd);
+                    EmulatorInstance::Gc(emulator)
+                }
+                None => {
+                    web_log("[web] selected GameCube IPL HLE (no GC IPL provided)");
+                    EmulatorInstance::Gc(GameCube::with_ipl_hle(dvd))
+                }
+            }
+        }
+    } else {
+        panic!("unsupported file extension; expected .dol/.bin/.ipl/.iso/.rvz/.zip")
     };
 
     if let Some(irom) = dsp_irom {
-        emulator.dsp.load_irom(&irom);
+        emulator.load_dsp_irom(&irom);
+        web_log("[web] loaded DSP IROM");
     }
 
-    let input = HostInput::gc_connected();
+    if let Some(coef) = dsp_coef {
+        emulator.load_dsp_coef(&coef);
+        web_log("[web] loaded DSP COEF");
+    }
+
+    let input = emulator.neutral_input();
     emulator.apply_host_input(&input);
+    web_log("[web] host input initialized");
 
     // Install the WebSink as the emulator's render sink.
     let action_queue: WebSinkQueue = Arc::new(Mutex::new(WebSinkShared {
         messages: Vec::new(),
-        epoch: 0,
     }));
-    emulator.render_sink = Box::new(WebSink {
+    emulator.set_render_sink(Box::new(WebSink {
         shared: action_queue.clone(),
         scratch: Vec::new(),
         scratch_sent_len: 0,
-        last_epoch: 0,
-    });
+    }));
 
     let event_loop = EventLoop::new().unwrap();
+    web_log("[web] event loop created; spawning app");
     let app = App {
         emulator,
         input,
