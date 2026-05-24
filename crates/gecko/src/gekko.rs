@@ -4,6 +4,7 @@ pub mod fpscr;
 #[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
 pub mod instruction;
 pub mod interpreter;
+pub mod jiterp;
 pub mod irq;
 #[cfg(feature = "jit")]
 pub mod jit;

@@ -4,7 +4,22 @@ use crate::flipper::pi::InterruptFlag;
 use crate::system::{System, SystemId};
 
 pub const GP_BURST: u32 = 32;
-pub const PUMP_INTERVAL_CYCLES: u64 = 1 << 16;
+#[cfg(target_arch = "wasm32")]
+pub const PUMP_INTERVAL_CYCLES: u64 = 1 << 19;
+#[cfg(not(target_arch = "wasm32"))]
+pub const PUMP_INTERVAL_CYCLES: u64 = 1 << 18;
+#[cfg(target_arch = "wasm32")]
+pub const PUMP_INTERVAL_IDLE_CYCLES: u64 = 1 << 21;
+#[cfg(not(target_arch = "wasm32"))]
+pub const PUMP_INTERVAL_IDLE_CYCLES: u64 = 1 << 20;
+#[cfg(target_arch = "wasm32")]
+pub const PUMP_INTERVAL_LIGHT_CYCLES: u64 = 1 << 20;
+#[cfg(not(target_arch = "wasm32"))]
+pub const PUMP_INTERVAL_LIGHT_CYCLES: u64 = 1 << 19;
+#[cfg(target_arch = "wasm32")]
+pub const PUMP_INTERVAL_DEEP_IDLE_CYCLES: u64 = 1 << 22;
+#[cfg(not(target_arch = "wasm32"))]
+pub const PUMP_INTERVAL_DEEP_IDLE_CYCLES: u64 = 1 << 21;
 
 const GP_PIPE_CAPACITY: usize = 64;
 
@@ -258,12 +273,20 @@ pub fn gather_pipe_bursted<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 }
 
 pub fn pump_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
-    self::pump_fifo(sys);
-    sys.scheduler
-        .schedule_in(PUMP_INTERVAL_CYCLES, self::pump_handler::<SYSTEM>);
+    let consumed = self::pump_fifo(sys);
+    let interval = if consumed >= 8 {
+        PUMP_INTERVAL_CYCLES
+    } else if consumed > 0 {
+        PUMP_INTERVAL_LIGHT_CYCLES
+    } else if sys.cp.control.gp_fifo_read_enable() && sys.cp.fifo_rw_distance() >= GP_BURST {
+        PUMP_INTERVAL_IDLE_CYCLES
+    } else {
+        PUMP_INTERVAL_DEEP_IDLE_CYCLES
+    };
+    sys.scheduler.schedule_in(interval, self::pump_handler::<SYSTEM>);
 }
 
-pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) -> u32 {
     let mut consumed = 0u32;
 
     while !sys.cp.interrupt_active() && sys.cp.control.gp_fifo_read_enable() && sys.cp.fifo_rw_distance() >= GP_BURST {
@@ -298,4 +321,6 @@ pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         sys.cp.refresh_status();
         refresh_interrupts(sys);
     }
+
+    consumed
 }

@@ -7,6 +7,10 @@ use crate::system::{System, SystemId};
 
 const AUDIO_DMA_BLOCK_BYTES: u32 = 32;
 const AUDIO_DMA_FRAMES_PER_BLOCK: u64 = 8;
+#[cfg(target_arch = "wasm32")]
+const AUDIO_DMA_BLOCKS_PER_EVENT: u16 = 16;
+#[cfg(not(target_arch = "wasm32"))]
+const AUDIO_DMA_BLOCKS_PER_EVENT: u16 = 1;
 
 pub struct AudioInterface {
     pub control: regs::AiControl,
@@ -82,8 +86,14 @@ pub fn start_audio_dma<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 
     tracing::debug!(addr = format!("{addr:08X}"), len, "AID DMA started");
 
+    let next_blocks = scheduled_audio_dma_blocks(sys);
+    if next_blocks == 0 {
+        stop_audio_dma(sys);
+        return;
+    }
+
     sys.scheduler
-        .schedule_in(cycles_per_audio_dma_block(sys), self::audio_dma_block_handler);
+        .schedule_in(cycles_per_audio_dma_batch(sys, next_blocks), self::audio_dma_block_handler);
 }
 
 #[inline(always)]
@@ -111,38 +121,52 @@ pub fn audio_dma_block_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>)
         return;
     }
 
-    let block_bytes: [u8; 32] = {
-        let src = sys
-            .mmio
-            .virt_slice(sys.ai.audio_dma_current_addr, AUDIO_DMA_BLOCK_BYTES as usize);
-        let mut buf = [0u8; 32];
-        buf.copy_from_slice(src);
-        buf
-    };
-    let frames: AidBlock = audio::decode_aid_block(&block_bytes);
+    let blocks_this_event = scheduled_audio_dma_blocks(sys);
+    for _ in 0..blocks_this_event {
+        let block_bytes: [u8; 32] = {
+            let src = sys
+                .mmio
+                .virt_slice(sys.ai.audio_dma_current_addr, AUDIO_DMA_BLOCK_BYTES as usize);
+            let mut buf = [0u8; 32];
+            buf.copy_from_slice(src);
+            buf
+        };
+        let frames: AidBlock = audio::decode_aid_block(&block_bytes);
 
-    sys.audio_sink.push_stereo_block(&frames);
-    sys.ai.audio_dma_current_addr = sys.ai.audio_dma_current_addr.wrapping_add(AUDIO_DMA_BLOCK_BYTES);
+        sys.audio_sink.push_stereo_block(&frames);
+        sys.ai.audio_dma_current_addr = sys.ai.audio_dma_current_addr.wrapping_add(AUDIO_DMA_BLOCK_BYTES);
+        sys.ai.audio_dma_remaining_blocks -= 1;
 
-    sys.ai.audio_dma_remaining_blocks -= 1;
+        if sys.ai.audio_dma_remaining_blocks == 0 {
+            sys.dsp.csr.set_ai_interrupt(true);
+            dsp::refresh_interrupts(sys);
 
-    if sys.ai.audio_dma_remaining_blocks == 0 {
-        sys.dsp.csr.set_ai_interrupt(true);
-        dsp::refresh_interrupts(sys);
-
-        tracing::debug!(
-            cycles = sys.scheduler.cycles,
-            csr = format!("{:04X}", sys.dsp.csr.raw()),
-            pi_intsr = format!("{:08X}", sys.pi.intsr.raw()),
-            pi_intmr = format!("{:08X}", sys.pi.intmr.raw()),
-            "Audio DMA completion"
-        );
+            tracing::debug!(
+                cycles = sys.scheduler.cycles,
+                csr = format!("{:04X}", sys.dsp.csr.raw()),
+                pi_intsr = format!("{:08X}", sys.pi.intsr.raw()),
+                pi_intmr = format!("{:08X}", sys.pi.intmr.raw()),
+                "Audio DMA completion"
+            );
+            break;
+        }
     }
 
     if sys.dsp.audio_dma_control.play() {
+        if sys.ai.audio_dma_remaining_blocks == 0 {
+            sys.ai.audio_dma_remaining_blocks = sys.dsp.audio_dma_control.length();
+            sys.ai.audio_dma_current_addr = sys.dsp.audio_dma_start_addr.raw();
+        }
+
+        let next_blocks = scheduled_audio_dma_blocks(sys);
+        if next_blocks == 0 {
+            stop_audio_dma(sys);
+            return;
+        }
+
         sys.dsp.csr.set_dma_status(true);
         sys.scheduler
-            .schedule_in(cycles_per_audio_dma_block(sys), self::audio_dma_block_handler);
+            .schedule_in(cycles_per_audio_dma_batch(sys, next_blocks), self::audio_dma_block_handler);
     } else {
         stop_audio_dma(sys);
     }
@@ -152,6 +176,21 @@ pub fn audio_dma_block_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>)
 fn cycles_per_audio_dma_block<const SYSTEM: SystemId>(sys: &System<SYSTEM>) -> u64 {
     let sample_rate = sys.ai.control.aid_sample_rate_hz() as u64;
     AUDIO_DMA_FRAMES_PER_BLOCK * scheduler::cpu_clock(SYSTEM) / sample_rate
+}
+
+#[inline(always)]
+fn cycles_per_audio_dma_batch<const SYSTEM: SystemId>(sys: &System<SYSTEM>, blocks: u16) -> u64 {
+    cycles_per_audio_dma_block(sys) * u64::from(blocks)
+}
+
+#[inline(always)]
+fn scheduled_audio_dma_blocks<const SYSTEM: SystemId>(sys: &System<SYSTEM>) -> u16 {
+    let remaining = sys.ai.audio_dma_remaining_blocks;
+    if remaining == 0 {
+        return 0;
+    }
+
+    remaining.min(AUDIO_DMA_BLOCKS_PER_EVENT)
 }
 
 #[inline(always)]

@@ -161,9 +161,35 @@ wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 
 If you want maximum web performance, build a threaded wasm variant and host it behind cross-origin isolation headers.
 
+Run these from `crates/web` so `index.html` and `pkg/` stay in the same directory:
+
 ```sh
-RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128" \
-  wasm-pack build crates/web --target web --out-dir pkg --out-name gecko_web --release -- --features web-threads
+# Bash / zsh
+cd crates/web
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+multivalue,+mutable-globals,+sign-ext,+simd128,+tail-call" \
+  wasm-pack build --target web --out-dir pkg --out-name web --release -- --features web-threads
+```
+
+```powershell
+# PowerShell
+# Remove any stale global override first (optional, but avoids surprises)
+Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue
+
+Set-Location crates/web
+
+# Keep all wasm target features in one flag so `+atomics` is not overwritten
+$env:CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+multivalue,+mutable-globals,+sign-ext,+simd128,+tail-call"
+wasm-pack build --target web --out-dir pkg --out-name web --release -- --features web-threads
+```
+
+```cmd
+:: cmd.exe
+set RUSTFLAGS=
+cd crates\web
+
+:: Keep all wasm target features in one flag so `+atomics` is not overwritten
+set CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS=-C target-feature=+atomics,+bulk-memory,+multivalue,+mutable-globals,+sign-ext,+simd128,+tail-call
+wasm-pack build --target web --out-dir pkg --out-name web --release -- --features web-threads
 ```
 
 Required response headers for the page and wasm/js assets:
@@ -172,6 +198,26 @@ Required response headers for the page and wasm/js assets:
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
+
+Runtime verification checklist:
+
+1. Build with `--features web-threads` and atomics-enabled `RUSTFLAGS` (command above).
+2. Open the app and confirm the console prints either:
+  - `[web][threading] mode=worker web-threads=enabled crossOriginIsolated=true`
+  - `[web][worker] emulator worker thread started`
+3. If you see `crossOriginIsolated=false`, pthread workers are blocked by missing/incorrect COOP/COEP headers.
+4. If workers are unavailable, Gecko now logs a fallback warning and continues in main-thread mode instead of panicking.
+5. Verify the startup log shows `target_atomics=true`; if it is `false`, your final rustc target-feature string did not include `+atomics`.
+6. For pthread builds, wasm must be linked with shared memory (`--shared-memory`) and a max memory. This repo sets both in `.cargo/config.toml`.
+7. `import("./pkg/web.js").then(m => m.memory)` may print `no export` with wasm-bindgen. That does not prove threading is off; use Gecko threading logs and runtime behavior instead.
+6. If you just rebuilt and still see `target_atomics=false`, clear browser cache or hard-reload to ensure the new `pkg/web.js` and `pkg/web_bg.wasm` are actually loaded.
+7. `web-threads` builds now fail at compile time if atomics is missing, so successful build + `web-threads` implies atomics was accepted by rustc.
+
+Recommended daily performance test setup:
+
+1. Use no worker URL flags for normal perf testing.
+2. Launch the page as plain `http://localhost:8080/`.
+3. For your workflow (small `.rvz` + optional IPL), this keeps you on the stable main-thread path and avoids experimental worker bring-up behavior.
 
 `crates/web/_headers` is included for static hosts that support header files (for example Cloudflare Pages or Netlify).
 

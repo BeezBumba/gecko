@@ -22,12 +22,18 @@ use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
 use crate::starlet::Starlet;
 use image::Executable;
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+use std::sync::OnceLock;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 #[cfg(target_arch = "wasm32")]
 const CORE_PERF_DRAIN_EVENTS_SAMPLE_EVERY: u64 = 64;
 #[cfg(target_arch = "wasm32")]
 const CORE_PERF_DSP_BATCH_SAMPLE_EVERY: u64 = 64;
+#[cfg(target_arch = "wasm32")]
+const EVENT_DRAIN_BUDGET_PER_SLICE: usize = 1024;
+#[cfg(not(target_arch = "wasm32"))]
+const EVENT_DRAIN_BUDGET_PER_SLICE: usize = usize::MAX;
 
 pub type SystemId = u8;
 
@@ -35,15 +41,29 @@ pub const GC: SystemId = 0;
 pub const WII: SystemId = 1;
 
 /// This only matters if `jit` feature is enabled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
-    #[default]
     Jit,
+    Jiterpreter,
     Interpreter,
 }
 
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        #[cfg(feature = "jit")]
+        {
+            Self::Jit
+        }
+
+        #[cfg(not(feature = "jit"))]
+        {
+            Self::Jiterpreter
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct CorePerfSnapshot {
     pub run_interp_ms: f64,
     pub drain_events_ms: f64,
@@ -51,10 +71,54 @@ pub struct CorePerfSnapshot {
     pub step_cpu_calls: u64,
     pub drain_events_calls: u64,
     pub dsp_batch_calls: u64,
+    pub drain_budget_hits: u64,
+    pub jiterp_blocks: u64,
+    pub jiterp_instrs: u64,
+    pub jiterp_fast_instrs: u64,
+    pub jiterp_fallback_dispatches: u64,
+    pub jiterp_fallback_by_op: [u64; 64],
+    pub jiterp_fallback_op19_by_xo: [u64; 1024],
+    pub jiterp_fallback_op31_by_xo: [u64; 1024],
+    pub jiterp_fallback_op63_by_xo: [u64; 1024],
+    pub jiterp_fallback_op63_xo89_by_subop: [u64; 16],
+    pub jiterp_cache_hits: u64,
+    pub jiterp_cache_misses: u64,
+    pub jiterp_flushes: u64,
+    pub jiterp_verify_samples: u64,
+    pub jiterp_verify_mismatches: u64,
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Debug, Default)]
+impl Default for CorePerfSnapshot {
+    fn default() -> Self {
+        Self {
+            run_interp_ms: 0.0,
+            drain_events_ms: 0.0,
+            dsp_batch_ms: 0.0,
+            step_cpu_calls: 0,
+            drain_events_calls: 0,
+            dsp_batch_calls: 0,
+            drain_budget_hits: 0,
+            jiterp_blocks: 0,
+            jiterp_instrs: 0,
+            jiterp_fast_instrs: 0,
+            jiterp_fallback_dispatches: 0,
+            jiterp_fallback_by_op: [0; 64],
+            jiterp_fallback_op19_by_xo: [0; 1024],
+            jiterp_fallback_op31_by_xo: [0; 1024],
+            jiterp_fallback_op63_by_xo: [0; 1024],
+            jiterp_fallback_op63_xo89_by_subop: [0; 16],
+            jiterp_cache_hits: 0,
+            jiterp_cache_misses: 0,
+            jiterp_flushes: 0,
+            jiterp_verify_samples: 0,
+            jiterp_verify_mismatches: 0,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug)]
 struct CorePerfAcc {
     run_interp_ms: f64,
     drain_events_ms: f64,
@@ -62,6 +126,50 @@ struct CorePerfAcc {
     step_cpu_calls: u64,
     drain_events_calls: u64,
     dsp_batch_calls: u64,
+    drain_budget_hits: u64,
+    jiterp_blocks: u64,
+    jiterp_instrs: u64,
+    jiterp_fast_instrs: u64,
+    jiterp_fallback_dispatches: u64,
+    jiterp_fallback_by_op: [u64; 64],
+    jiterp_fallback_op19_by_xo: [u64; 1024],
+    jiterp_fallback_op31_by_xo: [u64; 1024],
+    jiterp_fallback_op63_by_xo: [u64; 1024],
+    jiterp_fallback_op63_xo89_by_subop: [u64; 16],
+    jiterp_cache_hits: u64,
+    jiterp_cache_misses: u64,
+    jiterp_flushes: u64,
+    jiterp_verify_samples: u64,
+    jiterp_verify_mismatches: u64,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Default for CorePerfAcc {
+    fn default() -> Self {
+        Self {
+            run_interp_ms: 0.0,
+            drain_events_ms: 0.0,
+            dsp_batch_ms: 0.0,
+            step_cpu_calls: 0,
+            drain_events_calls: 0,
+            dsp_batch_calls: 0,
+            drain_budget_hits: 0,
+            jiterp_blocks: 0,
+            jiterp_instrs: 0,
+            jiterp_fast_instrs: 0,
+            jiterp_fallback_dispatches: 0,
+            jiterp_fallback_by_op: [0; 64],
+            jiterp_fallback_op19_by_xo: [0; 1024],
+            jiterp_fallback_op31_by_xo: [0; 1024],
+            jiterp_fallback_op63_by_xo: [0; 1024],
+            jiterp_fallback_op63_xo89_by_subop: [0; 16],
+            jiterp_cache_hits: 0,
+            jiterp_cache_misses: 0,
+            jiterp_flushes: 0,
+            jiterp_verify_samples: 0,
+            jiterp_verify_mismatches: 0,
+        }
+    }
 }
 
 pub struct System<const SYSTEM: SystemId> {
@@ -103,6 +211,9 @@ pub struct System<const SYSTEM: SystemId> {
     #[cfg(feature = "jit")]
     pub jit: Option<Box<crate::gekko::jit::JitEngine<SYSTEM>>>,
 
+    pub jiterpreter: Option<Box<crate::gekko::jiterp::JiterpEngine<SYSTEM>>>,
+    pub jiterpreter_cache_dirty: bool,
+
     #[cfg(feature = "fps-counter")]
     pub fps_counter: FpsCounter,
 
@@ -122,7 +233,208 @@ pub struct System<const SYSTEM: SystemId> {
     core_perf: CorePerfAcc,
 }
 
+#[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+struct JiterpVerifyState {
+    gprs: [u32; 32],
+    fprs_bits: [u64; 32],
+    ps1_bits: [u64; 32],
+    pc: u32,
+    cia: u32,
+    nia: u32,
+    reserve_addr: u32,
+    cr_raw: u32,
+    fpscr_raw: u32,
+    xer_raw: u32,
+    lr: u32,
+    ctr: u32,
+}
+
 impl<const SYSTEM: SystemId> System<SYSTEM> {
+    #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+    #[inline(always)]
+    fn jiterp_verify_enabled() -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| {
+            std::env::var("GECKO_JITERP_VERIFY")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+        })
+        }
+    }
+
+    #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+    #[inline(always)]
+    fn jiterp_verify_sample_hit(&self, instr_raw: u32) -> bool {
+        let mix = (self.scheduler.cycles as u32)
+            .wrapping_mul(0x9E37_79B9)
+            .rotate_left(5)
+            ^ instr_raw;
+        (mix & 0x7FF) == 0
+    }
+
+    #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+    #[inline(always)]
+    fn jiterp_verify_candidate(instr_raw: u32) -> bool {
+        let op = instr_raw >> 26;
+        match op {
+            // Register-only integer/branch/FP hot classes.
+            4 | 7 | 8 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 18 | 19 | 20 | 21 | 23 | 24 | 25 | 26 | 27
+            | 28 | 29 | 31 | 59 | 63 => {
+                if op == 4 {
+                    let subop = (instr_raw >> 1) & 0x1F;
+                    // Exclude PSQ memory forms.
+                    return subop != 6 && subop != 7;
+                }
+                if op == 19 {
+                    let xo10 = (instr_raw >> 1) & 0x3FF;
+                    // bclr / bcctr only.
+                    return xo10 == 16 || xo10 == 528;
+                }
+                if op == 31 {
+                    let xo10 = (instr_raw >> 1) & 0x3FF;
+                    // Exclude op31 memory and privileged/system forms.
+                    return matches!(
+                        xo10,
+                        0
+                            | 8
+                            | 10
+                            | 11
+                            | 24
+                            | 26
+                            | 28
+                            | 32
+                            | 40
+                            | 60
+                            | 75
+                            | 104
+                            | 136
+                            | 138
+                            | 200
+                            | 202
+                            | 232
+                            | 234
+                            | 235
+                            | 266
+                            | 284
+                            | 316
+                            | 412
+                            | 444
+                            | 459
+                            | 476
+                            | 491
+                            | 536
+                            | 792
+                            | 824
+                            | 922
+                            | 954
+                    );
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+    #[inline(always)]
+    fn jiterp_capture_state(&self) -> JiterpVerifyState {
+        JiterpVerifyState {
+            gprs: self.gekko.gprs,
+            fprs_bits: std::array::from_fn(|i| self.gekko.fprs[i].to_bits()),
+            ps1_bits: std::array::from_fn(|i| self.gekko.ps1s[i].to_bits()),
+            pc: self.gekko.pc,
+            cia: self.gekko.cia,
+            nia: self.gekko.nia,
+            reserve_addr: self.gekko.reserve_addr,
+            cr_raw: self.gekko.cr.raw(),
+            fpscr_raw: self.gekko.fpscr.raw(),
+            xer_raw: self.gekko.spr.xer.raw(),
+            lr: self.gekko.spr.lr,
+            ctr: self.gekko.spr.ctr,
+        }
+    }
+
+    #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+    #[inline(always)]
+    fn jiterp_restore_state(&mut self, s: &JiterpVerifyState) {
+        self.gekko.gprs = s.gprs;
+        self.gekko.fprs = std::array::from_fn(|i| f64::from_bits(s.fprs_bits[i]));
+        self.gekko.ps1s = std::array::from_fn(|i| f64::from_bits(s.ps1_bits[i]));
+        self.gekko.pc = s.pc;
+        self.gekko.cia = s.cia;
+        self.gekko.nia = s.nia;
+        self.gekko.reserve_addr = s.reserve_addr;
+        self.gekko.cr = crate::gekko::condition::ConditionRegister::from(s.cr_raw);
+        self.gekko.fpscr = crate::gekko::fpscr::Fpscr::from(s.fpscr_raw);
+        self.gekko.spr.xer = crate::gekko::spr::Xer::from(s.xer_raw);
+        self.gekko.spr.lr = s.lr;
+        self.gekko.spr.ctr = s.ctr;
+    }
+
+    #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+    #[inline(always)]
+    fn jiterp_state_matches(a: &JiterpVerifyState, b: &JiterpVerifyState) -> bool {
+        a.gprs == b.gprs
+            && a.fprs_bits == b.fprs_bits
+            && a.ps1_bits == b.ps1_bits
+            && a.pc == b.pc
+            && a.cia == b.cia
+            && a.nia == b.nia
+            && a.reserve_addr == b.reserve_addr
+            && a.cr_raw == b.cr_raw
+            && a.fpscr_raw == b.fpscr_raw
+            && a.xer_raw == b.xer_raw
+            && a.lr == b.lr
+            && a.ctr == b.ctr
+    }
+
+    #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+    #[inline(always)]
+    fn jiterp_verify_fast_vs_interp(
+        &mut self,
+        instr_raw: u32,
+        pre_state: &JiterpVerifyState,
+        fast_post_state: &JiterpVerifyState,
+    ) {
+        self.jiterp_restore_state(pre_state);
+        let instr = crate::gekko::instruction::Instruction(instr_raw);
+        crate::gekko::dispatch(self, instr);
+        let interp_post_state = self.jiterp_capture_state();
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.core_perf.jiterp_verify_samples = self.core_perf.jiterp_verify_samples.saturating_add(1);
+        }
+
+        if !Self::jiterp_state_matches(fast_post_state, &interp_post_state) {
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.core_perf.jiterp_verify_mismatches = self.core_perf.jiterp_verify_mismatches.saturating_add(1);
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            panic!(
+                "jiterp mismatch: op={} xo={} cia={:08X} fast_nia={:08X} interp_nia={:08X}",
+                instr_raw >> 26,
+                (instr_raw >> 1) & 0x3FF,
+                pre_state.cia,
+                fast_post_state.nia,
+                interp_post_state.nia,
+            );
+        }
+
+        // Continue execution using the fast-path result.
+        self.jiterp_restore_state(fast_post_state);
+    }
+
     pub(crate) fn with_scheduler(entrypoint: u32, scheduler: Scheduler<SYSTEM>) -> Self {
         System {
             vsync_pending: false,
@@ -158,6 +470,9 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
             #[cfg(feature = "jit")]
             jit: None,
+
+            jiterpreter: None,
+            jiterpreter_cache_dirty: false,
 
             #[cfg(feature = "fps-counter")]
             fps_counter: FpsCounter::new(),
@@ -203,9 +518,195 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             step_cpu_calls: self.core_perf.step_cpu_calls,
             drain_events_calls: self.core_perf.drain_events_calls,
             dsp_batch_calls: self.core_perf.dsp_batch_calls,
+            drain_budget_hits: self.core_perf.drain_budget_hits,
+            jiterp_blocks: self.core_perf.jiterp_blocks,
+            jiterp_instrs: self.core_perf.jiterp_instrs,
+            jiterp_fast_instrs: self.core_perf.jiterp_fast_instrs,
+            jiterp_fallback_dispatches: self.core_perf.jiterp_fallback_dispatches,
+            jiterp_fallback_by_op: self.core_perf.jiterp_fallback_by_op,
+            jiterp_fallback_op19_by_xo: self.core_perf.jiterp_fallback_op19_by_xo,
+            jiterp_fallback_op31_by_xo: self.core_perf.jiterp_fallback_op31_by_xo,
+            jiterp_fallback_op63_by_xo: self.core_perf.jiterp_fallback_op63_by_xo,
+            jiterp_fallback_op63_xo89_by_subop: self.core_perf.jiterp_fallback_op63_xo89_by_subop,
+            jiterp_cache_hits: self.core_perf.jiterp_cache_hits,
+            jiterp_cache_misses: self.core_perf.jiterp_cache_misses,
+            jiterp_flushes: self.core_perf.jiterp_flushes,
+            jiterp_verify_samples: self.core_perf.jiterp_verify_samples,
+            jiterp_verify_mismatches: self.core_perf.jiterp_verify_mismatches,
         };
         self.core_perf = CorePerfAcc::default();
         snapshot
+    }
+
+    #[inline(always)]
+    pub(crate) fn jiterpreter_note_code_write(&mut self, phys: u32, len: u32) {
+        if self.execution_mode != ExecutionMode::Jiterpreter || len == 0 {
+            return;
+        }
+
+        let mut p = phys & crate::mmio::CODE_LINE_MASK;
+        let end = phys.wrapping_add(len - 1) & crate::mmio::CODE_LINE_MASK;
+        loop {
+            if self.mmio.is_code_chunk(p) {
+                self.jiterpreter_cache_dirty = true;
+                break;
+            }
+            if p == end {
+                break;
+            }
+            p = p.wrapping_add(crate::mmio::CODE_LINE_BYTES);
+        }
+    }
+
+    #[inline(always)]
+    fn run_cpu_pre_hook_if_enabled(&mut self, _pc: u32) {
+        #[cfg(feature = "hooks")]
+        if self.hook_flags.contains(HookFlags::CPU_PRE) {
+            if self.hook_filters.cpu_pre.matches(_pc) {
+                if let Some(mut host) = self.hook_host.take() {
+                    host.on_cpu_pre(self);
+                    self.sync_pending_hook_state(host.as_mut());
+                    self.hook_host = Some(host);
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn run_cpu_post_hook_if_enabled(&mut self, _pc: u32) {
+        #[cfg(feature = "hooks")]
+        if self.hook_flags.contains(HookFlags::CPU_POST) {
+            if self.hook_filters.cpu_post.matches(_pc) {
+                if let Some(mut host) = self.hook_host.take() {
+                    host.on_cpu_post(self);
+                    self.sync_pending_hook_state(host.as_mut());
+                    self.hook_host = Some(host);
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn exec_decoded_instr_raw(&mut self, cia: u32, instr_raw: u32) {
+        self.run_cpu_pre_hook_if_enabled(cia);
+
+        self.gekko.cia = cia;
+        self.gekko.nia = cia.wrapping_add(4);
+        #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+        let verify_pre_state = if self.execution_mode == ExecutionMode::Jiterpreter
+            && Self::jiterp_verify_enabled()
+            && self.jiterp_verify_sample_hit(instr_raw)
+            && Self::jiterp_verify_candidate(instr_raw)
+        {
+            Some(self.jiterp_capture_state())
+        } else {
+            None
+        };
+
+        let handled = if self.execution_mode == ExecutionMode::Jiterpreter {
+            crate::gekko::jiterp::try_execute_fast_instruction(self, instr_raw)
+        } else {
+            false
+        };
+
+        #[cfg(any(all(debug_assertions, not(target_arch = "wasm32")), target_arch = "wasm32"))]
+        if handled {
+            if let Some(pre_state) = verify_pre_state.as_ref() {
+                let fast_post_state = self.jiterp_capture_state();
+                self.jiterp_verify_fast_vs_interp(instr_raw, pre_state, &fast_post_state);
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        if self.execution_mode == ExecutionMode::Jiterpreter {
+            if handled {
+                self.core_perf.jiterp_fast_instrs = self.core_perf.jiterp_fast_instrs.saturating_add(1);
+            } else {
+                self.core_perf.jiterp_fallback_dispatches =
+                    self.core_perf.jiterp_fallback_dispatches.saturating_add(1);
+                let op = (instr_raw >> 26) as usize;
+                if op < self.core_perf.jiterp_fallback_by_op.len() {
+                    self.core_perf.jiterp_fallback_by_op[op] = self.core_perf.jiterp_fallback_by_op[op].saturating_add(1);
+                }
+                if op == 19 {
+                    let xo = ((instr_raw >> 1) & 0x3FF) as usize;
+                    self.core_perf.jiterp_fallback_op19_by_xo[xo] =
+                        self.core_perf.jiterp_fallback_op19_by_xo[xo].saturating_add(1);
+                }
+                if op == 31 {
+                    let xo = ((instr_raw >> 1) & 0x3FF) as usize;
+                    self.core_perf.jiterp_fallback_op31_by_xo[xo] =
+                        self.core_perf.jiterp_fallback_op31_by_xo[xo].saturating_add(1);
+                }
+                if op == 63 {
+                    let xo = ((instr_raw >> 1) & 0x3FF) as usize;
+                    self.core_perf.jiterp_fallback_op63_by_xo[xo] =
+                        self.core_perf.jiterp_fallback_op63_by_xo[xo].saturating_add(1);
+                    if xo == 89 {
+                        let subop = ((instr_raw >> 6) & 0xF) as usize;
+                        self.core_perf.jiterp_fallback_op63_xo89_by_subop[subop] =
+                            self.core_perf.jiterp_fallback_op63_xo89_by_subop[subop].saturating_add(1);
+                    }
+                }
+            }
+        }
+        if !handled {
+            let instr = crate::gekko::instruction::Instruction(instr_raw);
+            crate::gekko::dispatch(self, instr);
+        }
+        self.scheduler.cycles += 2;
+
+        self.run_cpu_post_hook_if_enabled(self.gekko.cia);
+        self.gekko.pc = self.gekko.nia;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[inline(always)]
+    pub(crate) fn exec_jiterp_instr_raw_wasm(&mut self, cia: u32, instr_raw: u32) {
+        self.run_cpu_pre_hook_if_enabled(cia);
+
+        self.gekko.cia = cia;
+        self.gekko.nia = cia.wrapping_add(4);
+
+        let handled = crate::gekko::jiterp::try_execute_fast_instruction(self, instr_raw);
+
+        if handled {
+            self.core_perf.jiterp_fast_instrs = self.core_perf.jiterp_fast_instrs.saturating_add(1);
+        } else {
+            self.core_perf.jiterp_fallback_dispatches = self.core_perf.jiterp_fallback_dispatches.saturating_add(1);
+            let op = (instr_raw >> 26) as usize;
+            if op < self.core_perf.jiterp_fallback_by_op.len() {
+                self.core_perf.jiterp_fallback_by_op[op] = self.core_perf.jiterp_fallback_by_op[op].saturating_add(1);
+            }
+            if op == 19 {
+                let xo = ((instr_raw >> 1) & 0x3FF) as usize;
+                self.core_perf.jiterp_fallback_op19_by_xo[xo] =
+                    self.core_perf.jiterp_fallback_op19_by_xo[xo].saturating_add(1);
+            }
+            if op == 31 {
+                let xo = ((instr_raw >> 1) & 0x3FF) as usize;
+                self.core_perf.jiterp_fallback_op31_by_xo[xo] =
+                    self.core_perf.jiterp_fallback_op31_by_xo[xo].saturating_add(1);
+            }
+            if op == 63 {
+                let xo = ((instr_raw >> 1) & 0x3FF) as usize;
+                self.core_perf.jiterp_fallback_op63_by_xo[xo] =
+                    self.core_perf.jiterp_fallback_op63_by_xo[xo].saturating_add(1);
+                if xo == 89 {
+                    let subop = ((instr_raw >> 6) & 0xF) as usize;
+                    self.core_perf.jiterp_fallback_op63_xo89_by_subop[subop] =
+                        self.core_perf.jiterp_fallback_op63_xo89_by_subop[subop].saturating_add(1);
+                }
+            }
+
+            let instr = crate::gekko::instruction::Instruction(instr_raw);
+            crate::gekko::dispatch(self, instr);
+        }
+
+        self.scheduler.cycles += 2;
+
+        self.run_cpu_post_hook_if_enabled(self.gekko.cia);
+        self.gekko.pc = self.gekko.nia;
     }
 
     #[inline(always)]
@@ -230,45 +731,30 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
         }
 
-        // CPU pre-hook
-        #[cfg(feature = "hooks")]
-        if self.hook_flags.contains(HookFlags::CPU_PRE) {
-            let pc = self.gekko.pc;
-            if self.hook_filters.cpu_pre.matches(pc) {
-                if let Some(mut host) = self.hook_host.take() {
-                    host.on_cpu_pre(self);
-                    self.sync_pending_hook_state(host.as_mut());
-                    self.hook_host = Some(host);
-                }
-            }
-        }
-
         // Fetch and execute next instruction
-        self.gekko.cia = self.gekko.pc;
-        self.gekko.nia = self.gekko.cia.wrapping_add(4);
-        let instr = crate::gekko::instruction::Instruction(self.mmio.fetch_instruction(self.gekko.cia));
-        crate::gekko::dispatch(self, instr);
-        self.scheduler.cycles += 2; // TODO: Track properly?
-
-        // CPU post-hook
-        #[cfg(feature = "hooks")]
-        if self.hook_flags.contains(HookFlags::CPU_POST) {
-            let pc = self.gekko.cia;
-            if self.hook_filters.cpu_post.matches(pc) {
-                if let Some(mut host) = self.hook_host.take() {
-                    host.on_cpu_post(self);
-                    self.sync_pending_hook_state(host.as_mut());
-                    self.hook_host = Some(host);
-                }
+        let cia = self.gekko.pc;
+        let instr_raw = {
+            let top = cia >> 28;
+            if top == 0x8 || top == 0xC {
+                self.mmio.ram_read_u32(cia & 0x3FFF_FFFF)
+            } else if SYSTEM == WII && (top == 0x9 || top == 0xD) {
+                self.mmio.phys_read_u32(cia & 0x3FFF_FFFF)
+            } else {
+                self.mmio.fetch_instruction(cia)
             }
-        }
-
-        self.gekko.pc = self.gekko.nia;
+        };
+        self.exec_decoded_instr_raw(cia, instr_raw);
 
     }
 
     /// To JIT or not to JIT, that is the question.
     pub fn set_execution_mode(&mut self, mode: ExecutionMode) {
+        if self.execution_mode == ExecutionMode::Jiterpreter && mode != ExecutionMode::Jiterpreter {
+            if let Some(mut jiterp) = self.jiterpreter.take() {
+                jiterp.clear_cache(&mut self.mmio);
+            }
+            self.jiterpreter_cache_dirty = false;
+        }
         self.execution_mode = mode;
         self.gx.execution_mode = mode;
     }
@@ -300,15 +786,25 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         while !self.vsync_pending {
             self.scheduler.refresh_deadline();
             #[cfg(feature = "jit")]
-            if self.execution_mode == ExecutionMode::Jit {
-                self.run_until_deadline_jit();
+            match self.execution_mode {
+                ExecutionMode::Jit => self.run_until_deadline_jit(),
+                ExecutionMode::Jiterpreter => self.run_until_deadline_jiterp(),
+                ExecutionMode::Interpreter => self.run_until_deadline_interp(),
+            }
+            #[cfg(not(feature = "jit"))]
+            if self.execution_mode == ExecutionMode::Jiterpreter {
+                self.run_until_deadline_jiterp();
             } else {
                 self.run_until_deadline_interp();
             }
-            #[cfg(not(feature = "jit"))]
-            self.run_until_deadline_interp();
-            // Drain all events that are now due
-            self.drain_events();
+            // Drain due events in bounded slices. Once VSync is raised we stop
+            // draining to keep this frame from being consumed by post-vsync
+            // event storms.
+            while self.drain_events_budgeted(EVENT_DRAIN_BUDGET_PER_SLICE) {
+                if self.vsync_pending {
+                    break;
+                }
+            }
         }
 
         #[cfg(any(feature = "jit-stats", feature = "profile", feature = "gx-stats"))]
@@ -617,6 +1113,80 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
     }
 
+    #[inline(always)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
+    fn run_until_deadline_jiterp(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        const JITERP_IRQ_CHECK_EVERY_BLOCKS: u32 = 8;
+        #[cfg(not(target_arch = "wasm32"))]
+        const JITERP_IRQ_CHECK_EVERY_BLOCKS: u32 = 32;
+
+        #[cfg(target_arch = "wasm32")]
+        let perf_start = Instant::now();
+
+        let mut jiterp = self.jiterpreter.take().unwrap_or_else(|| Box::new(crate::gekko::jiterp::JiterpEngine::<SYSTEM>::new()));
+        let mut blocks_until_irq_check: u32 = 0;
+
+        while self.scheduler.cycles < self.scheduler.next_deadline() {
+            if blocks_until_irq_check == 0 && self.gekko.msr.external_interrupt_enable() {
+                if self.pi.interrupt_pending() {
+                    self.cause_external_interrupt();
+                    self.scheduler.cycles += 2;
+                    blocks_until_irq_check = JITERP_IRQ_CHECK_EVERY_BLOCKS;
+                    continue;
+                }
+
+                if self.gekko.dec.interrupt_pending() {
+                    self.cause_decrementer_interrupt();
+                    self.scheduler.cycles += 2;
+                    blocks_until_irq_check = JITERP_IRQ_CHECK_EVERY_BLOCKS;
+                    continue;
+                }
+
+                blocks_until_irq_check = JITERP_IRQ_CHECK_EVERY_BLOCKS;
+            } else if blocks_until_irq_check > 0 {
+                blocks_until_irq_check -= 1;
+            }
+
+            if self.jiterpreter_cache_dirty {
+                jiterp.clear_cache(&mut self.mmio);
+                self.jiterpreter_cache_dirty = false;
+                #[cfg(target_arch = "wasm32")]
+                {
+                    self.core_perf.jiterp_flushes = self.core_perf.jiterp_flushes.saturating_add(1);
+                }
+            }
+
+            let stats = jiterp.run_block(self);
+            if stats.instrs == 0 {
+                blocks_until_irq_check = 0;
+                self.step_cpu();
+                continue;
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.core_perf.jiterp_blocks = self.core_perf.jiterp_blocks.saturating_add(stats.blocks as u64);
+                self.core_perf.jiterp_instrs = self.core_perf.jiterp_instrs.saturating_add(stats.instrs as u64);
+                self.core_perf.jiterp_cache_hits = self
+                    .core_perf
+                    .jiterp_cache_hits
+                    .saturating_add(stats.cache_hits as u64);
+                self.core_perf.jiterp_cache_misses = self
+                    .core_perf
+                    .jiterp_cache_misses
+                    .saturating_add(stats.cache_misses as u64);
+            }
+        }
+
+        self.jiterpreter = Some(jiterp);
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.core_perf.run_interp_ms += perf_start.elapsed().as_secs_f64() * 1000.0;
+        }
+    }
+
     /// JIT inner loop: runs compiled blocks back-to-back until
     /// `scheduler.cycles >= next_deadline`. Interrupts are checked at block
     /// boundaries.
@@ -709,9 +1279,11 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
         };
 
-        while let Some(f) = self.scheduler.poll() {
+        while let Some(f) = self.scheduler.take_due_event() {
             f(self);
         }
+
+        self.scheduler.refresh_deadline();
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -720,6 +1292,52 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                     start.elapsed().as_secs_f64() * 1000.0 * CORE_PERF_DRAIN_EVENTS_SAMPLE_EVERY as f64;
             }
         }
+    }
+
+    #[inline(always)]
+    fn drain_events_budgeted(&mut self, max_events: usize) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        let perf_start = {
+            self.core_perf.drain_events_calls = self.core_perf.drain_events_calls.saturating_add(1);
+            if self
+                .core_perf
+                .drain_events_calls
+                .is_multiple_of(CORE_PERF_DRAIN_EVENTS_SAMPLE_EVERY)
+            {
+                Some(Instant::now())
+            } else {
+                None
+            }
+        };
+
+        let mut count = 0usize;
+        while count < max_events {
+            let Some(f) = self.scheduler.take_due_event() else {
+                break;
+            };
+            f(self);
+            count += 1;
+            if self.vsync_pending {
+                break;
+            }
+        }
+
+        let backlog = self.scheduler.has_due_event();
+        self.scheduler.refresh_deadline();
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            if count == max_events && backlog {
+                self.core_perf.drain_budget_hits = self.core_perf.drain_budget_hits.saturating_add(1);
+            }
+
+            if let Some(start) = perf_start {
+                self.core_perf.drain_events_ms +=
+                    start.elapsed().as_secs_f64() * 1000.0 * CORE_PERF_DRAIN_EVENTS_SAMPLE_EVERY as f64;
+            }
+        }
+
+        backlog && !self.vsync_pending
     }
 
     pub fn load_image(&mut self, exe: &impl Executable) {

@@ -26,6 +26,10 @@ use crate::system::{System, SystemId};
 use crate::system::ExecutionMode;
 
 #[cfg(feature = "jit")]
+#[cfg(target_arch = "wasm32")]
+pub const DSP_JIT_CHAIN_BUDGET: u32 = 32;
+#[cfg(feature = "jit")]
+#[cfg(not(target_arch = "wasm32"))]
 pub const DSP_JIT_CHAIN_BUDGET: u32 = 16;
 
 pub struct Dsp {
@@ -74,6 +78,9 @@ pub struct Dsp {
     pub wait_table: Box<[u8; 0x10000]>,
 
     pub scheduler_suspended: bool,
+    pub scheduler_event_pending: bool,
+    pub batch_steps: u64,
+    pub batch_pressure_streak: u8,
 }
 
 impl Dsp {
@@ -121,6 +128,18 @@ impl Dsp {
             instr_count: 0,
             wait_table: unsafe { Box::<[u8; 0x10000]>::new_zeroed().assume_init() },
             scheduler_suspended: false,
+            scheduler_event_pending: false,
+            batch_steps: {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    32768
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    crate::scheduler::DSP_BATCH_SIZE
+                }
+            },
+            batch_pressure_streak: 0,
         }
     }
 
@@ -290,6 +309,56 @@ impl Dsp {
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
+    pub fn dsp_should_suspend_scheduler(&self) -> bool {
+        if self.dsp.csr.halt() || self.dsp.csr.reset() {
+            return true;
+        }
+
+        let cpu_mail_quiet = !self.dsp.mailbox_to_dsp_hi.busy();
+        let dsp_mail_full = self.dsp.mailbox_to_cpu_hi.busy();
+        let (waits_cpu, waits_dsp) = self.dsp.mailbox_wait_state();
+        let in_idle_wait = (cpu_mail_quiet && waits_cpu) || (dsp_mail_full && waits_dsp);
+        let pending_interrupt = self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable();
+
+        in_idle_wait && !pending_interrupt
+    }
+
+    #[inline(always)]
+    pub fn tune_dsp_batch_steps(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            const MIN_STEPS: u64 = 2048;
+            const MAX_STEPS: u64 = 65536;
+            const GROW_STEPS: u64 = 4096;
+            const SHRINK_STEPS: u64 = 8192;
+            const PRESSURE_STREAK_TO_SHRINK: u8 = 4;
+
+            let cpu_mail_quiet = !self.dsp.mailbox_to_dsp_hi.busy();
+            let dsp_mail_full = self.dsp.mailbox_to_cpu_hi.busy();
+            let pending_interrupt = self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable();
+            let ppc_pi_pending = self.pi.interrupt_pending();
+            let pressure = pending_interrupt || ppc_pi_pending || !cpu_mail_quiet || dsp_mail_full;
+
+            if pressure {
+                self.dsp.batch_pressure_streak = self.dsp.batch_pressure_streak.saturating_add(1);
+                if self.dsp.batch_pressure_streak >= PRESSURE_STREAK_TO_SHRINK {
+                    self.dsp.batch_steps = self.dsp.batch_steps.saturating_sub(SHRINK_STEPS).max(MIN_STEPS);
+                    self.dsp.batch_pressure_streak = 0;
+                }
+            } else {
+                self.dsp.batch_pressure_streak = 0;
+                self.dsp.batch_steps = (self.dsp.batch_steps + GROW_STEPS).min(MAX_STEPS);
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.dsp.batch_steps = crate::scheduler::DSP_BATCH_SIZE;
+            self.dsp.batch_pressure_streak = 0;
+        }
+    }
+
+    #[inline(always)]
     pub fn step_dsp_instruction(&mut self) -> bool {
         if self.dsp.csr.reset() || self.dsp.csr.halt() {
             return false;
@@ -378,7 +447,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let iram = unsafe { ::core::slice::from_raw_parts(iram_ptr, iram_len) };
         let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
 
-        let mut budget = crate::scheduler::DSP_BATCH_SIZE as u64;
+        let mut budget = self.dsp.batch_steps;
         while budget > 0 {
             let cpu_mail_quiet = !self.dsp.mailbox_to_dsp_hi.busy();
             let dsp_mail_full = self.dsp.mailbox_to_cpu_hi.busy();
@@ -420,7 +489,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[inline(always)]
     fn execute_dsp_batch_interp(&mut self) {
-        for _ in 0..crate::scheduler::DSP_BATCH_SIZE {
+        for _ in 0..self.dsp.batch_steps {
             if !self.step_dsp_instruction() {
                 break;
             }
@@ -582,6 +651,25 @@ pub static DSP_SUSPEND_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::
 pub static DSP_WAKE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[inline]
+pub fn schedule_dsp_batch<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    if sys.dsp.scheduler_event_pending || sys.dsp.csr.halt() || sys.dsp.csr.reset() {
+        return;
+    }
+
+    sys.scheduler.schedule_in(
+        crate::scheduler::dsp_batch_interval_steps(SYSTEM, sys.dsp.batch_steps),
+        crate::scheduler::dsp_batch_handler::<SYSTEM>,
+    );
+    sys.dsp.scheduler_event_pending = true;
+}
+
+#[inline]
+pub fn cancel_dsp_batch<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.scheduler.cancel(crate::scheduler::dsp_batch_handler::<SYSTEM>);
+    sys.dsp.scheduler_event_pending = false;
+}
+
+#[inline]
 pub fn wake_dsp_scheduler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     if !sys.dsp.scheduler_suspended {
         return;
@@ -592,10 +680,7 @@ pub fn wake_dsp_scheduler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     }
 
     sys.dsp.scheduler_suspended = false;
-    sys.scheduler.schedule_in(
-        crate::scheduler::dsp_batch_interval(SYSTEM),
-        crate::scheduler::dsp_batch_handler::<SYSTEM>,
-    );
+    self::schedule_dsp_batch::<SYSTEM>(sys);
 
     #[cfg(feature = "jit-stats")]
     DSP_WAKE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

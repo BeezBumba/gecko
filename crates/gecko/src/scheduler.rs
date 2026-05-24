@@ -130,6 +130,28 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
     }
 
     #[inline(always)]
+    pub fn take_due_event(&mut self) -> Option<ScheduledFn<SYSTEM>> {
+        let front = self.events.front()?;
+        if self.cycles >= front.deadline {
+            let f = self.events.pop_front().unwrap().f;
+            #[cfg(feature = "jit-stats")]
+            {
+                *self.event_fire_counts.entry(f as *const () as usize).or_insert(0) += 1;
+            }
+            Some(f)
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub fn has_due_event(&self) -> bool {
+        self.events
+            .front()
+            .is_some_and(|event| self.cycles >= event.deadline)
+    }
+
+    #[inline(always)]
     pub fn next_deadline(&self) -> u64 {
         self.next_deadline
     }
@@ -191,9 +213,24 @@ pub const fn dsp_batch_interval(system: SystemId) -> u64 {
     self::cpu_cycles_per_dsp_tick(system) * self::DSP_BATCH_SIZE
 }
 
+#[inline(always)]
+pub const fn dsp_batch_interval_steps(system: SystemId, steps: u64) -> u64 {
+    self::cpu_cycles_per_dsp_tick(system) * steps
+}
+
 pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.dsp.scheduler_event_pending = false;
+
     #[cfg(target_arch = "wasm32")]
     let perf_start = sys.core_perf_note_dsp_batch().then(web_time::Instant::now);
+
+    if sys.dsp_should_suspend_scheduler() {
+        sys.dsp.scheduler_suspended = true;
+        sys.dsp.batch_pressure_streak = 0;
+        #[cfg(feature = "jit-stats")]
+        crate::flipper::dsp::DSP_SUSPEND_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return;
+    }
 
     sys.execute_dsp_batch();
 
@@ -208,19 +245,15 @@ pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         return;
     }
 
-    let cpu_mail_quiet = !sys.dsp.mailbox_to_dsp_hi.busy();
-    let dsp_mail_full = sys.dsp.mailbox_to_cpu_hi.busy();
-    let (waits_cpu, waits_dsp) = sys.dsp.mailbox_wait_state();
-    let in_idle_wait = (cpu_mail_quiet && waits_cpu) || (dsp_mail_full && waits_dsp);
-    let pending_interrupt = sys.dsp.csr.pi_interrupt() && sys.dsp.registers.status.external_interrupt_enable();
-
-    if in_idle_wait && !pending_interrupt {
+    if sys.dsp_should_suspend_scheduler() {
         sys.dsp.scheduler_suspended = true;
+        sys.dsp.batch_pressure_streak = 0;
         #[cfg(feature = "jit-stats")]
         crate::flipper::dsp::DSP_SUSPEND_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return;
     }
 
-    sys.scheduler
-        .schedule_in(self::dsp_batch_interval(SYSTEM), self::dsp_batch_handler::<SYSTEM>);
+    sys.tune_dsp_batch_steps();
+
+    crate::flipper::dsp::schedule_dsp_batch::<SYSTEM>(sys);
 }

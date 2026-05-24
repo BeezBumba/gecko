@@ -45,6 +45,8 @@ pub struct VideoInterface {
     pub half_line_count: u32,
     pub ticks_last_line_start: u64,
     pub half_line_scheduled: bool,
+    scheduled_half_lines: u8,
+    scheduled_ticks_per_hl: u64,
 }
 
 impl VideoInterface {
@@ -87,6 +89,8 @@ impl VideoInterface {
             half_line_count: 0,
             ticks_last_line_start: 0,
             half_line_scheduled: false,
+            scheduled_half_lines: 1,
+            scheduled_ticks_per_hl: 0,
         }
     }
 
@@ -117,6 +121,65 @@ impl VideoInterface {
 
     fn total_half_lines(&self) -> u32 {
         self.half_lines_per_even_field() + self.half_lines_per_odd_field()
+    }
+
+    #[inline(always)]
+    fn is_field_start_half_line(&self, half_line: u32) -> bool {
+        let total_hl = self.total_half_lines();
+        total_hl > 0 && (half_line == 0 || half_line == self.half_lines_per_odd_field())
+    }
+
+    #[inline(always)]
+    fn display_interrupt_targets_half_line(&self, half_line: u32) -> bool {
+        let total_hl = self.total_half_lines();
+        if total_hl == 0 {
+            return false;
+        }
+
+        let hl_width = self.htr0.halfline_width() as u32;
+        let target_vct = 1 + half_line / 2;
+        let target_parity = half_line & 1;
+
+        macro_rules! matches_di {
+            ($di:expr) => {
+                $di.enable()
+                    && $di.vertical_count() as u32 == target_vct
+                    && (if $di.horizontal_count() as u32 > hl_width { 1 } else { 0 }) == target_parity
+            };
+        }
+
+        matches_di!(self.di0) || matches_di!(self.di1) || matches_di!(self.di2) || matches_di!(self.di3)
+    }
+
+    #[inline(always)]
+    fn next_schedule_half_lines(&self) -> u32 {
+        let total_hl = self.total_half_lines();
+        if total_hl == 0 {
+            return 1;
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        const MAX_BATCH_HALF_LINES: u32 = 16;
+        #[cfg(not(target_arch = "wasm32"))]
+        const MAX_BATCH_HALF_LINES: u32 = 2;
+
+        // If we're already on the odd half of a scanline, advance one half-line
+        // to restore an even-aligned boundary before batching whole lines.
+        if (self.half_line_count & 1) != 0 {
+            return 1;
+        }
+
+        let max_batch = MAX_BATCH_HALF_LINES.min(total_hl.max(1));
+        for step in 1..=max_batch {
+            let next_half_line = (self.half_line_count + step) % total_hl;
+            if self.is_field_start_half_line(next_half_line)
+                || self.display_interrupt_targets_half_line(next_half_line)
+            {
+                return step;
+            }
+        }
+
+        max_batch
     }
 
     /// Returns true if any DI register has both IR_INT and IR_MASK set.
@@ -269,25 +332,40 @@ pub fn ensure_half_line_scheduled<const SYSTEM: SystemId>(sys: &mut System<SYSTE
     if !sys.vi.half_line_scheduled {
         let ticks_per_hl = sys.vi.ticks_per_half_line(SYSTEM);
         if ticks_per_hl > 0 {
+            let scheduled_half_lines = sys.vi.next_schedule_half_lines();
             sys.vi.half_line_scheduled = true;
-            sys.scheduler.schedule_in(ticks_per_hl, |sys| {
-                let prev_hl = sys.vi.half_line_count;
-                sys.vi.on_half_line(sys.scheduler.cycles);
-                sys.vi.half_line_scheduled = false;
-
-                let curr_hl = sys.vi.half_line_count;
-                let total_hl = sys.vi.total_half_lines();
-                let odd_field_start = 0u32;
-                let even_field_start = sys.vi.half_lines_per_odd_field();
-                if total_hl > 0 && (curr_hl == odd_field_start || curr_hl == even_field_start) && curr_hl != prev_hl {
-                    crate::flipper::gx::present_xfb(sys);
-                }
-
-                self::ensure_half_line_scheduled(sys);
-                self::refresh_interrupts(sys);
-            });
+            sys.vi.scheduled_half_lines = scheduled_half_lines as u8;
+            sys.vi.scheduled_ticks_per_hl = ticks_per_hl;
+            sys.scheduler.schedule_in(
+                ticks_per_hl * scheduled_half_lines as u64,
+                self::scheduled_half_line_handler::<SYSTEM>,
+            );
         }
     }
+}
+
+fn scheduled_half_line_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    let step = sys.vi.scheduled_half_lines.max(1) as u32;
+    let ticks_per_hl = sys.vi.scheduled_ticks_per_hl;
+
+    for idx in 0..step {
+        let remaining = step - idx - 1;
+        let sub_cycles = sys
+            .scheduler
+            .cycles
+            .saturating_sub(ticks_per_hl.saturating_mul(remaining as u64));
+        let prev_hl = sys.vi.half_line_count;
+        sys.vi.on_half_line(sub_cycles);
+
+        let curr_hl = sys.vi.half_line_count;
+        if curr_hl != prev_hl && sys.vi.is_field_start_half_line(curr_hl) {
+            crate::flipper::gx::present_xfb(sys);
+        }
+    }
+
+    sys.vi.half_line_scheduled = false;
+    self::ensure_half_line_scheduled(sys);
+    self::refresh_interrupts(sys);
 }
 
 #[inline(always)]

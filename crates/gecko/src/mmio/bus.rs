@@ -230,6 +230,69 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         })
     }
 
+    #[cfg(not(feature = "hooks"))]
+    #[inline(always)]
+    pub fn read_u8_interp(&mut self, addr: u32) -> u8 {
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
+        if phys <= RAM_END {
+            self.mmio.ram_read_u8(phys)
+        } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys) {
+            self.mmio.phys_read_u8(phys)
+        } else {
+            self.read_u8_mmio(phys, addr)
+        }
+    }
+
+    #[cfg(feature = "hooks")]
+    #[inline(always)]
+    pub fn read_u8_interp(&mut self, addr: u32) -> u8 {
+        self.read_u8(addr)
+    }
+
+    #[cfg(not(feature = "hooks"))]
+    #[inline(always)]
+    pub fn read_u16_interp(&mut self, addr: u32) -> u16 {
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
+        if phys <= RAM_END - 1 {
+            self.mmio.ram_read_u16(phys)
+        } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 1).contains(&phys) {
+            self.mmio.phys_read_u16(phys)
+        } else {
+            self.read_u16_mmio(phys, addr)
+        }
+    }
+
+    #[cfg(feature = "hooks")]
+    #[inline(always)]
+    pub fn read_u16_interp(&mut self, addr: u32) -> u16 {
+        self.read_u16(addr)
+    }
+
+    #[cfg(not(feature = "hooks"))]
+    #[inline(always)]
+    pub fn read_u32_interp(&mut self, addr: u32) -> u32 {
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
+        if phys <= RAM_END - 3 {
+            self.mmio.ram_read_u32(phys)
+        } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 3).contains(&phys) {
+            self.mmio.phys_read_u32(phys)
+        } else {
+            self.read_u32_mmio(phys, addr)
+        }
+    }
+
+    #[cfg(feature = "hooks")]
+    #[inline(always)]
+    pub fn read_u32_interp(&mut self, addr: u32) -> u32 {
+        self.read_u32(addr)
+    }
+
     // Write fast path for RAM access
 
     #[inline(always)]
@@ -242,8 +305,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 self.mmio.ram_write_u8(phys, val);
                 #[cfg(feature = "jit")]
                 self.mmio.queue_icbi_for_range(phys, 1);
+                self.jiterpreter_note_code_write(phys, 1);
             } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys) {
                 self.mmio.phys_write_u8(phys, val);
+                self.jiterpreter_note_code_write(phys, 1);
             } else {
                 self.write_u8_mmio(phys, addr, val);
             }
@@ -260,8 +325,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 self.mmio.ram_write_u16(phys, val);
                 #[cfg(feature = "jit")]
                 self.mmio.queue_icbi_for_range(phys, 2);
+                self.jiterpreter_note_code_write(phys, 2);
             } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 1).contains(&phys) {
                 self.mmio.phys_write_u16(phys, val);
+                self.jiterpreter_note_code_write(phys, 2);
             } else {
                 self.write_u16_mmio(phys, addr, val);
             }
@@ -278,12 +345,89 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 self.mmio.ram_write_u32(phys, val);
                 #[cfg(feature = "jit")]
                 self.mmio.queue_icbi_for_range(phys, 4);
+                self.jiterpreter_note_code_write(phys, 4);
             } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 3).contains(&phys) {
                 self.mmio.phys_write_u32(phys, val);
+                self.jiterpreter_note_code_write(phys, 4);
             } else {
                 self.write_u32_mmio(phys, addr, val);
             }
         });
+    }
+
+    #[cfg(not(feature = "hooks"))]
+    #[inline(always)]
+    pub fn write_u8_interp(&mut self, addr: u32, val: u8) {
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
+        if phys <= RAM_END {
+            self.mmio.ram_write_u8(phys, val);
+            #[cfg(feature = "jit")]
+            self.mmio.queue_icbi_for_range(phys, 1);
+            self.jiterpreter_note_code_write(phys, 1);
+        } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys) {
+            self.mmio.phys_write_u8(phys, val);
+            self.jiterpreter_note_code_write(phys, 1);
+        } else {
+            self.write_u8_mmio(phys, addr, val);
+        }
+    }
+
+    #[cfg(feature = "hooks")]
+    #[inline(always)]
+    pub fn write_u8_interp(&mut self, addr: u32, val: u8) {
+        self.write_u8(addr, val)
+    }
+
+    #[cfg(not(feature = "hooks"))]
+    #[inline(always)]
+    pub fn write_u16_interp(&mut self, addr: u32, val: u16) {
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
+        if phys <= RAM_END - 1 {
+            self.mmio.ram_write_u16(phys, val);
+            #[cfg(feature = "jit")]
+            self.mmio.queue_icbi_for_range(phys, 2);
+            self.jiterpreter_note_code_write(phys, 2);
+        } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 1).contains(&phys) {
+            self.mmio.phys_write_u16(phys, val);
+            self.jiterpreter_note_code_write(phys, 2);
+        } else {
+            self.write_u16_mmio(phys, addr, val);
+        }
+    }
+
+    #[cfg(feature = "hooks")]
+    #[inline(always)]
+    pub fn write_u16_interp(&mut self, addr: u32, val: u16) {
+        self.write_u16(addr, val)
+    }
+
+    #[cfg(not(feature = "hooks"))]
+    #[inline(always)]
+    pub fn write_u32_interp(&mut self, addr: u32, val: u32) {
+        let phys = self
+            .fast_translate_addr_hint(addr)
+            .unwrap_or_else(|| self.translate_addr(addr));
+        if phys <= RAM_END - 3 {
+            self.mmio.ram_write_u32(phys, val);
+            #[cfg(feature = "jit")]
+            self.mmio.queue_icbi_for_range(phys, 4);
+            self.jiterpreter_note_code_write(phys, 4);
+        } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END - 3).contains(&phys) {
+            self.mmio.phys_write_u32(phys, val);
+            self.jiterpreter_note_code_write(phys, 4);
+        } else {
+            self.write_u32_mmio(phys, addr, val);
+        }
+    }
+
+    #[cfg(feature = "hooks")]
+    #[inline(always)]
+    pub fn write_u32_interp(&mut self, addr: u32, val: u32) {
+        self.write_u32(addr, val)
     }
 
     // Slow path for MMIO

@@ -1,6 +1,5 @@
 use crate::flipper::{ai, dsp};
 use crate::mmio::traits::{MmioAccess, WriteMask};
-use crate::scheduler;
 use crate::system::{System, SystemId};
 use chapa::BitEnum;
 
@@ -112,14 +111,11 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
         match (was_active, now_active) {
             (false, true) => {
                 sys.dsp.scheduler_suspended = false;
-                sys.scheduler.schedule_in(
-                    scheduler::dsp_batch_interval(SYSTEM),
-                    scheduler::dsp_batch_handler::<SYSTEM>,
-                );
+                dsp::schedule_dsp_batch::<SYSTEM>(sys);
             }
             (true, false) => {
                 sys.dsp.scheduler_suspended = false;
-                sys.scheduler.cancel(scheduler::dsp_batch_handler::<SYSTEM>);
+                dsp::cancel_dsp_batch::<SYSTEM>(sys);
             }
             _ => {}
         }

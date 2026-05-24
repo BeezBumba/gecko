@@ -184,6 +184,13 @@
             const coefNameEl = document.getElementById('coef-name');
             const iplNameEl = document.getElementById('ipl-name');
             const startBtn = document.getElementById('start');
+            const pendingFileReads = new Set();
+
+            function refreshStartButton() {
+                startBtn.disabled = !romFile || pendingFileReads.size > 0;
+            }
+
+            refreshStartButton();
 
             function readFile(file) {
                 return new Promise((resolve) => {
@@ -200,7 +207,12 @@
                     romFile = file;
                     romName = file.name;
                     romNameEl.textContent = file.name;
-                    startBtn.disabled = false;
+                    refreshStartButton();
+                } else {
+                    romFile = null;
+                    romName = '';
+                    romNameEl.textContent = 'none';
+                    refreshStartButton();
                 }
             });
 
@@ -208,8 +220,20 @@
                 if (e.target.files.length > 0) {
                     const file = e.target.files[0];
                     console.log('[web] selected DSP IROM:', file.name, 'bytes=', file.size);
-                    dspData = await readFile(file);
-                    dspNameEl.textContent = file.name;
+                    const readToken = Symbol('dsp-irom-read');
+                    pendingFileReads.add(readToken);
+                    refreshStartButton();
+                    try {
+                        dspData = await readFile(file);
+                        dspNameEl.textContent = file.name;
+                    } finally {
+                        pendingFileReads.delete(readToken);
+                        refreshStartButton();
+                    }
+                } else {
+                    dspData = null;
+                    dspNameEl.textContent = 'optional';
+                    refreshStartButton();
                 }
             });
 
@@ -217,8 +241,20 @@
                 if (e.target.files.length > 0) {
                     const file = e.target.files[0];
                     console.log('[web] selected DSP COEF:', file.name, 'bytes=', file.size);
-                    coefData = await readFile(file);
-                    coefNameEl.textContent = file.name;
+                    const readToken = Symbol('dsp-coef-read');
+                    pendingFileReads.add(readToken);
+                    refreshStartButton();
+                    try {
+                        coefData = await readFile(file);
+                        coefNameEl.textContent = file.name;
+                    } finally {
+                        pendingFileReads.delete(readToken);
+                        refreshStartButton();
+                    }
+                } else {
+                    coefData = null;
+                    coefNameEl.textContent = 'optional';
+                    refreshStartButton();
                 }
             });
 
@@ -226,14 +262,32 @@
                 if (e.target.files.length > 0) {
                     const file = e.target.files[0];
                     console.log('[web] selected GC IPL:', file.name, 'bytes=', file.size);
-                    iplData = await readFile(file);
-                    iplNameEl.textContent = file.name;
+                    const readToken = Symbol('gc-ipl-read');
+                    pendingFileReads.add(readToken);
+                    refreshStartButton();
+                    try {
+                        iplData = await readFile(file);
+                        iplNameEl.textContent = file.name;
+                    } finally {
+                        pendingFileReads.delete(readToken);
+                        refreshStartButton();
+                    }
+                } else {
+                    iplData = null;
+                    iplNameEl.textContent = 'optional';
+                    refreshStartButton();
                 }
             });
 
             startBtn.addEventListener('click', async () => {
                 if (!romFile) return;
+                if (pendingFileReads.size > 0) {
+                    console.warn('[web] waiting for selected support files to finish loading');
+                    refreshStartButton();
+                    return;
+                }
                 console.log('[web] launching emulator for', romName);
+
                 document.getElementById('setup').style.display = 'none';
                 startBtn.disabled = true;
                 try {

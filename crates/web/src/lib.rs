@@ -2,10 +2,10 @@ use std::cell::RefCell;
 use std::io::{Read, Seek, SeekFrom};
 use std::rc::Rc;
 #[cfg(feature = "web-threads")]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "web-threads")]
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "web-threads")]
-use std::time::Instant;
 
 use egui::ViewportId;
 use gecko::HostInput;
@@ -19,7 +19,11 @@ use image::Dol;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::js_sys::{ArrayBuffer, Uint8Array};
+#[cfg(feature = "web-threads")]
+use web_sys::js_sys::Reflect;
+#[cfg(feature = "web-threads")]
+use web_sys::js_sys::global;
+use web_sys::js_sys::{ArrayBuffer, Date, Uint8Array};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -29,9 +33,20 @@ use winit::window::{Window, WindowId};
 
 #[cfg(feature = "debug")]
 mod debug_ui;
+#[cfg(feature = "web-threads")]
+mod thread_pool;
 
 #[cfg(all(feature = "debug", feature = "web-threads"))]
 compile_error!("feature combination unsupported: `debug` + `web-threads`");
+
+
+#[cfg(all(feature = "web-threads", not(target_feature = "atomics")))]
+compile_error!(
+    "`web-threads` requires wasm atomics. Rebuild with CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='-C target-feature=+atomics'."
+);
+
+#[cfg(feature = "web-threads")]
+static WORKER_POOL_READY: AtomicBool = AtomicBool::new(false);
 
 const BLIT_SHADER: &str = "
 @group(0) @binding(0) var src_tex: texture_2d<f32>;
@@ -66,8 +81,141 @@ fn web_warn(message: impl AsRef<str>) {
     web_sys::console::warn_1(&JsValue::from_str(message.as_ref()));
 }
 
+#[cfg(feature = "web-threads")]
+fn web_cross_origin_isolated() -> Option<bool> {
+    let window = web_sys::window()?;
+    let value = Reflect::get(window.as_ref(), &JsValue::from_str("crossOriginIsolated")).ok()?;
+    value.as_bool()
+}
+
+#[cfg(feature = "web-threads")]
+fn web_has_global(name: &str) -> Option<bool> {
+    Reflect::has(&global(), &JsValue::from_str(name)).ok()
+}
+
+#[cfg(feature = "web-threads")]
+fn web_thread_runtime_supported() -> bool {
+    let has_shared_array_buffer = web_has_global("SharedArrayBuffer") == Some(true);
+    let has_atomics = web_has_global("Atomics") == Some(true);
+    let isolated = web_cross_origin_isolated() == Some(true);
+    has_shared_array_buffer && has_atomics && isolated
+}
+
+#[cfg(feature = "web-threads")]
+fn worker_pool_ready() -> bool {
+    WORKER_POOL_READY.load(Ordering::SeqCst)
+}
+
+#[cfg(feature = "web-threads")]
+fn set_worker_pool_ready() {
+    WORKER_POOL_READY.store(true, Ordering::SeqCst);
+}
+
+fn log_web_threading_mode() {
+    #[cfg(feature = "web-threads")]
+    {
+        let has_shared_array_buffer = web_has_global("SharedArrayBuffer").unwrap_or(false);
+        let has_atomics = web_has_global("Atomics").unwrap_or(false);
+        let atomics_target_enabled = cfg!(target_feature = "atomics");
+        let isolated = web_cross_origin_isolated();
+        match isolated {
+            Some(true) => {
+                if atomics_target_enabled {
+                    web_log(format!(
+                        "[web][threading] mode=worker-requested web-threads=enabled crossOriginIsolated=true target_atomics=true SharedArrayBuffer={} Atomics={}",
+                        has_shared_array_buffer,
+                        has_atomics
+                    ));
+                } else {
+                    web_log(format!(
+                        "[web][threading] mode=single-thread web-threads=enabled crossOriginIsolated=true target_atomics=false SharedArrayBuffer={} Atomics={} (pthread workers disabled for this build)",
+                        has_shared_array_buffer,
+                        has_atomics
+                    ));
+                }
+            }
+            Some(false) => {
+                web_warn(
+                    "[web][threading] mode=worker web-threads=enabled crossOriginIsolated=false; COOP/COEP headers are required for pthread workers",
+                );
+            }
+            None => {
+                web_warn(
+                    "[web][threading] mode=worker web-threads=enabled but window is unavailable; unable to verify crossOriginIsolated",
+                );
+            }
+        }
+    }
+
+    #[cfg(not(feature = "web-threads"))]
+    {
+        web_log("[web][threading] mode=single-thread web-threads=disabled");
+    }
+}
+
+#[cfg(not(feature = "web-threads"))]
+fn format_top_histogram(histogram: &[u64]) -> String {
+    let mut top: [(usize, u64); 5] = [(0, 0); 5];
+
+    for (op, &count) in histogram.iter().enumerate() {
+        if count == 0 {
+            continue;
+        }
+
+        let mut insert_at = None;
+        for idx in 0..top.len() {
+            if count > top[idx].1 {
+                insert_at = Some(idx);
+                break;
+            }
+        }
+
+        let Some(idx) = insert_at else {
+            continue;
+        };
+
+        for shift in (idx + 1..top.len()).rev() {
+            top[shift] = top[shift - 1];
+        }
+        top[idx] = (op, count);
+    }
+
+    let mut parts = Vec::new();
+    for (op, count) in top.into_iter().filter(|(_, count)| *count > 0) {
+        parts.push(format!("{}:{}", op, count));
+    }
+
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join(",")
+    }
+}
+
 const ROM_CHUNK_SIZE_BYTES: usize = 4 * 1024 * 1024;
 const PERF_LOG_INTERVAL_FRAMES: u64 = 30;
+
+fn perf_logging_enabled_from_url() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let Ok(search) = window.location().search() else {
+        return false;
+    };
+    let Ok(params) = web_sys::UrlSearchParams::new_with_str(&search) else {
+        return false;
+    };
+
+    for key in ["perf_logs", "perf", "debug_logs"] {
+        if let Some(v) = params.get(key) {
+            if v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes") {
+                return true;
+            }
+        }
+    }
+
+    false
+}
 
 struct JsArrayReader {
     data: Uint8Array,
@@ -134,7 +282,7 @@ async fn read_file_chunked(file: &web_sys::File, chunk_size: usize) -> Result<Ve
     out.try_reserve(initial_reserve)
         .map_err(|_| JsValue::from_str("failed to reserve initial ROM buffer"))?;
     let mut offset = 0u64;
-    let mut next_log_at = 32u64 * 1024 * 1024;
+    let mut next_log_percent = 10u64;
 
     while offset < total_size {
         let end = (offset + chunk_size as u64).min(total_size);
@@ -153,18 +301,26 @@ async fn read_file_chunked(file: &web_sys::File, chunk_size: usize) -> Result<Ve
         arr.copy_to(&mut out[start..]);
         offset = end;
 
-        if offset >= next_log_at || offset == total_size {
+        let percent = if total_size > 0 {
+            (offset as f64 * 100.0) / total_size as f64
+        } else {
+            100.0
+        };
+        let percent_floor = if total_size > 0 {
+            (offset.saturating_mul(100)) / total_size
+        } else {
+            100
+        };
+        if percent_floor >= next_log_percent || offset == total_size {
             web_log(format!(
                 "[web] file ingest progress: {} / {} bytes ({:.1}%)",
                 offset,
                 total_size,
-                if total_size > 0 {
-                    (offset as f64 * 100.0) / total_size as f64
-                } else {
-                    100.0
-                }
+                percent
             ));
-            next_log_at = next_log_at.saturating_add(32u64 * 1024 * 1024);
+            while next_log_percent <= percent_floor {
+                next_log_percent = next_log_percent.saturating_add(10);
+            }
         }
     }
 
@@ -182,7 +338,7 @@ async fn read_file_into_js_buffer_chunked(
 
     let out = Uint8Array::new_with_length(total_size as u32);
     let mut offset = 0u64;
-    let mut next_log_at = 32u64 * 1024 * 1024;
+    let mut next_log_percent = 10u64;
 
     while offset < total_size {
         let end = (offset + chunk_size as u64).min(total_size);
@@ -192,18 +348,26 @@ async fn read_file_into_js_buffer_chunked(
         out.set(&arr, offset as u32);
         offset = end;
 
-        if offset >= next_log_at || offset == total_size {
+        let percent = if total_size > 0 {
+            (offset as f64 * 100.0) / total_size as f64
+        } else {
+            100.0
+        };
+        let percent_floor = if total_size > 0 {
+            (offset.saturating_mul(100)) / total_size
+        } else {
+            100
+        };
+        if percent_floor >= next_log_percent || offset == total_size {
             web_log(format!(
                 "[web] JS buffer ingest progress: {} / {} bytes ({:.1}%)",
                 offset,
                 total_size,
-                if total_size > 0 {
-                    (offset as f64 * 100.0) / total_size as f64
-                } else {
-                    100.0
-                }
+                percent
             ));
-            next_log_at = next_log_at.saturating_add(32u64 * 1024 * 1024);
+            while next_log_percent <= percent_floor {
+                next_log_percent = next_log_percent.saturating_add(10);
+            }
         }
     }
 
@@ -219,6 +383,103 @@ async fn read_file_into_js_buffer_chunked(
 struct ActionMessage {
     action: GxAction,
     vertices: Vec<DrawVertex>,
+}
+
+struct PendingStateActions {
+    projection: Option<GxAction>,
+    viewport: Option<GxAction>,
+    scissor: Option<GxAction>,
+    depth_mode: Option<GxAction>,
+    blend_mode: Option<GxAction>,
+    alpha_compare: Option<GxAction>,
+    cull_mode: Option<GxAction>,
+    textures: [Option<GxAction>; 8],
+}
+
+impl PendingStateActions {
+    fn new() -> Self {
+        Self {
+            projection: None,
+            viewport: None,
+            scissor: None,
+            depth_mode: None,
+            blend_mode: None,
+            alpha_compare: None,
+            cull_mode: None,
+            textures: std::array::from_fn(|_| None),
+        }
+    }
+
+    fn stage(&mut self, action: &GxAction) -> bool {
+        match action {
+            GxAction::SetProjection { .. } => {
+                self.projection = Some((*action).clone());
+                true
+            }
+            GxAction::SetViewport(..) => {
+                self.viewport = Some((*action).clone());
+                true
+            }
+            GxAction::SetScissor(..) => {
+                self.scissor = Some((*action).clone());
+                true
+            }
+            GxAction::SetDepthMode(..) => {
+                self.depth_mode = Some((*action).clone());
+                true
+            }
+            GxAction::SetBlendMode(..) => {
+                self.blend_mode = Some((*action).clone());
+                true
+            }
+            GxAction::SetAlphaCompare(..) => {
+                self.alpha_compare = Some((*action).clone());
+                true
+            }
+            GxAction::SetCullMode(..) => {
+                self.cull_mode = Some((*action).clone());
+                true
+            }
+            GxAction::SetTexture { slot, .. } => {
+                if *slot < self.textures.len() {
+                    self.textures[*slot] = Some((*action).clone());
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn flush_into(&mut self, pending_messages: &mut Vec<ActionMessage>) {
+        for action in [
+            self.projection.take(),
+            self.viewport.take(),
+            self.scissor.take(),
+            self.depth_mode.take(),
+            self.blend_mode.take(),
+            self.alpha_compare.take(),
+            self.cull_mode.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            pending_messages.push(ActionMessage {
+                action,
+                vertices: Vec::new(),
+            });
+        }
+
+        for slot in &mut self.textures {
+            if let Some(action) = slot.take() {
+                pending_messages.push(ActionMessage {
+                    action,
+                    vertices: Vec::new(),
+                });
+            }
+        }
+    }
 }
 
 struct WebSinkShared {
@@ -242,10 +503,20 @@ struct WebSink {
     /// Actions queued for the current emulated frame. Flushed to the
     /// shared queue at [`RenderSink::frame_boundary`].
     pending_messages: Vec<ActionMessage>,
+    pending_state_actions: PendingStateActions,
 }
+
+// Toggle for Draw batching/merging. Set to false to revert.
+const ENABLE_DRAW_BATCHING: bool = false;
 
 impl RenderSink for WebSink {
     fn exec(&mut self, action: GxAction) {
+        if self.pending_state_actions.stage(&action) {
+            return;
+        }
+
+        self.pending_state_actions.flush_into(&mut self.pending_messages);
+
         let vertices = if self.scratch.len() > self.scratch_sent_len {
             self.scratch[self.scratch_sent_len..].to_vec()
         } else {
@@ -253,6 +524,21 @@ impl RenderSink for WebSink {
         };
         self.scratch_sent_len = self.scratch.len();
         let resets = backend_wgpu::sink::action_resets_vertex_scratch(&action);
+
+
+        // Skip Draw actions with vertex_count == 0 (safe Dolphin-style optimization)
+        if let GxAction::Draw(draw_data) = &action {
+            if draw_data.vertex_count == 0 {
+                // Optionally log filtered draws for debugging:
+                // web_log("[web][draw_filter] Skipped zero-vertex Draw");
+                if resets {
+                    self.scratch.clear();
+                    self.scratch_sent_len = 0;
+                }
+                return;
+            }
+        }
+
         self.pending_messages.push(ActionMessage { action, vertices });
         if resets {
             self.scratch.clear();
@@ -261,6 +547,8 @@ impl RenderSink for WebSink {
     }
 
     fn frame_boundary(&mut self) {
+        self.pending_state_actions.flush_into(&mut self.pending_messages);
+
         if self.pending_messages.is_empty() {
             return;
         }
@@ -336,6 +624,14 @@ impl EmulatorInstance {
     }
 
     #[cfg(not(feature = "web-threads"))]
+    fn dsp_batch_steps(&self) -> u64 {
+        match self {
+            Self::Gc(emulator) => emulator.dsp.batch_steps,
+            Self::Wii(emulator) => emulator.dsp.batch_steps,
+        }
+    }
+
+    #[cfg(not(feature = "web-threads"))]
     fn core_perf_take_window(&mut self) -> CorePerfSnapshot {
         match self {
             Self::Gc(emulator) => emulator.core_perf_take_window(),
@@ -343,7 +639,6 @@ impl EmulatorInstance {
         }
     }
 
-    #[cfg(not(feature = "web-threads"))]
     fn telemetry_line(&self) -> String {
         match self {
             Self::Gc(emulator) => format!(
@@ -440,7 +735,7 @@ impl State {
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
@@ -601,6 +896,10 @@ impl State {
         #[cfg(feature = "web-threads")] native_hz: f64,
         emu_ms: f64,
         action_queue: &WebSinkQueue,
+        perf_logging_enabled: bool,
+        _game_id: &str,
+        _perf_snapshot_enabled: bool,
+        _perf_snapshot_seq: &mut u64,
         #[cfg(feature = "debug")] debug_state: &mut debug_ui::DebugState,
         window: &Window,
     ) {
@@ -624,17 +923,46 @@ impl State {
             let mut s = action_queue.lock().unwrap();
             std::mem::take(&mut s.batches)
         };
-        let action_count: usize = batches.iter().map(|batch| batch.len()).sum();
-        if action_count == 0 {
-            self.empty_action_streak = self.empty_action_streak.saturating_add(1);
-        } else {
-            self.empty_action_streak = 0;
-        }
-        if self.frame_index == 1 || self.frame_index % 120 == 0 {
-            web_log(format!(
-                "[web] frame={} fps={:.1} queued_actions={} empty_action_streak={}",
-                self.frame_index, fps, action_count, self.empty_action_streak
-            ));
+        if perf_logging_enabled {
+            let action_count: usize = batches.iter().map(|batch| batch.len()).sum();
+            if action_count == 0 {
+                self.empty_action_streak = self.empty_action_streak.saturating_add(1);
+            } else {
+                self.empty_action_streak = 0;
+            }
+            let should_log_hist = action_count > 5000 || self.frame_index == 1 || self.frame_index % 120 == 0;
+            if should_log_hist {
+                use gecko::host::GxAction;
+                use std::collections::HashMap;
+                let mut hist = HashMap::<&'static str, usize>::new();
+                for batch in &batches {
+                    for msg in batch {
+                        let key = match &msg.action {
+                            GxAction::SetProjection { .. } => "SetProjection",
+                            GxAction::SetViewport(_) => "SetViewport",
+                            GxAction::SetScissor(_) => "SetScissor",
+                            GxAction::SetDepthMode(_) => "SetDepthMode",
+                            GxAction::SetBlendMode(_) => "SetBlendMode",
+                            GxAction::SetAlphaCompare(_) => "SetAlphaCompare",
+                            GxAction::SetCullMode(_) => "SetCullMode",
+                            GxAction::LoadTexture { .. } => "LoadTexture",
+                            GxAction::InvalidateCaches => "InvalidateCaches",
+                            #[cfg(not(target_arch = "wasm32"))]
+                            GxAction::DumpTextures { .. } => "DumpTextures",
+                            GxAction::SetTexture { .. } => "SetTexture",
+                            GxAction::Draw(_) => "Draw",
+                            GxAction::CopyXfb { .. } => "CopyXfb",
+                            GxAction::PresentXfb { .. } => "PresentXfb",
+                            GxAction::CopyEfbToTexture { .. } => "CopyEfbToTexture",
+                        };
+                        *hist.entry(key).or_insert(0) += 1;
+                    }
+                }
+                web_log(format!(
+                    "[web][gx_hist] frame={} queued_actions={} {:?}",
+                    self.frame_index, action_count, hist
+                ));
+            }
             if self.frame_index == 1 {
                 web_log(format!(
                     "[web][perf] logger enabled interval={}f",
@@ -644,12 +972,23 @@ impl State {
                 web_log("[web][core] sampling enabled drain_events=1/64 dsp_batch=1/64 (scaled); step_cpu timing disabled");
                 web_log(format!(
                     "[web][core] dsp_batch_size={} (target={})",
-                    gecko::scheduler::DSP_BATCH_SIZE,
+                    {
+                        #[cfg(not(feature = "web-threads"))]
+                        {
+                            emulator.dsp_batch_steps()
+                        }
+                        #[cfg(feature = "web-threads")]
+                        {
+                            gecko::scheduler::DSP_BATCH_SIZE
+                        }
+                    },
                     if cfg!(target_arch = "wasm32") { "wasm" } else { "native" }
                 ));
             }
             #[cfg(not(feature = "web-threads"))]
-            web_log(format!("[web] {}", emulator.telemetry_line()));
+            if self.frame_index == 1 || self.frame_index % 120 == 0 {
+                web_log(format!("[web] {}", emulator.telemetry_line()));
+            }
         }
         for batch in batches {
             for msg in batch {
@@ -751,55 +1090,106 @@ impl State {
 
         frame.present();
 
-        let total_ms = now_ms() - frame_start_ms;
-        self.perf_window_frames = self.perf_window_frames.saturating_add(1);
-        self.perf_emu_ms_acc += emu_ms;
-        self.perf_drain_ms_acc += drain_ms;
-        self.perf_blit_ms_acc += blit_ms;
-        self.perf_egui_ms_acc += egui_ms;
-        self.perf_total_ms_acc += total_ms;
-        if self.perf_window_frames >= PERF_LOG_INTERVAL_FRAMES {
-            let n = self.perf_window_frames as f64;
-            let emu_avg = self.perf_emu_ms_acc / n;
-            let drain_avg = self.perf_drain_ms_acc / n;
-            let blit_avg = self.perf_blit_ms_acc / n;
-            let egui_avg = self.perf_egui_ms_acc / n;
-            let total_avg = self.perf_total_ms_acc / n;
+        if perf_logging_enabled || _perf_snapshot_enabled {
+            let total_ms = now_ms() - frame_start_ms;
+            self.perf_window_frames = self.perf_window_frames.saturating_add(1);
+            self.perf_emu_ms_acc += emu_ms;
+            self.perf_drain_ms_acc += drain_ms;
+            self.perf_blit_ms_acc += blit_ms;
+            self.perf_egui_ms_acc += egui_ms;
+            self.perf_total_ms_acc += total_ms;
+            if self.perf_window_frames >= PERF_LOG_INTERVAL_FRAMES {
+                #[cfg(not(feature = "web-threads"))]
+                let core = emulator.core_perf_take_window();
 
-            #[cfg(not(feature = "web-threads"))]
-            let core = emulator.core_perf_take_window();
-
-            web_log(format!(
-                "[web][perf] {}f avg_ms total={:.3} emu={:.3} drain={:.3} blit={:.3} egui={:.3}",
-                self.perf_window_frames, total_avg, emu_avg, drain_avg, blit_avg, egui_avg
-            ));
-            #[cfg(not(feature = "web-threads"))]
-            {
-                let core_n = self.perf_window_frames as f64;
-                let est_step_ns = if core.step_cpu_calls > 0 {
-                    (core.run_interp_ms * 1_000_000.0) / core.step_cpu_calls as f64
-                } else {
-                    0.0
-                };
-                web_log(format!(
-                    "[web][core] {}f avg_ms run_interp={:.3} drain_events={:.3} dsp_batch={:.3} counts(step_cpu={}, drain_events={}, dsp_batch={}) est_step_ns={:.1}",
-                    self.perf_window_frames,
-                    core.run_interp_ms / core_n,
-                    core.drain_events_ms / core_n,
-                    core.dsp_batch_ms / core_n,
-                    core.step_cpu_calls,
-                    core.drain_events_calls,
-                    core.dsp_batch_calls,
-                    est_step_ns,
-                ));
+                if perf_logging_enabled {
+                    let n = self.perf_window_frames as f64;
+                    let emu_avg = self.perf_emu_ms_acc / n;
+                    let drain_avg = self.perf_drain_ms_acc / n;
+                    let blit_avg = self.perf_blit_ms_acc / n;
+                    let egui_avg = self.perf_egui_ms_acc / n;
+                    let total_avg = self.perf_total_ms_acc / n;
+                    web_log(format!(
+                        "[web][perf] {}f avg_ms total={:.3} emu={:.3} drain={:.3} blit={:.3} egui={:.3}",
+                        self.perf_window_frames, total_avg, emu_avg, drain_avg, blit_avg, egui_avg
+                    ));
+                }
+                #[cfg(not(feature = "web-threads"))]
+                {
+                    let core_n = self.perf_window_frames as f64;
+                    let est_instr_ns = if core.step_cpu_calls > 0 {
+                        (core.run_interp_ms * 1_000_000.0) / core.step_cpu_calls as f64
+                    } else if core.jiterp_instrs > 0 {
+                        (core.run_interp_ms * 1_000_000.0) / core.jiterp_instrs as f64
+                    } else {
+                        0.0
+                    };
+                    let fallback_top = format_top_histogram(&core.jiterp_fallback_by_op);
+                    let fallback_op19_top = format_top_histogram(&core.jiterp_fallback_op19_by_xo);
+                    let fallback_op31_top = format_top_histogram(&core.jiterp_fallback_op31_by_xo);
+                    let fallback_op63_top = format_top_histogram(&core.jiterp_fallback_op63_by_xo);
+                    let fallback_op63_xo89_top = format_top_histogram(&core.jiterp_fallback_op63_xo89_by_subop);
+                    let fast_hit_win = if core.jiterp_fast_instrs + core.jiterp_fallback_dispatches > 0 {
+                        core.jiterp_fast_instrs as f64 / (core.jiterp_fast_instrs + core.jiterp_fallback_dispatches) as f64
+                    } else {
+                        0.0
+                    };
+                    if perf_logging_enabled {
+                        web_log(format!(
+                            "[web][core] {}f avg_ms run_interp={:.3} drain_events={:.3} dsp_batch={:.3} dsp_batch_steps={} counts(step_cpu={}, drain_events={}, dsp_batch={}, drain_budget_hits={}) jiterp(blocks={}, instrs={}, fast={}, fallback={}, hit={}, miss={}, flush={}) verify(samples={}, mismatches={}) fast_hit_win={:.6} fallback_top={} fallback19_top={} fallback31_top={} fallback63_top={} fallback63_xo89_top={} est_instr_ns={:.1}",
+                            self.perf_window_frames,
+                            core.run_interp_ms / core_n,
+                            core.drain_events_ms / core_n,
+                            core.dsp_batch_ms / core_n,
+                            emulator.dsp_batch_steps(),
+                            core.step_cpu_calls,
+                            core.drain_events_calls,
+                            core.dsp_batch_calls,
+                            core.drain_budget_hits,
+                            core.jiterp_blocks,
+                            core.jiterp_instrs,
+                            core.jiterp_fast_instrs,
+                            core.jiterp_fallback_dispatches,
+                            core.jiterp_cache_hits,
+                            core.jiterp_cache_misses,
+                            core.jiterp_flushes,
+                            core.jiterp_verify_samples,
+                            core.jiterp_verify_mismatches,
+                            fast_hit_win,
+                            fallback_top,
+                            fallback_op19_top,
+                            fallback_op31_top,
+                            fallback_op63_top,
+                            fallback_op63_xo89_top,
+                            est_instr_ns,
+                        ));
+                    }
+                    if _perf_snapshot_enabled {
+                        *_perf_snapshot_seq = _perf_snapshot_seq.saturating_add(1);
+                        web_log(format!(
+                            "[web][snapshot] seq={} game={} frame={} fast_hit_win={:.6} fallback_top={} fallback19_top={} fallback31_top={} fallback63_top={} fallback63_xo89_top={} verify(samples={}, mismatches={}) est_instr_ns={:.1}",
+                            *_perf_snapshot_seq,
+                            _game_id,
+                            self.frame_index,
+                            fast_hit_win,
+                            fallback_top,
+                            fallback_op19_top,
+                            fallback_op31_top,
+                            fallback_op63_top,
+                            fallback_op63_xo89_top,
+                            core.jiterp_verify_samples,
+                            core.jiterp_verify_mismatches,
+                            est_instr_ns,
+                        ));
+                    }
+                }
+                self.perf_window_frames = 0;
+                self.perf_emu_ms_acc = 0.0;
+                self.perf_drain_ms_acc = 0.0;
+                self.perf_blit_ms_acc = 0.0;
+                self.perf_egui_ms_acc = 0.0;
+                self.perf_total_ms_acc = 0.0;
             }
-
-            self.perf_window_frames = 0;
-            self.perf_emu_ms_acc = 0.0;
-            self.perf_drain_ms_acc = 0.0;
-            self.perf_blit_ms_acc = 0.0;
-            self.perf_egui_ms_acc = 0.0;
-            self.perf_total_ms_acc = 0.0;
         }
     }
 
@@ -853,10 +1243,13 @@ enum WorkerCommand {
 }
 
 #[cfg(feature = "web-threads")]
-fn spawn_emulator_worker(mut emulator: EmulatorInstance, action_queue: WebSinkQueue, rx: Receiver<WorkerCommand>) {
-    std::thread::spawn(move || {
+fn spawn_emulator_worker(emulator: EmulatorInstance, action_queue: WebSinkQueue, rx: Receiver<WorkerCommand>) -> Result<(), EmulatorInstance> {
+    rayon::spawn(move || {
+        web_log("[web][worker] emulator worker task started");
+        let mut emulator = emulator;
         let mut input = emulator.neutral_input();
         emulator.apply_host_input(&input);
+        let perf_logging_enabled = perf_logging_enabled_from_url();
         let mut perf_frames: u64 = 0;
         let mut perf_step_ms_acc: f64 = 0.0;
         let mut perf_backpressure_hits: u64 = 0;
@@ -882,14 +1275,14 @@ fn spawn_emulator_worker(mut emulator: EmulatorInstance, action_queue: WebSinkQu
                 continue;
             }
 
-            let step_start = Instant::now();
+            let step_start_ms = Date::now();
             emulator.apply_host_input(&input);
             emulator.run_until_vsync();
             emulator.frame_boundary();
             perf_frames = perf_frames.saturating_add(1);
-            perf_step_ms_acc += step_start.elapsed().as_secs_f64() * 1000.0;
+            perf_step_ms_acc += Date::now() - step_start_ms;
 
-            if perf_frames >= PERF_LOG_INTERVAL_FRAMES {
+            if perf_logging_enabled && perf_frames >= PERF_LOG_INTERVAL_FRAMES {
                 let avg = perf_step_ms_acc / perf_frames as f64;
                 web_log(format!(
                     "[web][worker] {}f avg_step_ms={:.3} backpressure_hits={}",
@@ -901,6 +1294,81 @@ fn spawn_emulator_worker(mut emulator: EmulatorInstance, action_queue: WebSinkQu
             }
         }
     });
+
+    Ok(())
+}
+
+#[cfg(feature = "web-threads")]
+fn try_start_worker(
+    emulator: EmulatorInstance,
+    action_queue: WebSinkQueue,
+) -> (Option<Sender<WorkerCommand>>, Option<EmulatorInstance>) {
+    if !cfg!(target_feature = "atomics") {
+        web_log(
+            "[web][threading] skipping worker mode: cfg(target_feature=atomics)=false; running emulation on the main thread",
+        );
+        return (None, Some(emulator));
+    }
+
+    if !web_thread_runtime_supported() {
+        web_warn(
+            "[web][threading] worker mode unavailable at runtime (requires crossOriginIsolated=true and JS SharedArrayBuffer+Atomics); running emulation on the main thread",
+        );
+        return (None, Some(emulator));
+    }
+
+    if !worker_pool_ready() {
+        web_warn(
+            "[web][threading] worker pool not initialized; call initWorkerPool() before starting the emulator. Running emulation on the main thread",
+        );
+        return (None, Some(emulator));
+    }
+
+    let (input_tx, input_rx) = mpsc::channel();
+    match spawn_emulator_worker(emulator, action_queue, input_rx) {
+        Ok(()) => {
+            web_log("[web][threading] worker mode active");
+            (Some(input_tx), None)
+        }
+        Err(emulator) => (None, Some(emulator)),
+    }
+}
+
+#[wasm_bindgen(js_name = initWorkerPool)]
+pub async fn init_worker_pool(num_threads: usize) -> Result<(), JsValue> {
+    #[cfg(feature = "web-threads")]
+    {
+        if !web_thread_runtime_supported() {
+            web_warn(
+                "[web][threading] skipping worker pool init: runtime lacks crossOriginIsolated/SharedArrayBuffer/Atomics support",
+            );
+            return Ok(());
+        }
+
+        if worker_pool_ready() {
+            return Ok(());
+        }
+
+        let num_threads = num_threads.max(1);
+        web_log(format!(
+            "[web][threading] initializing worker pool threads={}",
+            num_threads
+        ));
+        thread_pool::init_thread_pool(num_threads).await?;
+        set_worker_pool_ready();
+        web_log(format!(
+            "[web][threading] worker pool ready threads={}",
+            num_threads
+        ));
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "web-threads"))]
+    {
+        let _ = num_threads;
+        web_log("[web][threading] initWorkerPool() is a no-op stub; browser worker-pool support is disabled");
+        Ok(())
+    }
 }
 
 struct App {
@@ -910,12 +1378,34 @@ struct App {
     native_hz: f64,
     input: HostInput,
     #[cfg(feature = "web-threads")]
-    input_tx: Sender<WorkerCommand>,
+    emulator: Option<EmulatorInstance>,
+    #[cfg(feature = "web-threads")]
+    input_tx: Option<Sender<WorkerCommand>>,
     action_queue: WebSinkQueue,
+    game_id: String,
+    perf_logging_enabled: bool,
+    perf_snapshot_enabled: bool,
+    perf_snapshot_seq: u64,
     window: Option<Arc<Window>>,
     state: SharedState,
     #[cfg(feature = "debug")]
     debug_state: debug_ui::DebugState,
+}
+
+fn perf_snapshot_enabled_from_url() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let Ok(search) = window.location().search() else {
+        return false;
+    };
+    let Ok(params) = web_sys::UrlSearchParams::new_with_str(&search) else {
+        return false;
+    };
+    if let Some(v) = params.get("perf_snapshots") {
+        return v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes");
+    }
+    false
 }
 
 impl ApplicationHandler for App {
@@ -954,7 +1444,9 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 #[cfg(feature = "web-threads")]
                 {
-                    let _ = self.input_tx.send(WorkerCommand::Stop);
+                    if let Some(input_tx) = &self.input_tx {
+                        let _ = input_tx.send(WorkerCommand::Stop);
+                    }
                 }
                 event_loop.exit();
             }
@@ -973,16 +1465,20 @@ impl ApplicationHandler for App {
                     self.emulator.apply_host_input(&self.input);
                     #[cfg(feature = "web-threads")]
                     {
-                        let _ = self.input_tx.send(WorkerCommand::Input(self.input));
+                        if let Some(input_tx) = &self.input_tx {
+                            let _ = input_tx.send(WorkerCommand::Input(self.input));
+                        } else if let Some(emulator) = &mut self.emulator {
+                            emulator.apply_host_input(&self.input);
+                        }
                     }
                 }
             }
             WindowEvent::RedrawRequested => {
                 if let Some(window) = self.window.clone() {
                     #[cfg(not(feature = "web-threads"))]
-                    let mut emu_ms = 0.0;
+                    let emu_ms;
                     #[cfg(feature = "web-threads")]
-                    let emu_ms = 0.0;
+                    let mut emu_ms = 0.0;
                     if let Some(state) = self.state.borrow_mut().as_mut() {
                         #[cfg(not(feature = "web-threads"))]
                         {
@@ -998,6 +1494,16 @@ impl ApplicationHandler for App {
                             emu_ms = now_ms() - emu_start_ms;
                         }
 
+                        #[cfg(feature = "web-threads")]
+                        if self.input_tx.is_none() {
+                            if let Some(emulator) = &mut self.emulator {
+                                let emu_start_ms = now_ms();
+                                emulator.run_until_vsync();
+                                emulator.frame_boundary();
+                                emu_ms = now_ms() - emu_start_ms;
+                            }
+                        }
+
                         state.render(
                             #[cfg(not(feature = "web-threads"))]
                             &mut self.emulator,
@@ -1005,6 +1511,10 @@ impl ApplicationHandler for App {
                             self.native_hz,
                             emu_ms,
                             &self.action_queue,
+                            self.perf_logging_enabled,
+                            &self.game_id,
+                            self.perf_snapshot_enabled,
+                            &mut self.perf_snapshot_seq,
                             #[cfg(feature = "debug")]
                             &mut self.debug_state,
                             &window,
@@ -1025,6 +1535,7 @@ fn boot_emulator_from_bytes(
     dsp_coef: Option<Vec<u8>>,
     gc_ipl: Option<Vec<u8>>,
 ) {
+    log_web_threading_mode();
     web_log(format!(
         "[web] start_emulator file='{}' bytes={} dsp_irom={} dsp_coef={} gc_ipl={}",
         filename,
@@ -1035,13 +1546,13 @@ fn boot_emulator_from_bytes(
     ));
 
     let name = filename.to_lowercase();
-    let mut emulator = if name.ends_with(".bin") || name.ends_with(".ipl") {
+    let (perf_game_id, mut emulator) = if name.ends_with(".bin") || name.ends_with(".ipl") {
         web_log("[web] boot path: GameCube IPL");
-        EmulatorInstance::Gc(GameCube::with_ipl(&rom_data, false))
+        ("gc-ipl".to_string(), EmulatorInstance::Gc(GameCube::with_ipl(&rom_data, false)))
     } else if name.ends_with(".dol") {
         web_log("[web] boot path: GameCube DOL");
         let dol = Dol::parse(rom_data);
-        EmulatorInstance::Gc(GameCube::with_image(&dol))
+        ("gc-dol".to_string(), EmulatorInstance::Gc(GameCube::with_image(&dol)))
     } else if name.ends_with(".iso") || name.ends_with(".rvz") || name.ends_with(".zip") {
         web_log("[web] boot path: Disc image");
         // RVZ currently routes through a materialized parser in image::load_dvd.
@@ -1066,20 +1577,21 @@ fn boot_emulator_from_bytes(
             header.version,
             game_name
         ));
+        let game_id = header.game_id();
         if dvd.header().is_wii() {
             web_log("[web] selected Wii apploader HLE");
-            EmulatorInstance::Wii(Wii::apploader_hle(dvd).build())
+            (game_id, EmulatorInstance::Wii(Wii::apploader_hle(dvd).build()))
         } else {
             match gc_ipl.as_ref() {
                 Some(ipl) => {
                     web_log("[web] selected GameCube real IPL boot (skip enabled)");
                     let mut emulator = GameCube::with_ipl(ipl, true);
                     emulator.insert_dvd(dvd);
-                    EmulatorInstance::Gc(emulator)
+                    (game_id, EmulatorInstance::Gc(emulator))
                 }
                 None => {
                     web_log("[web] selected GameCube IPL HLE (no GC IPL provided)");
-                    EmulatorInstance::Gc(GameCube::with_ipl_hle(dvd))
+                    (game_id, EmulatorInstance::Gc(GameCube::with_ipl_hle(dvd)))
                 }
             }
         }
@@ -1116,12 +1628,11 @@ fn boot_emulator_from_bytes(
         scratch: Vec::new(),
         scratch_sent_len: 0,
         pending_messages: Vec::new(),
+        pending_state_actions: PendingStateActions::new(),
     }));
 
     #[cfg(feature = "web-threads")]
-    let (input_tx, input_rx) = mpsc::channel();
-    #[cfg(feature = "web-threads")]
-    spawn_emulator_worker(emulator, action_queue.clone(), input_rx);
+    let (input_tx, emulator) = try_start_worker(emulator, action_queue.clone());
 
     let event_loop = EventLoop::new().unwrap();
     web_log("[web] event loop created; spawning app");
@@ -1132,8 +1643,14 @@ fn boot_emulator_from_bytes(
         native_hz,
         input,
         #[cfg(feature = "web-threads")]
+        emulator,
+        #[cfg(feature = "web-threads")]
         input_tx,
         action_queue,
+        game_id: perf_game_id,
+        perf_logging_enabled: perf_logging_enabled_from_url(),
+        perf_snapshot_enabled: perf_snapshot_enabled_from_url(),
+        perf_snapshot_seq: 0,
         window: None,
         state: Rc::new(RefCell::new(None)),
         #[cfg(feature = "debug")]
@@ -1150,6 +1667,7 @@ fn boot_emulator_from_iso_array_buffer(
     dsp_coef: Option<Vec<u8>>,
     gc_ipl: Option<Vec<u8>>,
 ) {
+    log_web_threading_mode();
     let rom_len = Uint8Array::new(&rom_data).length();
     web_log(format!(
         "[web] start_emulator ISO(JS buffer) file='{}' bytes={} dsp_irom={} dsp_coef={} gc_ipl={}",
@@ -1175,6 +1693,8 @@ fn boot_emulator_from_iso_array_buffer(
         header.version,
         game_name
     ));
+
+    let perf_game_id = header.game_id();
 
     let mut emulator = if dvd.header().is_wii() {
         web_log("[web] selected Wii apploader HLE");
@@ -1222,12 +1742,11 @@ fn boot_emulator_from_iso_array_buffer(
         scratch: Vec::new(),
         scratch_sent_len: 0,
         pending_messages: Vec::new(),
+        pending_state_actions: PendingStateActions::new(),
     }));
 
     #[cfg(feature = "web-threads")]
-    let (input_tx, input_rx) = mpsc::channel();
-    #[cfg(feature = "web-threads")]
-    spawn_emulator_worker(emulator, action_queue.clone(), input_rx);
+    let (input_tx, emulator) = try_start_worker(emulator, action_queue.clone());
 
     let event_loop = EventLoop::new().unwrap();
     web_log("[web] event loop created; spawning app");
@@ -1238,8 +1757,14 @@ fn boot_emulator_from_iso_array_buffer(
         native_hz,
         input,
         #[cfg(feature = "web-threads")]
+        emulator,
+        #[cfg(feature = "web-threads")]
         input_tx,
         action_queue,
+        game_id: perf_game_id,
+        perf_logging_enabled: perf_logging_enabled_from_url(),
+        perf_snapshot_enabled: perf_snapshot_enabled_from_url(),
+        perf_snapshot_seq: 0,
         window: None,
         state: Rc::new(RefCell::new(None)),
         #[cfg(feature = "debug")]

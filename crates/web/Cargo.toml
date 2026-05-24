@@ -8,7 +8,8 @@ crate-type = ["cdylib"]
 
 [features]
 debug = ["dep:dbglib", "dep:egui-phosphor"]
-web-threads = []
+# Browser worker-pool support was removed from the web frontend.
+# Keep the public initWorkerPool export as a no-op stub in lib.rs.
 
 [dependencies]
 gecko = { path = "../gecko", default-features = false }
@@ -21,11 +22,13 @@ winit = { version = "0.30.13", features = ["rwh_06"] }
 egui = "0.34.2"
 egui-wgpu = "0.34.2"
 egui-winit = { version = "0.34.2", default-features = false, features = ["links"] }
-wasm-bindgen = "0.2.117"
-wasm-bindgen-futures = "0.4.67"
-web-sys = { version = "0.3.94", features = [
+wasm-bindgen = "=0.2.118"
+wasm-bindgen-futures = "=0.4.68"
+web-sys = { version = "=0.3.95", features = [
     "Document",
     "Window",
+    "Location",
+    "UrlSearchParams",
     "Element",
     "HtmlCanvasElement",
     "HtmlInputElement",

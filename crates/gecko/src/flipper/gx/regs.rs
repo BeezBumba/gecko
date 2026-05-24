@@ -1135,6 +1135,7 @@ pub enum AttnFn {
 // XF 0x100E-0x1011 Channel Control
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy, Default)]
+#[derive(PartialEq, Eq)]
 pub struct ChanCtrl {
     #[bits(0)]
     pub mat_src: bool,

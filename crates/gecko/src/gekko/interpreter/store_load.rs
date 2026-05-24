@@ -26,28 +26,28 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
     match OP {
         OP_STW | OP_STWU => {
             let addr = ea_disp(ctx, ra, disp);
-            ctx.write_u32(addr, ctx.gekko.read_gpr(rs));
+            ctx.write_u32_interp(addr, ctx.gekko.read_gpr(rs));
             if OP == OP_STWU {
                 ctx.gekko.write_gpr(ra, addr);
             }
         }
         OP_STH | OP_STHU => {
             let addr = ea_disp(ctx, ra, disp);
-            ctx.write_u16(addr, ctx.gekko.read_gpr(rs) as u16);
+            ctx.write_u16_interp(addr, ctx.gekko.read_gpr(rs) as u16);
             if OP == OP_STHU {
                 ctx.gekko.write_gpr(ra, addr);
             }
         }
         OP_STB | OP_STBU => {
             let addr = ea_disp(ctx, ra, disp);
-            ctx.write_u8(addr, ctx.gekko.read_gpr(rs) as u8);
+            ctx.write_u8_interp(addr, ctx.gekko.read_gpr(rs) as u8);
             if OP == OP_STBU {
                 ctx.gekko.write_gpr(ra, addr);
             }
         }
         OP_LWZ | OP_LWZU => {
             let addr = ea_disp(ctx, ra, disp);
-            let val = ctx.read_u32(addr);
+            let val = ctx.read_u32_interp(addr);
             ctx.gekko.write_gpr(rd, val);
             if OP == OP_LWZU {
                 ctx.gekko.write_gpr(ra, addr);
@@ -55,7 +55,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
         }
         OP_LBZ | OP_LBZU => {
             let addr = ea_disp(ctx, ra, disp);
-            let val = ctx.read_u8(addr) as u32;
+            let val = ctx.read_u8_interp(addr) as u32;
             ctx.gekko.write_gpr(rd, val);
             if OP == OP_LBZU {
                 ctx.gekko.write_gpr(ra, addr);
@@ -63,7 +63,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
         }
         OP_LHZ | OP_LHZU => {
             let addr = ea_disp(ctx, ra, disp);
-            let val = ctx.read_u16(addr) as u32;
+            let val = ctx.read_u16_interp(addr) as u32;
             ctx.gekko.write_gpr(rd, val);
             if OP == OP_LHZU {
                 ctx.gekko.write_gpr(ra, addr);
@@ -71,7 +71,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
         }
         OP_LHA | OP_LHAU => {
             let addr = ea_disp(ctx, ra, disp);
-            let val = ctx.read_u16(addr) as i16 as i32 as u32;
+            let val = ctx.read_u16_interp(addr) as i16 as i32 as u32;
             ctx.gekko.write_gpr(rd, val);
             if OP == OP_LHAU {
                 ctx.gekko.write_gpr(ra, addr);
@@ -80,7 +80,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
         OP_LMW => {
             let mut addr = ea_disp(ctx, ra, disp);
             for r in rd..32 {
-                let val = ctx.read_u32(addr);
+                let val = ctx.read_u32_interp(addr);
                 ctx.gekko.write_gpr(r, val);
                 addr = addr.wrapping_add(4);
             }
@@ -89,13 +89,13 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
             let mut addr = ea_disp(ctx, ra, disp);
             for r in rs..32 {
                 let val = ctx.gekko.read_gpr(r);
-                ctx.write_u32(addr, val);
+                ctx.write_u32_interp(addr, val);
                 addr = addr.wrapping_add(4);
             }
         }
         OP_LWZX | OP_LWZUX => {
             let addr = ea_index(ctx, ra, rb);
-            let val = ctx.read_u32(addr);
+            let val = ctx.read_u32_interp(addr);
             ctx.gekko.write_gpr(rd, val);
             if OP == OP_LWZUX {
                 ctx.gekko.write_gpr(ra, addr);
@@ -103,7 +103,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
         }
         OP_LBZX | OP_LBZUX => {
             let addr = ea_index(ctx, ra, rb);
-            let val = ctx.read_u8(addr) as u32;
+            let val = ctx.read_u8_interp(addr) as u32;
             ctx.gekko.write_gpr(rd, val);
             if OP == OP_LBZUX {
                 ctx.gekko.write_gpr(ra, addr);
@@ -111,7 +111,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
         }
         OP_LHZX | OP_LHZUX => {
             let addr = ea_index(ctx, ra, rb);
-            let val = ctx.read_u16(addr) as u32;
+            let val = ctx.read_u16_interp(addr) as u32;
             ctx.gekko.write_gpr(rd, val);
             if OP == OP_LHZUX {
                 ctx.gekko.write_gpr(ra, addr);
@@ -119,7 +119,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
         }
         OP_LHAX | OP_LHAUX => {
             let addr = ea_index(ctx, ra, rb);
-            let val = ctx.read_u16(addr) as i16 as i32 as u32;
+            let val = ctx.read_u16_interp(addr) as i16 as i32 as u32;
             ctx.gekko.write_gpr(rd, val);
             if OP == OP_LHAUX {
                 ctx.gekko.write_gpr(ra, addr);
@@ -127,42 +127,42 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
         }
         OP_STWX | OP_STWUX => {
             let addr = ea_index(ctx, ra, rb);
-            ctx.write_u32(addr, ctx.gekko.read_gpr(rs));
+            ctx.write_u32_interp(addr, ctx.gekko.read_gpr(rs));
             if OP == OP_STWUX {
                 ctx.gekko.write_gpr(ra, addr);
             }
         }
         OP_STBX | OP_STBUX => {
             let addr = ea_index(ctx, ra, rb);
-            ctx.write_u8(addr, ctx.gekko.read_gpr(rs) as u8);
+            ctx.write_u8_interp(addr, ctx.gekko.read_gpr(rs) as u8);
             if OP == OP_STBUX {
                 ctx.gekko.write_gpr(ra, addr);
             }
         }
         OP_STHX | OP_STHUX => {
             let addr = ea_index(ctx, ra, rb);
-            ctx.write_u16(addr, ctx.gekko.read_gpr(rs) as u16);
+            ctx.write_u16_interp(addr, ctx.gekko.read_gpr(rs) as u16);
             if OP == OP_STHUX {
                 ctx.gekko.write_gpr(ra, addr);
             }
         }
         OP_LWBRX => {
             let addr = ea_index(ctx, ra, rb);
-            let val = ctx.read_u32(addr).swap_bytes();
+            let val = ctx.read_u32_interp(addr).swap_bytes();
             ctx.gekko.write_gpr(rd, val);
         }
         OP_LHBRX => {
             let addr = ea_index(ctx, ra, rb);
-            let val = ctx.read_u16(addr).swap_bytes() as u32;
+            let val = ctx.read_u16_interp(addr).swap_bytes() as u32;
             ctx.gekko.write_gpr(rd, val);
         }
         OP_STWBRX => {
             let addr = ea_index(ctx, ra, rb);
-            ctx.write_u32(addr, ctx.gekko.read_gpr(rs).swap_bytes());
+            ctx.write_u32_interp(addr, ctx.gekko.read_gpr(rs).swap_bytes());
         }
         OP_STHBRX => {
             let addr = ea_index(ctx, ra, rb);
-            ctx.write_u16(addr, (ctx.gekko.read_gpr(rs) as u16).swap_bytes());
+            ctx.write_u16_interp(addr, (ctx.gekko.read_gpr(rs) as u16).swap_bytes());
         }
         _ => todo!("Store/Load instruction with OP = {OP:#x}"),
     }
@@ -171,7 +171,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
 #[inline(always)]
 pub fn lwarx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     let addr = ea_index(ctx, instr.ra(), instr.rb());
-    let val = ctx.read_u32(addr);
+    let val = ctx.read_u32_interp(addr);
     ctx.gekko.write_gpr(instr.rd(), val);
     ctx.gekko.reserve_addr = addr;
 }
@@ -182,7 +182,7 @@ pub fn stwcx_dot<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instru
     let so = ctx.gekko.spr.xer.summary_overflow();
     let store_performed = ctx.gekko.reserve_addr == addr;
     if store_performed {
-        ctx.write_u32(addr, ctx.gekko.read_gpr(instr.rs()));
+        ctx.write_u32_interp(addr, ctx.gekko.read_gpr(instr.rs()));
         ctx.gekko.reserve_addr = crate::gekko::Gekko::NO_RESERVATION;
         ctx.gekko.cr.set_cr0(ConditionField::new().with_eq(true).with_so(so));
     } else {
@@ -292,7 +292,7 @@ pub fn lswx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction
             r = (r + 1) & 31;
             reg_val = 0;
         }
-        let byte = ctx.read_u8(addr) as u32;
+        let byte = ctx.read_u8_interp(addr) as u32;
         reg_val |= byte << (24 - shift);
         shift += 8;
         if shift == 32 {
@@ -325,7 +325,7 @@ pub fn stswx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instructio
             reg_val = ctx.gekko.read_gpr(r as u8);
         }
         let byte = (reg_val >> (24 - shift)) as u8;
-        ctx.write_u8(addr, byte);
+        ctx.write_u8_interp(addr, byte);
         shift += 8;
         if shift == 32 {
             shift = 0;
@@ -349,7 +349,7 @@ pub fn lswi<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction
             r = (r + 1) & 31;
             reg_val = 0;
         }
-        let byte = ctx.read_u8(addr) as u32;
+        let byte = ctx.read_u8_interp(addr) as u32;
         reg_val |= byte << (24 - shift);
         shift += 8;
         if shift == 32 {
@@ -380,7 +380,7 @@ pub fn stswi<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instructio
             reg_val = ctx.gekko.read_gpr(r as u8);
         }
         let byte = (reg_val >> (24 - shift)) as u8;
-        ctx.write_u8(addr, byte);
+        ctx.write_u8_interp(addr, byte);
         shift += 8;
         if shift == 32 {
             shift = 0;

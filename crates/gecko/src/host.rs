@@ -26,6 +26,7 @@ impl TextureKey {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub enum GxAction {
     // XF
     SetProjection {
@@ -149,13 +150,13 @@ pub struct XfbPart {
     pub offset_y: u32,
 }
 
-/// Per-draw data: primitive type, vertex range, modelview transform,
-/// and TEV/lighting configuration (snapshotted at draw time since TEV is
-/// built up incrementally via BP writes). Vertices live in the renderer's
-/// scratch buffer (see [`RenderSink::vertex_scratch`]); `base_vertex` is
-/// the index into that buffer where this draw's vertices start and
-/// `vertex_count` is how many of them belong to this draw.
-#[derive(Debug, Default)]
+// Per-draw data: primitive type, vertex range, modelview transform,
+// and TEV/lighting configuration (snapshotted at draw time since TEV is
+// built up incrementally via BP writes). Vertices live in the renderer's
+// scratch buffer (see [`RenderSink::vertex_scratch`]); `base_vertex` is
+// the index into that buffer where this draw's vertices start and
+// `vertex_count` is how many of them belong to this draw.
+#[derive(Debug, Default, Clone)]
 pub struct DrawData {
     pub primitive: Primitive,
     pub base_vertex: u32,
@@ -206,6 +207,7 @@ pub struct DrawVertex {
 
 /// Per-light snapshot for the draw call.
 #[derive(Debug, Clone, Copy, Default)]
+#[derive(PartialEq)]
 pub struct LightData {
     pub color: [f32; 4],
     pub cosatt: [f32; 4],
