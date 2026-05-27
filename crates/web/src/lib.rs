@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io::{Read, Seek, SeekFrom};
 use std::rc::Rc;
 #[cfg(feature = "web-threads")]
@@ -194,27 +195,90 @@ fn format_top_histogram(histogram: &[u64]) -> String {
 
 const ROM_CHUNK_SIZE_BYTES: usize = 4 * 1024 * 1024;
 const PERF_LOG_INTERVAL_FRAMES: u64 = 30;
+const GX_DRAIN_BUDGET_UNITS_DEFAULT: usize = 12_000;
+const GX_DRAIN_BUDGET_UNITS_MIN: usize = 2_000;
+const GX_DRAIN_BUDGET_UNITS_MAX_DEFAULT: usize = 48_000;
+const GX_DRAIN_BUDGET_ADAPT_STEP_DEFAULT: usize = 1_000;
 
-fn perf_logging_enabled_from_url() -> bool {
-    let Some(window) = web_sys::window() else {
-        return false;
-    };
-    let Ok(search) = window.location().search() else {
-        return false;
-    };
-    let Ok(params) = web_sys::UrlSearchParams::new_with_str(&search) else {
-        return false;
-    };
+fn url_search_params() -> Option<web_sys::UrlSearchParams> {
+    let window = web_sys::window()?;
+    let search = window.location().search().ok()?;
+    web_sys::UrlSearchParams::new_with_str(&search).ok()
+}
 
-    for key in ["perf_logs", "perf", "debug_logs"] {
+fn bool_param_from_url(keys: &[&str]) -> Option<bool> {
+    let params = url_search_params()?;
+    for &key in keys {
         if let Some(v) = params.get(key) {
             if v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes") {
-                return true;
+                return Some(true);
+            }
+            if v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("no") {
+                return Some(false);
             }
         }
     }
+    None
+}
 
-    false
+fn usize_param_from_url(keys: &[&str], min: usize, max: usize) -> Option<usize> {
+    let params = url_search_params()?;
+    for &key in keys {
+        if let Some(v) = params.get(key) {
+            if let Ok(parsed) = v.parse::<usize>() {
+                return Some(parsed.clamp(min, max));
+            }
+        }
+    }
+    None
+}
+
+fn perf_logging_enabled_from_url() -> bool {
+    bool_param_from_url(&["perf_logs", "perf", "debug_logs"]).unwrap_or(false)
+}
+
+fn gx_drain_budget_initial_from_url() -> usize {
+    usize_param_from_url(
+        &["gx_budget", "gx_drain_budget"],
+        GX_DRAIN_BUDGET_UNITS_MIN,
+        GX_DRAIN_BUDGET_UNITS_MAX_DEFAULT,
+    )
+    .unwrap_or(GX_DRAIN_BUDGET_UNITS_DEFAULT)
+}
+
+fn gx_drain_budget_max_from_url(initial: usize) -> usize {
+    usize_param_from_url(
+        &["gx_budget_max", "gx_drain_budget_max"],
+        initial,
+        GX_DRAIN_BUDGET_UNITS_MAX_DEFAULT,
+    )
+    .unwrap_or(GX_DRAIN_BUDGET_UNITS_MAX_DEFAULT.max(initial))
+}
+
+fn gx_drain_budget_adaptive_from_url() -> bool {
+    bool_param_from_url(&["gx_budget_adaptive", "gx_drain_budget_adaptive"]).unwrap_or(true)
+}
+
+fn gx_drain_budget_step_from_url() -> usize {
+    usize_param_from_url(
+        &["gx_budget_step", "gx_drain_budget_step"],
+        100,
+        4_000,
+    )
+    .unwrap_or(GX_DRAIN_BUDGET_ADAPT_STEP_DEFAULT)
+}
+
+fn gx_action_cost_units(action: &GxAction) -> usize {
+    match action {
+        GxAction::Draw(_) => 4,
+        GxAction::CopyXfb { .. } | GxAction::PresentXfb { .. } | GxAction::CopyEfbToTexture { .. } => 8,
+        GxAction::LoadTexture { .. } => 6,
+        GxAction::SetTexture { .. } => 2,
+        GxAction::InvalidateCaches => 2,
+        #[cfg(not(target_arch = "wasm32"))]
+        GxAction::DumpTextures { .. } => 2,
+        _ => 1,
+    }
 }
 
 struct JsArrayReader {
@@ -483,7 +547,7 @@ impl PendingStateActions {
 }
 
 struct WebSinkShared {
-    batches: Vec<Vec<ActionMessage>>,
+    actions: VecDeque<ActionMessage>,
 }
 
 type WebSinkQueue = Arc<Mutex<WebSinkShared>>;
@@ -505,9 +569,6 @@ struct WebSink {
     pending_messages: Vec<ActionMessage>,
     pending_state_actions: PendingStateActions,
 }
-
-// Toggle for Draw batching/merging. Set to false to revert.
-const ENABLE_DRAW_BATCHING: bool = false;
 
 impl RenderSink for WebSink {
     fn exec(&mut self, action: GxAction) {
@@ -553,7 +614,7 @@ impl RenderSink for WebSink {
             return;
         }
         let mut s = self.shared.lock().unwrap();
-        s.batches.push(std::mem::take(&mut self.pending_messages));
+        s.actions.extend(std::mem::take(&mut self.pending_messages));
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
@@ -715,6 +776,10 @@ struct State {
     perf_blit_ms_acc: f64,
     perf_egui_ms_acc: f64,
     perf_total_ms_acc: f64,
+    gx_drain_budget_units: usize,
+    gx_drain_budget_units_max: usize,
+    gx_drain_budget_adaptive: bool,
+    gx_drain_budget_step: usize,
 }
 
 fn now_ms() -> f64 {
@@ -856,6 +921,10 @@ impl State {
         let egui_winit = egui_winit::State::new(egui_ctx.clone(), ViewportId::ROOT, window.as_ref(), None, None, None);
 
         let now = now_ms();
+        let gx_drain_budget_units = gx_drain_budget_initial_from_url();
+        let gx_drain_budget_units_max = gx_drain_budget_max_from_url(gx_drain_budget_units);
+        let gx_drain_budget_adaptive = gx_drain_budget_adaptive_from_url();
+        let gx_drain_budget_step = gx_drain_budget_step_from_url();
 
         State {
             surface,
@@ -879,6 +948,10 @@ impl State {
             perf_blit_ms_acc: 0.0,
             perf_egui_ms_acc: 0.0,
             perf_total_ms_acc: 0.0,
+            gx_drain_budget_units,
+            gx_drain_budget_units_max,
+            gx_drain_budget_adaptive,
+            gx_drain_budget_step,
         }
     }
 
@@ -919,54 +992,94 @@ impl State {
 
         // Drain queued action messages.
         let drain_start_ms = now_ms();
-        let batches: Vec<Vec<ActionMessage>> = {
+        let (queued_before_drain, drained_cost_units, actions): (usize, usize, Vec<ActionMessage>) = {
             let mut s = action_queue.lock().unwrap();
-            std::mem::take(&mut s.batches)
+            let queued = s.actions.len();
+            let mut drained = Vec::new();
+            let mut used_units = 0usize;
+            while let Some(front) = s.actions.front() {
+                let next_units = gx_action_cost_units(&front.action);
+                // Keep strict ordering. We always drain at least one action when available.
+                if !drained.is_empty() && used_units.saturating_add(next_units) > self.gx_drain_budget_units {
+                    break;
+                }
+                let next = s.actions.pop_front().expect("front action disappeared");
+                used_units = used_units.saturating_add(next_units);
+                drained.push(next);
+            }
+            (queued, used_units, drained)
         };
         if perf_logging_enabled {
-            let action_count: usize = batches.iter().map(|batch| batch.len()).sum();
+            let action_count = actions.len();
             if action_count == 0 {
                 self.empty_action_streak = self.empty_action_streak.saturating_add(1);
             } else {
                 self.empty_action_streak = 0;
+            }
+            let queued_after_drain = queued_before_drain.saturating_sub(action_count);
+            if queued_after_drain > 0
+                && (self.frame_index % 60 == 0
+                    || queued_after_drain > self.gx_drain_budget_units)
+            {
+                web_log(format!(
+                    "[web][gx_backlog] frame={} queued_before={} drained={} queued_after={} budget_units={} drained_units={} adaptive={}",
+                    self.frame_index,
+                    queued_before_drain,
+                    action_count,
+                    queued_after_drain,
+                    self.gx_drain_budget_units,
+                    drained_cost_units,
+                    self.gx_drain_budget_adaptive,
+                ));
             }
             let should_log_hist = action_count > 5000 || self.frame_index == 1 || self.frame_index % 120 == 0;
             if should_log_hist {
                 use gecko::host::GxAction;
                 use std::collections::HashMap;
                 let mut hist = HashMap::<&'static str, usize>::new();
-                for batch in &batches {
-                    for msg in batch {
-                        let key = match &msg.action {
-                            GxAction::SetProjection { .. } => "SetProjection",
-                            GxAction::SetViewport(_) => "SetViewport",
-                            GxAction::SetScissor(_) => "SetScissor",
-                            GxAction::SetDepthMode(_) => "SetDepthMode",
-                            GxAction::SetBlendMode(_) => "SetBlendMode",
-                            GxAction::SetAlphaCompare(_) => "SetAlphaCompare",
-                            GxAction::SetCullMode(_) => "SetCullMode",
-                            GxAction::LoadTexture { .. } => "LoadTexture",
-                            GxAction::InvalidateCaches => "InvalidateCaches",
-                            #[cfg(not(target_arch = "wasm32"))]
-                            GxAction::DumpTextures { .. } => "DumpTextures",
-                            GxAction::SetTexture { .. } => "SetTexture",
-                            GxAction::Draw(_) => "Draw",
-                            GxAction::CopyXfb { .. } => "CopyXfb",
-                            GxAction::PresentXfb { .. } => "PresentXfb",
-                            GxAction::CopyEfbToTexture { .. } => "CopyEfbToTexture",
-                        };
-                        *hist.entry(key).or_insert(0) += 1;
-                    }
+                for msg in &actions {
+                    let key = match &msg.action {
+                        GxAction::SetProjection { .. } => "SetProjection",
+                        GxAction::SetViewport(_) => "SetViewport",
+                        GxAction::SetScissor(_) => "SetScissor",
+                        GxAction::SetDepthMode(_) => "SetDepthMode",
+                        GxAction::SetBlendMode(_) => "SetBlendMode",
+                        GxAction::SetAlphaCompare(_) => "SetAlphaCompare",
+                        GxAction::SetCullMode(_) => "SetCullMode",
+                        GxAction::LoadTexture { .. } => "LoadTexture",
+                        GxAction::InvalidateCaches => "InvalidateCaches",
+                        #[cfg(not(target_arch = "wasm32"))]
+                        GxAction::DumpTextures { .. } => "DumpTextures",
+                        GxAction::SetTexture { .. } => "SetTexture",
+                        GxAction::Draw(_) => "Draw",
+                        GxAction::CopyXfb { .. } => "CopyXfb",
+                        GxAction::PresentXfb { .. } => "PresentXfb",
+                        GxAction::CopyEfbToTexture { .. } => "CopyEfbToTexture",
+                    };
+                    *hist.entry(key).or_insert(0) += 1;
                 }
                 web_log(format!(
-                    "[web][gx_hist] frame={} queued_actions={} {:?}",
-                    self.frame_index, action_count, hist
+                    "[web][gx_hist] frame={} drained_actions={} drained_units={} queued_before={} queued_after={} budget_units={} {:?}",
+                    self.frame_index,
+                    action_count,
+                    drained_cost_units,
+                    queued_before_drain,
+                    queued_after_drain,
+                    self.gx_drain_budget_units,
+                    hist
                 ));
             }
             if self.frame_index == 1 {
                 web_log(format!(
                     "[web][perf] logger enabled interval={}f",
                     PERF_LOG_INTERVAL_FRAMES
+                ));
+                web_log(format!(
+                    "[web][gx_budget] initial_units={} max_units={} adaptive={} step={}",
+                    self.gx_drain_budget_units,
+                    self.gx_drain_budget_units_max,
+                    self.gx_drain_budget_adaptive,
+                    self.gx_drain_budget_step
                 ));
                 #[cfg(not(feature = "web-threads"))]
                 web_log("[web][core] sampling enabled drain_events=1/64 dsp_batch=1/64 (scaled); step_cpu timing disabled");
@@ -990,18 +1103,30 @@ impl State {
                 web_log(format!("[web] {}", emulator.telemetry_line()));
             }
         }
-        for batch in batches {
-            for msg in batch {
-                self.queued_vertices.extend_from_slice(&msg.vertices);
-                self.gx_renderer.process_action_with_external_scratch(
-                    &self.device,
-                    &self.queue,
-                    &msg.action,
-                    &mut self.queued_vertices,
-                );
-            }
+        let drained_action_count = actions.len();
+        for msg in actions {
+            self.queued_vertices.extend_from_slice(&msg.vertices);
+            self.gx_renderer.process_action_with_external_scratch(
+                &self.device,
+                &self.queue,
+                &msg.action,
+                &mut self.queued_vertices,
+            );
         }
         let drain_ms = now_ms() - drain_start_ms;
+
+        if self.gx_drain_budget_adaptive {
+            let queued_after_drain = queued_before_drain.saturating_sub(drained_action_count);
+            if queued_after_drain > 0 {
+                self.gx_drain_budget_units = (self.gx_drain_budget_units + self.gx_drain_budget_step)
+                    .min(self.gx_drain_budget_units_max);
+            } else if drain_ms > 3.0 {
+                self.gx_drain_budget_units = self
+                    .gx_drain_budget_units
+                    .saturating_sub(self.gx_drain_budget_step)
+                    .max(GX_DRAIN_BUDGET_UNITS_MIN);
+            }
+        }
 
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -1267,9 +1392,9 @@ fn spawn_emulator_worker(emulator: EmulatorInstance, action_queue: WebSinkQueue,
             // Keep queued render work bounded to avoid unbounded backlog growth.
             let backlog = {
                 let s = action_queue.lock().unwrap();
-                s.batches.len()
+                s.actions.len()
             };
-            if backlog > 2 {
+            if backlog > GX_DRAIN_ACTION_BUDGET_PER_FRAME * 2 {
                 perf_backpressure_hits = perf_backpressure_hits.saturating_add(1);
                 std::thread::yield_now();
                 continue;
@@ -1621,7 +1746,7 @@ fn boot_emulator_from_bytes(
 
     // Install the WebSink as the emulator's render sink.
     let action_queue: WebSinkQueue = Arc::new(Mutex::new(WebSinkShared {
-        batches: Vec::new(),
+        actions: VecDeque::new(),
     }));
     emulator.set_render_sink(Box::new(WebSink {
         shared: action_queue.clone(),
@@ -1735,7 +1860,7 @@ fn boot_emulator_from_iso_array_buffer(
     };
 
     let action_queue: WebSinkQueue = Arc::new(Mutex::new(WebSinkShared {
-        batches: Vec::new(),
+        actions: VecDeque::new(),
     }));
     emulator.set_render_sink(Box::new(WebSink {
         shared: action_queue.clone(),
