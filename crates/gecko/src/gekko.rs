@@ -1,4 +1,5 @@
 pub mod condition;
+pub mod cycles;
 pub mod dec;
 pub mod fpscr;
 #[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]

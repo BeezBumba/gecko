@@ -5,6 +5,7 @@ use crate::system::{System, SystemId};
 
 #[inline(always)]
 pub fn mcrxr<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_MCRXR) as u64;
     let xer = ctx.gekko.spr.xer;
     let field = ConditionField::new()
         .with_lt(xer.summary_overflow())
@@ -17,6 +18,7 @@ pub fn mcrxr<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instructio
 
 #[inline(always)]
 pub fn cr_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     match OP {
         OP_MTCRF => {
             let crm = instr.crm();

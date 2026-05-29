@@ -1,15 +1,40 @@
-name: Release
+name: Nightly
 
 on:
-  push:
-    branches: [master]
+  schedule:
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      dev_sha: ${{ steps.check.outputs.dev_sha }}
+    steps:
+      - id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DEV_SHA=$(gh api "repos/${{ github.repository }}/commits/dev" -q .sha)
+          NIGHTLY_SHA=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" -q .object.sha 2>/dev/null || echo "")
+          echo "dev HEAD:     $DEV_SHA"
+          echo "nightly tag:  ${NIGHTLY_SHA:-<none>}"
+          echo "dev_sha=$DEV_SHA" >> "$GITHUB_OUTPUT"
+          if [ -n "$NIGHTLY_SHA" ] && [ "$DEV_SHA" = "$NIGHTLY_SHA" ]; then
+            echo "No new commits on dev since last nightly. Skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +56,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: dev
 
       - name: Init submodules
         run: git submodule update --init --depth 1 --recursive submodules/chipi-spec submodules/solstice
@@ -72,16 +99,6 @@ jobs:
       - name: Build debugger + multitool + gecko-app + tinyapp (dev profile, with tracing output)
         run: cargo build --profile dev --target ${{ matrix.target }} -p debugger -p multitool -p gecko-app -p tinyapp
 
-      # - name: Patch chipi dispatch strategy (tinyapp only)
-      #   shell: bash
-      #   run: perl -pi -e 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/spec/*.bindings.chipi
-
-      # - name: Build tinyapp (release)
-      #   run: cargo build --release --package tinyapp --target ${{ matrix.target }}
-
-      # - name: Build tinyapp (dev profile, with tracing output)
-      #   run: cargo build --profile dev --package tinyapp --target ${{ matrix.target }}
-
       - name: Package artifacts
         shell: bash
         run: |
@@ -110,9 +127,8 @@ jobs:
           path: artifacts/*
 
   release:
-    needs: build
+    needs: [check, build]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
 
     steps:
       - uses: actions/download-artifact@v4
@@ -120,10 +136,22 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create release
+      - name: Delete previous nightly release and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete nightly --cleanup-tag --yes --repo ${{ github.repository }} || true
+
+      - name: Create nightly release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.sha }}
-          name: Build ${{ github.sha }}
-          generate_release_notes: true
+          tag_name: nightly
+          target_commitish: ${{ needs.check.outputs.dev_sha }}
+          name: Nightly (dev)
+          prerelease: true
+          body: |
+            Rolling nightly build of the `dev` branch.
+
+            Commit: ${{ needs.check.outputs.dev_sha }}
+            Built: ${{ github.run_id }}
           files: artifacts/*

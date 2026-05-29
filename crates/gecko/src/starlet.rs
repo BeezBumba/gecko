@@ -191,6 +191,10 @@ impl System<{ crate::WII }> {
 
 pub fn dispatch_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: u32) {
     let result = self::process_command(sys, cmd_paddr);
+    if result == crate::hollywood::ipc::IPC_HUNG {
+        crate::hollywood::ipc::deliver_ack(sys);
+        return;
+    }
     sys.starlet.pending.push_back(PendingResponse { cmd_paddr, result });
     self::ensure_delivery_scheduled::<SYSTEM>(sys, FINALIZE_DELAY_US);
 }

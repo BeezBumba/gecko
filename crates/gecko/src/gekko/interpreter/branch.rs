@@ -44,6 +44,7 @@ fn eval_bo<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, bo: u8, bi: u8) -> 
 
 #[inline(always)]
 pub fn branch<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     match OP {
         OP_BX => {
             ctx.gekko.nia = if instr.aa() {

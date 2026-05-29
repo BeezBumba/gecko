@@ -34,6 +34,7 @@ const FPSCR_ANY_X: u32 = FPSCR_OX
 
 #[inline(always)]
 pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     if !ctx.check_fp_available() {
         return;
     }

@@ -5,6 +5,7 @@ use crate::system::{System, SystemId};
 
 #[inline(always)]
 pub fn msr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     match OP {
         OP_MTMSR => {
             ctx.gekko.msr = crate::gekko::msr::Msr::from(ctx.gekko.read_gpr(instr.rs()));
@@ -24,6 +25,7 @@ pub fn msr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
 
 #[inline(always)]
 pub fn spr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     match OP {
         OP_MTSPR => {
             let spr_num = instr.spr_swapped();
@@ -77,6 +79,7 @@ pub fn spr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
 
 #[inline(always)]
 pub fn segment<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     match OP {
         OP_MTSR => {
             ctx.gekko.sr[instr.sr() as usize] = Sr::from_raw(ctx.gekko.read_gpr(instr.rs()));
@@ -90,18 +93,21 @@ pub fn segment<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, 
 
 #[inline(always)]
 pub fn mtsrin<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_MTSRIN) as u64;
     let sr_idx = (ctx.gekko.read_gpr(instr.rb()) >> 28) as usize;
     ctx.gekko.sr[sr_idx] = Sr::from_raw(ctx.gekko.read_gpr(instr.rs()));
 }
 
 #[inline(always)]
 pub fn mfsrin<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_MFSRIN) as u64;
     let sr_idx = (ctx.gekko.read_gpr(instr.rb()) >> 28) as usize;
     ctx.gekko.write_gpr(instr.rd(), ctx.gekko.sr[sr_idx].raw());
 }
 
 #[inline(always)]
 pub fn mftb<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_MFTB) as u64;
     let tbr = instr.spr_swapped();
     let val = match tbr {
         268 => ctx.scheduler.timebase_lower(),
@@ -113,6 +119,7 @@ pub fn mftb<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction
 
 #[inline(always)]
 pub fn twi<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_TWI) as u64;
     let a = ctx.gekko.read_gpr(instr.ra()) as i32;
     let simm = instr.simm();
     let to = instr.to();
@@ -130,6 +137,7 @@ pub fn twi<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction)
 
 #[inline(always)]
 pub fn tw<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_TW) as u64;
     let a = ctx.gekko.read_gpr(instr.ra()) as i32;
     let b = ctx.gekko.read_gpr(instr.rb()) as i32;
     let to = instr.to();
@@ -146,9 +154,12 @@ pub fn tw<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) 
 }
 
 #[inline(always)]
-pub fn nop<const OP: u32, const SYSTEM: SystemId>(_ctx: &mut System<SYSTEM>, _instr: Instruction) {}
+pub fn nop<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, _instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
+}
 
 #[inline(always)]
 pub fn sc<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, _instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_SC) as u64;
     ctx.cause_syscall_interrupt();
 }

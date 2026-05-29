@@ -47,7 +47,7 @@ impl<'a> ChainContext<'a> {
     }
 }
 
-pub(crate) const CYCLES_PER_INSTR: i64 = 2;
+pub(crate) const DEFAULT_CYCLES: i64 = crate::gekko::cycles::DEFAULT_CYCLES;
 
 #[allow(dead_code)]
 pub(crate) struct LocalFuncs {
@@ -100,6 +100,7 @@ pub struct JitTranslator {
     pub chained: bool,
     pub last_terminator_nia: Option<Value>,
     pub handled_natively: bool,
+    pub op_cycles: i64,
 }
 
 pub fn translate<const SYSTEM: SystemId>(
@@ -206,7 +207,8 @@ pub fn translate<const SYSTEM: SystemId>(
 
         let cyc_val = builder.ins().load(types::I64, vmctx_flags(), ctx_ptr, cyc_off);
         let ctr_64 = builder.ins().uextend(types::I64, ctr_val);
-        let per_iter = builder.ins().iconst(types::I64, 3 * CYCLES_PER_INSTR);
+        let per_iter_cycles = pointer_iter_loop_cycles_per_iter(&spec.instrs);
+        let per_iter = builder.ins().iconst(types::I64, per_iter_cycles);
         let cyc_delta = builder.ins().imul(ctr_64, per_iter);
         let new_cyc = builder.ins().iadd(cyc_val, cyc_delta);
         builder.ins().store(vmctx_flags(), new_cyc, ctx_ptr, cyc_off);
@@ -245,6 +247,7 @@ pub fn translate<const SYSTEM: SystemId>(
         chained: false,
         last_terminator_nia: None,
         handled_natively: false,
+        op_cycles: DEFAULT_CYCLES,
     };
 
     for (i, &word) in spec.instrs.iter().enumerate() {
@@ -255,19 +258,22 @@ pub fn translate<const SYSTEM: SystemId>(
         t.pc = pc;
         t.is_terminator = is_terminator;
         t.handled_natively = false;
+        t.op_cycles = DEFAULT_CYCLES;
         let chained_before = t.chained;
 
         if is_terminator {
-            let total = pending_cycles + CYCLES_PER_INSTR;
+            let term_cycles = terminator_op_cycles(spec.terminator, instr);
+            let total = pending_cycles + term_cycles;
             emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, total);
             pending_cycles = 0;
+            t.op_cycles = term_cycles;
         }
 
         super::dispatch::<SYSTEM>(&mut t, instr);
 
         if t.handled_natively {
             if !is_terminator && (!t.chained || chained_before) {
-                pending_cycles += CYCLES_PER_INSTR;
+                pending_cycles += t.op_cycles;
             }
 
             if t.chained && !chained_before {
@@ -290,7 +296,7 @@ pub fn translate<const SYSTEM: SystemId>(
                 .call(local.cause_invalid_opcode, &[ctx_ptr, raw_const, pc_const]);
             let nia = builder.inst_results(call)[0];
 
-            emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, CYCLES_PER_INSTR);
+            emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, DEFAULT_CYCLES);
 
             if is_terminator {
                 last_terminator_nia = Some(nia);
@@ -1681,6 +1687,49 @@ pub(crate) enum LogicalOp {
     Xor,
 }
 
+fn pointer_iter_loop_cycles_per_iter(instrs: &[u32]) -> i64 {
+    use crate::gekko::cycles::{DEFAULT_CYCLES, cycles_for_op};
+    use crate::gekko::lut::{OP_DCBA, OP_DCBF, OP_DCBI, OP_DCBST, OP_DCBT, OP_DCBTST, OP_DCBZ, OP_ICBI};
+
+    let cache = instrs.first().copied().map(Instruction).map(|i| i.xo10()).unwrap_or(0);
+    let cache_op = match cache {
+        86 => OP_DCBF,
+        470 => OP_DCBI,
+        54 => OP_DCBST,
+        278 => OP_DCBT,
+        246 => OP_DCBTST,
+        1014 => OP_DCBZ,
+        982 => OP_ICBI,
+        758 => OP_DCBA,
+        _ => return 3 * DEFAULT_CYCLES,
+    };
+
+    cycles_for_op(cache_op) + 2 * DEFAULT_CYCLES
+}
+
+fn terminator_op_cycles(terminator: TermKind, instr: Instruction) -> i64 {
+    use crate::gekko::cycles::cycles_for_op;
+    use crate::gekko::lut::{OP_BCCTRX, OP_BCLRX, OP_BCX, OP_BX, OP_ISYNC, OP_MTMSR, OP_MTSPR, OP_RFI, OP_SC};
+    let op = match terminator {
+        TermKind::Branch => OP_BX,
+        TermKind::BranchCond => OP_BCX,
+        TermKind::BranchToReg => {
+            if instr.xo10() == 16 {
+                OP_BCLRX
+            } else {
+                OP_BCCTRX
+            }
+        }
+        TermKind::SystemCall => OP_SC,
+        TermKind::Rfi => OP_RFI,
+        TermKind::Mtmsr => OP_MTMSR,
+        TermKind::Mtspr => OP_MTSPR,
+        TermKind::Isync => OP_ISYNC,
+        TermKind::LengthCap => return crate::gekko::cycles::DEFAULT_CYCLES,
+    };
+    cycles_for_op(op)
+}
+
 fn terminator_fall_pc(spec: &BlockSpec) -> Option<u32> {
     let last_idx = spec.instrs.len().checked_sub(1)?;
     let pc = spec.pc_of(last_idx);
@@ -2649,6 +2698,7 @@ pub(crate) fn emit_msr_fp_guard<const SYSTEM: SystemId>(
     pc: u32,
     exit_block: Block,
     local: &LocalFuncs,
+    op_cycles: i64,
 ) {
     if local.fp_guard_emitted.get() {
         return;
@@ -2675,7 +2725,7 @@ pub(crate) fn emit_msr_fp_guard<const SYSTEM: SystemId>(
     let pc_plus4 = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
     builder.ins().store(vmctx_flags(), pc_plus4, ctx_ptr, nia_off);
     let nia = emit_exception_dispatch::<SYSTEM>(builder, ctx_ptr, pc_const, 0, 0x0000_0800);
-    emit_cycles_add::<SYSTEM>(builder, ctx_ptr, CYCLES_PER_INSTR);
+    emit_cycles_add::<SYSTEM>(builder, ctx_ptr, op_cycles);
     builder.ins().jump(exit_block, &[nia.into()]);
 
     builder.switch_to_block(cont_block);

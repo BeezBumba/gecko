@@ -5,6 +5,7 @@ use crate::system::{System, SystemId};
 
 #[inline(always)]
 pub fn ps_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     if !ctx.check_fp_available() {
         return;
     }
