@@ -19,6 +19,7 @@ fn add_overflow(a: u32, b: u32, result: u32) -> bool {
 
 #[inline(always)]
 pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     match OP {
         OP_ADDX => {
             let a = ctx.gekko.read_gpr(instr.ra());
@@ -280,6 +281,7 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
 
 #[inline(always)]
 pub fn logical<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     let rs = ctx.gekko.read_gpr(instr.rs());
     let rb = ctx.gekko.read_gpr(instr.rb());
 

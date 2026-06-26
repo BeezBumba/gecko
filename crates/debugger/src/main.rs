@@ -264,7 +264,7 @@ impl ApplicationHandler<UserEvent> for App {
                                 nunchuk_buttons,
                                 nunchuk_stick_x,
                                 nunchuk_stick_y,
-                                ir_pointer: _,
+                                ..
                             } => {
                                 update_wiimote_keys(wiimote_buttons, key, pressed);
                                 update_wiimote_motion_keys(wiimote_shake, key, pressed);
@@ -404,22 +404,6 @@ fn initial_window_size(target_aspect: TargetAspect) -> (u32, u32) {
     }
 }
 
-fn resolve_aspect(arg: &str, is_wii: bool) -> TargetAspect {
-    match arg {
-        "auto" => {
-            if is_wii {
-                TargetAspect::Ratio(16.0 / 9.0)
-            } else {
-                TargetAspect::Ratio(4.0 / 3.0)
-            }
-        }
-        "4:3" => TargetAspect::Ratio(4.0 / 3.0),
-        "16:9" => TargetAspect::Ratio(16.0 / 9.0),
-        "stretch" => TargetAspect::Stretch,
-        other => panic!("--aspect must be auto|4:3|16:9|stretch, got {other:?}"),
-    }
-}
-
 fn main() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
@@ -446,7 +430,9 @@ fn main() {
 
     let mut game_id: Option<String> = None;
     let mut emulator = if let Some(ref dol) = args.dol {
-        let dol = Dol::parse(std::fs::read(dol).expect("failed to read DOL"));
+        let data = std::fs::read(dol).expect("failed to read DOL");
+        game_id = Some(gecko::jit::cache::dol_cache_id(&data));
+        let dol = Dol::parse(data);
         if args.wii {
             EmulatorVariant::Wii(Wii::with_image(&dol))
         } else {
@@ -527,9 +513,9 @@ fn main() {
 
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
-    let target_aspect = resolve_aspect(&args.aspect, matches!(emulator, EmulatorVariant::Wii(_)));
+    let target_aspect = TargetAspect::from_arg(&args.aspect, matches!(emulator, EmulatorVariant::Wii(_)));
     let (renderer, sink) =
-        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
+        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect, 1);
 
     emulator.install_render_sink(Box::new(sink));
 

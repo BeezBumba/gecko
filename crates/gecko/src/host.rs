@@ -78,9 +78,8 @@ pub enum GxAction {
     /// TEV/lighting snapshot carried here.
     Draw(Box<DrawData>),
 
-    /// Copy the EFB source region to a temporary texture identified by `id`.
-    /// The renderer stores this until the next [`PresentXfb`] composites it
-    /// into the output framebuffer.
+    /// Copy the EFB source region to a persistent texture keyed by `id` (the
+    /// guest XFB address). [`PresentXfb`] composites the latest snapshots.
     CopyXfb {
         id: Address,
         src_x: u32,
@@ -98,9 +97,9 @@ pub enum GxAction {
         alpha_supported: bool,
     },
 
-    /// Composite all XFB copies from this frame into the output framebuffer.
-    /// Emitted once per vblank by `present_xfb()`. Each [`XfbPart`]
-    /// identifies a copy by `id` and places it at `(offset_x, offset_y)`.
+    /// Composite the scanned buffer's XFB regions into the output
+    /// framebuffer. Emitted by `present_xfb()` at the end of each field's
+    /// active video. Later parts win overlapping rows.
     PresentXfb {
         width: u32,
         height: u32,
@@ -186,6 +185,12 @@ pub struct DrawData {
     pub ambient_color: [[f32; 4]; 2],
     pub material_color: [[f32; 4]; 2],
     pub lights: [LightData; 8],
+    // Z-texture state (BP ZTEX1/ZTEX2). `ztex_op` is 0 (disabled) / 1 (add) /
+    // 2 (replace); already collapsed to 0 when the PE runs early-Z, since the
+    // hardware only applies the Z texture on the late-Z path.
+    pub ztex_bias: u32,
+    pub ztex_type: u8,
+    pub ztex_op: u8,
     pub frame_dirty: bool,
 }
 
@@ -229,6 +234,9 @@ pub trait RenderSink: Send {
     fn flush_efb_copies(&mut self, ram: &mut crate::mmio::RamViewMut<'_>) {
         let _ = ram;
     }
+
+    /// Clear the embedded framebuffer back to a fresh (empty) state.
+    fn reset_efb(&mut self) {}
 
     /// Acquire a `DrawData` box for the next draw call. The default impl
     /// allocates fresh. Real renderers override to recycle boxes that come

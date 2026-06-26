@@ -45,8 +45,8 @@ impl GraphicsProcessor {
         let x = x - self.cur_scissor_offset_x as f32;
         let y = y - self.cur_scissor_offset_y as f32;
 
-        let far = (offset_z / DEPTH_24_BIT_MAX).clamp(0.0, 1.0);
-        let near = (far - scale_z / DEPTH_24_BIT_MAX).clamp(0.0, 1.0);
+        let far = (offset_z / DEPTH_24_BIT_RANGE).clamp(0.0, MAX_EFB_DEPTH);
+        let near = ((offset_z - scale_z) / DEPTH_24_BIT_RANGE).clamp(0.0, MAX_EFB_DEPTH);
 
         self.cur_viewport = draw::Viewport {
             x,
@@ -176,6 +176,11 @@ impl GraphicsProcessor {
             );
             return;
         };
+
+        if let Some(rec) = self.recorder.as_deref_mut() {
+            rec.use_memory(ram, src_addr as u32, n * 4, super::recorder::MemoryUpdateType::XfData);
+        }
+
         for i in 0..n {
             let off = i * 4;
             let val = u32::from_be_bytes([src[off], src[off + 1], src[off + 2], src[off + 3]]);

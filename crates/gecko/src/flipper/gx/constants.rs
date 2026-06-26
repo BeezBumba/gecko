@@ -122,6 +122,8 @@ pub const BP_PE_ZMODE: usize = 0x40;
 pub const BP_PE_CMODE0: usize = 0x41; // blend mode
 pub const BP_PE_ZCOMPARE: usize = 0x43;
 pub const BP_PE_ALPHA_COMPARE: usize = 0xF3;
+pub const BP_TEV_ZTEX1: usize = 0xF4; // Z-texture bias (24-bit)
+pub const BP_TEV_ZTEX2: usize = 0xF5; // Z-texture type (bits 0-1) + op (bits 2-3)
 pub const BP_PE_DONE: usize = 0x45;
 pub const BP_PE_DONE_FINISH_BIT: u32 = 0x02;
 pub const BP_PE_TOKEN: usize = 0x47;
@@ -193,3 +195,5 @@ pub const EFB_HEIGHT: u32 = 528;
 
 // Depth max for 24-bit Z
 pub const DEPTH_24_BIT_MAX: f32 = 16777215.0; // (1 << 24) - 1
+pub const DEPTH_24_BIT_RANGE: f32 = 16777216.0; // 1 << 24
+pub const MAX_EFB_DEPTH: f32 = DEPTH_24_BIT_MAX / DEPTH_24_BIT_RANGE;

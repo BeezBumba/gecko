@@ -6,6 +6,8 @@ edition = "2024"
 [features]
 renderdoc-capture = ["dep:renderdoc"]
 hotpath = ["dep:hotpath", "hotpath/hotpath", "hotpath/crossbeam"]
+# Write every compiled WGSL shader variant to cache/wgsl/ for debugging.
+dump-wgsl = []
 
 [dependencies]
 wgpu = "29.0.3"

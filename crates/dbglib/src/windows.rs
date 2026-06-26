@@ -6,6 +6,7 @@ pub mod cpu;
 pub mod dsp;
 pub mod dvd;
 pub mod exi;
+pub mod fifo;
 pub mod gx;
 pub mod irq;
 pub mod lua;

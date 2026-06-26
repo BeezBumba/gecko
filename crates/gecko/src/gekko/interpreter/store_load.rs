@@ -5,6 +5,7 @@ use crate::system::{System, SystemId};
 
 #[inline(always)]
 pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     match OP {
         OP_STW | OP_STWU => {
             let addr = ctx.gekko.read_gpr_or_zero(instr.ra()).wrapping_add_signed(instr.disp());
@@ -185,6 +186,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM
 
 #[inline(always)]
 pub fn lwarx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_LWARX) as u64;
     let addr = ctx
         .gekko
         .read_gpr_or_zero(instr.ra())
@@ -196,6 +198,7 @@ pub fn lwarx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instructio
 
 #[inline(always)]
 pub fn stwcx_dot<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_STWCX_DOT) as u64;
     let addr = ctx
         .gekko
         .read_gpr_or_zero(instr.ra())
@@ -213,6 +216,7 @@ pub fn stwcx_dot<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instru
 
 #[inline(always)]
 pub fn store_load_fp<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     if !ctx.check_fp_available() {
         return;
     }
@@ -305,6 +309,7 @@ pub fn store_load_fp<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYS
 
 #[inline(always)]
 pub fn lswx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_LSWX) as u64;
     let ea = ctx
         .gekko
         .read_gpr_or_zero(instr.ra())
@@ -336,6 +341,7 @@ pub fn lswx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction
 
 #[inline(always)]
 pub fn stswx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_STSWX) as u64;
     let ea = ctx
         .gekko
         .read_gpr_or_zero(instr.ra())
@@ -361,6 +367,7 @@ pub fn stswx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instructio
 
 #[inline(always)]
 pub fn lswi<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_LSWI) as u64;
     let ea = ctx.gekko.read_gpr_or_zero(instr.ra());
     let nb = instr.nb();
     let mut n = if nb == 0 { 32u32 } else { nb as u32 };
@@ -387,6 +394,7 @@ pub fn lswi<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction
 
 #[inline(always)]
 pub fn stswi<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_STSWI) as u64;
     let ea = ctx.gekko.read_gpr_or_zero(instr.ra());
     let nb = instr.nb();
     let mut n = if nb == 0 { 32u32 } else { nb as u32 };
@@ -410,6 +418,7 @@ pub fn stswi<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instructio
 
 #[inline(always)]
 pub fn eciwx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_ECIWX) as u64;
     let ea = ctx
         .gekko
         .read_gpr_or_zero(instr.ra())
@@ -420,6 +429,7 @@ pub fn eciwx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instructio
 
 #[inline(always)]
 pub fn ecowx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_ECOWX) as u64;
     let ea = ctx
         .gekko
         .read_gpr_or_zero(instr.ra())

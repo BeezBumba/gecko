@@ -4,14 +4,19 @@ use zerocopy::byteorder::big_endian::U32;
 use zerocopy::{FromBytes, Immutable, KnownLayout};
 
 pub const IOCTL_DVD_LOW_READ: u32 = 0x71;
+pub const IOCTL_DVD_LOW_GET_COVER_REGISTER: u32 = 0x7A;
 pub const IOCTL_DVD_LOW_CLEAR_COVER_INTERRUPT: u32 = 0x86;
 pub const IOCTL_DVD_LOW_UNENCRYPTED_READ: u32 = 0x8D;
+pub const IOCTL_DVD_LOW_GET_STATUS_REGISTER: u32 = 0x95;
+pub const IOCTL_DVD_LOW_GET_CONTROL_REGISTER: u32 = 0x96;
 pub const IOCTL_DVD_LOW_REPORT_KEY: u32 = 0xA4;
+pub const IOCTL_DVD_LOW_READ_DISK_BCA: u32 = 0xDA;
 pub const IOCTL_DVD_LOW_REQUEST_ERROR: u32 = 0xE0;
+pub const IOCTL_DVD_LOW_STOP_MOTOR: u32 = 0xE3;
 
 const DI_RET_OK: i32 = 1;
 const DI_RET_ERROR: i32 = 2;
-const DI_RET_INVALID_RANGE: i32 = 0x20;
+const DI_RET_SECURITY_ERROR: i32 = 0x20;
 const DI_RET_BAD_ALIGNMENT: i32 = 0x80;
 
 const DI_ERROR_OK: u32 = 0x00000000;
@@ -46,6 +51,11 @@ impl IosDevice for DiskInterface {
             IOCTL_DVD_LOW_REPORT_KEY => self.dvd_low_report_key(ctx, in_ptr, out_ptr, out_len),
             IOCTL_DVD_LOW_CLEAR_COVER_INTERRUPT => self.dvd_low_clear_cover_interrupt(ctx, in_ptr, out_ptr, out_len),
             IOCTL_DVD_LOW_READ => self.dvd_low_read(ctx, in_ptr, out_ptr, out_len),
+            IOCTL_DVD_LOW_GET_STATUS_REGISTER => self.dvd_low_get_status_register(ctx, out_ptr, out_len),
+            IOCTL_DVD_LOW_GET_COVER_REGISTER => self.dvd_low_get_cover_register(ctx, out_ptr, out_len),
+            IOCTL_DVD_LOW_GET_CONTROL_REGISTER => self.dvd_low_get_control_register(ctx, out_ptr, out_len),
+            IOCTL_DVD_LOW_STOP_MOTOR => self.dvd_low_stop_motor(ctx, in_ptr, out_ptr, out_len),
+            IOCTL_DVD_LOW_READ_DISK_BCA => self.dvd_low_read_disk_bca(ctx, out_ptr, out_len),
             _ => {
                 tracing::warn!(
                     cmd = format!("{cmd:08X}"),
@@ -87,7 +97,7 @@ impl DiskInterface {
             .iter()
             .position(|r| pos_bytes >= r.start && end_bytes <= r.end);
         let Some(range_idx) = range_idx else {
-            return DI_RET_INVALID_RANGE;
+            return DI_RET_SECURITY_ERROR;
         };
 
         if range_idx == 0 {
@@ -175,7 +185,7 @@ impl DiskInterface {
         let pos_bytes = input.position_bytes();
 
         if out_len < size {
-            return DI_RET_INVALID_RANGE;
+            return DI_RET_SECURITY_ERROR;
         }
 
         let Some(dvd) = ctx.di.dvd.as_ref() else {
@@ -198,6 +208,65 @@ impl DiskInterface {
 
         DI_RET_OK
     }
+
+    #[inline(always)]
+    fn dvd_low_get_status_register(&mut self, ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
+        let value = ctx.di.status.raw();
+        self::write_if_fits(ctx, out_ptr, out_len, value)
+    }
+
+    #[inline(always)]
+    fn dvd_low_get_cover_register(&mut self, ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
+        let value = ctx.di.cover.raw();
+        self::write_if_fits(ctx, out_ptr, out_len, value)
+    }
+
+    #[inline(always)]
+    fn dvd_low_get_control_register(&mut self, ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
+        let value = ctx.di.control.raw();
+        self::write_if_fits(ctx, out_ptr, out_len, value)
+    }
+
+    #[inline(always)]
+    fn dvd_low_read_disk_bca(&mut self, ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
+        if (out_ptr & 0x1F) != 0 {
+            return DI_RET_BAD_ALIGNMENT;
+        }
+
+        if out_len < 0x40 {
+            return DI_RET_SECURITY_ERROR;
+        }
+
+        let dst = ctx.mmio.phys_slice_mut(out_ptr, 0x40);
+        dst.fill(0);
+        dst[0x33] = 1;
+        self.last_error = DI_ERROR_OK;
+
+        tracing::debug!(dst = format!("{out_ptr:#010X}"), "DVDLowReadDiskBca");
+
+        DI_RET_OK
+    }
+
+    #[inline(always)]
+    fn dvd_low_stop_motor(&mut self, ctx: &mut DeviceContext<'_>, in_ptr: u32, out_ptr: u32, out_len: u32) -> i32 {
+        let input = ctx.mmio.phys_read_struct::<DvdLowStopMotor>(in_ptr);
+        tracing::debug!(eject = input.eject, kill = input.kill, "DVDLowStopMotor");
+
+        if out_len >= 4 {
+            ctx.mmio.phys_write_u32(out_ptr, ctx.di.immbuf);
+        }
+
+        DI_RET_OK
+    }
+}
+
+#[inline(always)]
+fn write_if_fits(ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32, value: u32) -> i32 {
+    if out_len < 4 {
+        return DI_RET_SECURITY_ERROR;
+    }
+    ctx.mmio.phys_write_u32(out_ptr, value);
+    DI_RET_OK
 }
 
 #[repr(C, packed)]
@@ -222,6 +291,16 @@ struct DvdLowReportKey {
     _pad: [u8; 6],
     pub param1: u8,
     pub param2: U32,
+}
+
+#[repr(C, packed)]
+#[derive(FromBytes, KnownLayout, Immutable)]
+struct DvdLowStopMotor {
+    pub cmd: u8,
+    _pad0: [u8; 6],
+    pub eject: u8,
+    _pad1: [u8; 3],
+    pub kill: u8,
 }
 
 #[repr(C, packed)]

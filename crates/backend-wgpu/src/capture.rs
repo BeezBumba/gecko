@@ -145,7 +145,7 @@ pub fn save_png_async(path: PathBuf, frame: CapturedFrame, force_opaque: bool) {
         .ok();
 }
 
-fn write_png(path: &Path, mut frame: CapturedFrame, force_opaque: bool) -> std::io::Result<()> {
+pub fn write_png(path: &Path, mut frame: CapturedFrame, force_opaque: bool) -> std::io::Result<()> {
     if force_opaque {
         for px in frame.rgba.chunks_exact_mut(4) {
             px[3] = 255;

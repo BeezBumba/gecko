@@ -1,4 +1,5 @@
 use super::constants::*;
+use super::recorder::MemoryUpdateType;
 use super::regs::*;
 use super::{GraphicsProcessor, draw, texture};
 use crate::host::{GxAction, RenderSink, TextureKey};
@@ -30,18 +31,28 @@ impl GraphicsProcessor {
             "BP register write"
         );
 
-        // TX_SETIMAGE3 is written last for each texture slot, so we use it as
-        // the trigger to snapshot the full texture descriptor
-        let texture_slot = if idx >= BP_TX_SETIMAGE3_I0 && idx < BP_TX_SETIMAGE3_I0 + 4 {
-            Some(idx - BP_TX_SETIMAGE3_I0)
-        } else if idx >= BP_TX_SETIMAGE3_I4 && idx < BP_TX_SETIMAGE3_I4 + 4 {
-            Some(idx - BP_TX_SETIMAGE3_I4 + 4)
+        // Texture descriptor regs (SETMODE0 + SETIMAGE0-3): games write
+        // these in arbitrary order (SMG's J3D binds SETIMAGE3 before
+        // SETIMAGE0), so snapshotting at any single reg write can pair a new
+        // address with a stale size/format. Mark the slot dirty instead;
+        // `snapshot_dirty_textures` resolves it right before the next draw,
+        // when the full descriptor is consistent.
+        let texture_slot = if idx >= BP_TX_SETMODE0_I0 && idx < BP_TX_SETMODE0_I0 + 4 {
+            Some(idx - BP_TX_SETMODE0_I0)
+        } else if idx >= BP_TX_SETMODE0_I4 && idx < BP_TX_SETMODE0_I4 + 4 {
+            Some(idx - BP_TX_SETMODE0_I4 + 4)
+        } else if idx >= BP_TX_SETIMAGE0_I0 && idx < BP_TX_SETIMAGE3_I0 + 4 {
+            // IMAGE0-3 are four contiguous 4-register blocks (0x88..0x98),
+            // each indexed by slot, so `& 3` recovers the slot in any block.
+            Some((idx - BP_TX_SETIMAGE0_I0) & 3)
+        } else if idx >= BP_TX_SETIMAGE0_I4 && idx < BP_TX_SETIMAGE3_I4 + 4 {
+            Some(((idx - BP_TX_SETIMAGE0_I4) & 3) + 4)
         } else {
             None
         };
 
         if let Some(slot) = texture_slot {
-            self.snapshot_texture(renderer, &ram.as_view(), slot, val);
+            self.tex_dirty |= 1 << slot;
         }
 
         // TX_SETTLUT: per-texture-slot binding of the palette (tmem offset +
@@ -58,19 +69,24 @@ impl GraphicsProcessor {
         };
         if let Some(slot) = tlut_slot {
             self.cur_tluts[slot] = draw::TlutRef::from_raw(val);
-            self.resnapshot_paletted_slot(renderer, &ram.as_view(), slot);
+            self.tex_dirty |= 1 << slot;
         }
 
         // LOADTLUT: writing TLUT1 triggers a copy from main RAM (address in
         // TLUT0, stored pre-shifted by 5) into our palette TMEM. Any paletted
         // texture already bound is now looking at fresh palette bytes, so we
         // must redecode it. We don't know which slots' TLUT regions overlap
-        // the load, so rescan all bound paletted slots (saw this in Dolphin @
+        // the load, so rescan all paletted slots (saw this in Dolphin @
         // TMEM::InvalidateAll on LOADTLUT1).
         if idx == BP_LOAD_TLUT1 {
             self.load_tlut(&ram.as_view(), val);
             for slot in 0..self.cur_textures.len() {
-                self.resnapshot_paletted_slot(renderer, &ram.as_view(), slot);
+                let image0 = TxSetImage0::from_raw(
+                    self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, slot)],
+                );
+                if image0.format().is_paletted() {
+                    self.tex_dirty |= 1 << slot;
+                }
             }
         }
 
@@ -86,6 +102,8 @@ impl GraphicsProcessor {
             }
             BP_PE_ZCOMPARE => {
                 self.cur_pe_control = PeControl::from_raw(val);
+                // early_ztest feeds DrawData::ztex_op
+                self.frame_state_dirty = true;
             }
             BP_PE_ALPHA_COMPARE => {
                 self.cur_alpha_compare = AlphaCompare::from_raw(val);
@@ -177,6 +195,13 @@ impl GraphicsProcessor {
             self.frame_state_dirty = true;
         }
 
+        // Z-texture state: bias (ZTEX1) + type/op (ZTEX2). Op != 0 makes the
+        // TEV replace/offset the fragment depth with a value decoded from the
+        // last texture lookup (SMG clears its EFB depth this way).
+        if idx == BP_TEV_ZTEX1 || idx == BP_TEV_ZTEX2 {
+            self.frame_state_dirty = true;
+        }
+
         // TEV color register writes also affect konst colors
         if idx >= BP_TEV_REGISTERL_0 && idx <= BP_TEV_REGISTERL_0 + 7 {
             self.konst_dirty = true;
@@ -187,6 +212,7 @@ impl GraphicsProcessor {
         if idx == BP_PE_DONE && (val & BP_PE_DONE_FINISH_BIT) != 0 {
             self.raise_interrupt = true;
             renderer.flush_efb_copies(ram);
+            self.sync_recorder_efb_shadow(ram);
         }
 
         // PE token (0x47): store token value only
@@ -194,6 +220,7 @@ impl GraphicsProcessor {
             self.pending_token = (val & 0xFFFF) as u16;
             self.token_dirty = true;
             renderer.flush_efb_copies(ram);
+            self.sync_recorder_efb_shadow(ram);
         }
 
         // PE token interrupt (0x48): store token value + raise interrupt
@@ -203,6 +230,7 @@ impl GraphicsProcessor {
             self.token_dirty = true;
             self.raise_token_interrupt = true;
             renderer.flush_efb_copies(ram);
+            self.sync_recorder_efb_shadow(ram);
         }
 
         // Scissor registers (BP 0x20 = TL, 0x21 = BR, 0x59 = OFFSET).
@@ -226,21 +254,10 @@ impl GraphicsProcessor {
     }
 
     fn snapshot_texture(&mut self, renderer: &mut dyn RenderSink, ram: &RamView<'_>, slot: usize, image3_val: u32) {
-        let image0_reg = if slot < 4 {
-            BP_TX_SETIMAGE0_I0 + slot
-        } else {
-            BP_TX_SETIMAGE0_I4 + (slot - 4)
-        };
-
-        let image0 = TxSetImage0::from_raw(self.bp_regs[image0_reg]);
+        let image0 =
+            TxSetImage0::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, slot)]);
         let image3 = TxSetImage3::from_raw(image3_val);
-
-        let mode0_reg = if slot < 4 {
-            BP_TX_SETMODE0_I0 + slot
-        } else {
-            BP_TX_SETMODE0_I4 + (slot - 4)
-        };
-        let mode0 = TxSetMode0::from_raw(self.bp_regs[mode0_reg]);
+        let mode0 = TxSetMode0::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETMODE0_I0, BP_TX_SETMODE0_I4, slot)]);
 
         let width = (image0.width() + 1) as u32;
         let height = (image0.height() + 1) as u32;
@@ -276,6 +293,12 @@ impl GraphicsProcessor {
         // texture for this id).
         let raw_size = texture::raw_data_size(width, height, format);
         let tex_slice = ram.slice(ram_addr, raw_size);
+
+        if tex_slice.is_some()
+            && let Some(rec) = self.recorder.as_deref_mut()
+        {
+            rec.use_memory(ram, ram_addr as u32, raw_size, MemoryUpdateType::TextureMap);
+        }
 
         let changed = match tex_slice {
             Some(tex) => self::texture_data_changed(&mut self.texture_hashes, tex, cache_id, palette, tlut, format),
@@ -336,23 +359,29 @@ impl GraphicsProcessor {
         });
     }
 
-    /// If the slot currently binds a paletted texture, rerun the snapshot
-    /// pipeline so `texture_data_changed` rehashes the (now possibly fresh)
-    /// palette bytes + TLUT format and decodes a new RGBA if anything moved.
-    fn resnapshot_paletted_slot(&mut self, renderer: &mut dyn RenderSink, ram: &RamView<'_>, slot: usize) {
-        let Some(desc) = self.cur_textures[slot] else {
-            return;
-        };
-        if !desc.format.is_paletted() {
-            return;
+    pub fn refresh_bound_textures(&mut self, renderer: &mut dyn RenderSink, ram: &RamView<'_>) {
+        for slot in 0..self.cur_textures.len() {
+            if self.cur_textures[slot].is_none() {
+                continue;
+            }
+
+            let image3_val = self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, slot)];
+            self.snapshot_texture(renderer, ram, slot, image3_val);
         }
-        let image3_reg = if slot < 4 {
-            BP_TX_SETIMAGE3_I0 + slot
-        } else {
-            BP_TX_SETIMAGE3_I4 + (slot - 4)
-        };
-        let image3_val = self.bp_regs[image3_reg];
-        self.snapshot_texture(renderer, ram, slot, image3_val);
+    }
+
+    /// Resolve every slot whose descriptor regs changed since the last
+    /// snapshot. Called right before each draw call, when SETMODE0 +
+    /// SETIMAGE0-3 + SETTLUT are guaranteed to describe one consistent
+    /// texture regardless of the order the game wrote them in.
+    pub fn snapshot_dirty_textures(&mut self, renderer: &mut dyn RenderSink, ram: &RamView<'_>) {
+        while self.tex_dirty != 0 {
+            let slot = self.tex_dirty.trailing_zeros() as usize;
+            self.tex_dirty &= !(1 << slot);
+
+            let image3_val = self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, slot)];
+            self.snapshot_texture(renderer, ram, slot, image3_val);
+        }
     }
 
     fn load_tev_env(&mut self, idx: usize, val: u32) {
@@ -445,7 +474,7 @@ impl GraphicsProcessor {
         let g = clear_gb.green() as f32 / 255.0;
         let b = clear_gb.blue() as f32 / 255.0;
 
-        let clear_z = PeClearZ::from_raw(self.bp_regs[BP_PE_COPY_CLEAR_Z]).z() as f32 / 16777215.0;
+        let clear_z = PeClearZ::from_raw(self.bp_regs[BP_PE_COPY_CLEAR_Z]).z() as f32 / DEPTH_24_BIT_RANGE;
 
         tracing::debug!(
             src_x,
@@ -478,16 +507,37 @@ impl GraphicsProcessor {
                 2 | 3 => 2.2,
                 _ => 1.0,
             };
-            // XFB copy: queue the copy for present_xfb() to compose at vblank,
-            // and tell the renderer to snapshot the EFB region now.
-            let id = self.xfb_copies.len() as u32;
-            self.xfb_copies.push(super::XfbCopy {
-                dest_addr,
-                dest_stride,
-                src_h,
-            });
+
+            // XFB copy: record the destination region for present_xfb() and
+            // tell the renderer to snapshot the EFB now. Textures are keyed
+            // by destination address so each buffer's snapshot persists
+            // across frames.
+            self.xfb_copy_seq += 1;
+            let copy_seq = self.xfb_copy_seq;
+            let present_seq = self.xfb_present_seq;
+
+            self.xfb_regions
+                .entry(dest_addr)
+                .and_modify(|r| {
+                    r.stride = dest_stride;
+                    r.copy_seq = copy_seq;
+                    r.seen_present_seq = present_seq;
+                })
+                .or_insert(super::XfbRegion {
+                    stride: dest_stride,
+                    first_seq: copy_seq,
+                    copy_seq,
+                    seen_present_seq: present_seq,
+                });
+
+            self.xfb_dirty = true;
+
+            if let Some(rec) = self.recorder.as_deref_mut() {
+                rec.note_xfb_copy();
+            }
+
             renderer.exec(GxAction::CopyXfb {
-                id,
+                id: dest_addr,
                 src_x,
                 src_y,
                 src_w,
@@ -512,6 +562,26 @@ impl GraphicsProcessor {
             let z_update = self.cur_zmode.update_enable();
 
             let depth_copy = self.cur_pe_control.pixel_format().is_depth_only();
+
+            if let Some(rec) = self.recorder.as_deref_mut()
+                && rec.is_recording()
+            {
+                let resolved = if depth_copy {
+                    texture::CopyFormat::from_u8_depth(copy_format)
+                } else {
+                    texture::CopyFormat::from_u8_color(copy_format)
+                };
+                if let Some(fmt) = resolved {
+                    let (w, h) = if half { (src_w / 2, src_h / 2) } else { (src_w, src_h) };
+                    let row_bytes = texture::encoded_row_bytes(w, fmt);
+                    let row_count = texture::encoded_row_count(h, fmt);
+
+                    if row_count > 0 {
+                        let len = (row_count - 1) * dest_stride as usize + row_bytes;
+                        rec.note_efb_copy(dest_addr as u32, len);
+                    }
+                }
+            }
             renderer.exec(GxAction::CopyEfbToTexture {
                 dest_addr,
                 src_x,
@@ -536,6 +606,14 @@ impl GraphicsProcessor {
             // next snapshot at this address re decodes once the deferred
             // RAM writeback lands.
             self.texture_hashes.retain(|k, _| k.ram_addr != dest_addr);
+        }
+    }
+
+    fn sync_recorder_efb_shadow(&mut self, ram: &RamViewMut<'_>) {
+        if let Some(rec) = self.recorder.as_deref_mut()
+            && rec.is_recording()
+        {
+            rec.flush_efb_shadow(&ram.as_view());
         }
     }
 
@@ -574,6 +652,13 @@ impl GraphicsProcessor {
         self.cur_scissor_offset_x = reg.x() as i32 * 2 - 342;
         self.cur_scissor_offset_y = reg.y() as i32 * 2 - 342;
     }
+}
+
+/// Texture slot to BP register index: slots 0-3 live at `base_i0`, slots 4-7
+/// at `base_i4` (TX_SETMODE*/TX_SETIMAGE*/TX_SETTLUT all share this layout).
+#[inline(always)]
+fn tx_slot_reg(base_i0: usize, base_i4: usize, slot: usize) -> usize {
+    if slot < 4 { base_i0 + slot } else { base_i4 + (slot - 4) }
 }
 
 fn slot_palette(palette_mem: &[u16], tmem_offset: u16) -> &[u16] {
@@ -672,6 +757,12 @@ impl GraphicsProcessor {
             );
             return;
         };
+
+        // FIFO recorder: capture the palette's source RAM so the replayed
+        // LOADTLUT reads the same bytes.
+        if let Some(rec) = self.recorder.as_deref_mut() {
+            rec.use_memory(ram, ram_base as u32, byte_count, MemoryUpdateType::Tmem);
+        }
         if dst_base.saturating_add(entries) > self.palette_mem.len() {
             tracing::warn!(
                 dst_base,

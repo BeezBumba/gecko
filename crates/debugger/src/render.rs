@@ -107,17 +107,12 @@ impl RenderState {
             debugger_ui.lua_log.extend(host.drain_logs());
         }
 
-        #[cfg(feature = "renderdoc-capture")]
-        self.renderer.begin_renderdoc_emulated_frame();
-
         debugger_ui.debugger.tick(emulator);
 
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             status => {
                 eprintln!("surface error: {status:?}");
-                #[cfg(feature = "renderdoc-capture")]
-                self.renderer.end_renderdoc_emulated_frame();
                 return;
             }
         };
@@ -206,6 +201,7 @@ impl RenderState {
                         ui.checkbox(&mut debugger_ui.show_irqs, "IRQ");
                         ui.checkbox(&mut debugger_ui.show_controls, "Controls");
                         ui.checkbox(&mut debugger_ui.show_breakpoints, "Breakpoints");
+                        ui.checkbox(&mut debugger_ui.show_fifo_recorder, "FIFO Recorder");
                         ui.checkbox(&mut debugger_ui.show_lua, "Lua");
                     });
 
@@ -308,6 +304,18 @@ impl RenderState {
                     &mut debugger_ui.breakpoint_addr_input,
                 );
             }
+            if debugger_ui.show_fifo_recorder {
+                let mut action = None;
+                dbglib::windows::fifo::show_fifo_recorder(
+                    &ctx,
+                    &mut debugger_ui.show_fifo_recorder,
+                    gx.recorder.as_deref(),
+                    &mut debugger_ui.fifo_path_input,
+                    &debugger_ui.fifo_last_result,
+                    &mut action,
+                );
+                debugger_ui.fifo_action = debugger_ui.fifo_action.or(action);
+            }
             if debugger_ui.show_about {
                 dbglib::windows::about::show_about(&ctx, &mut debugger_ui.show_about);
             }
@@ -330,6 +338,43 @@ impl RenderState {
                 }
             }
         });
+
+        match debugger_ui.fifo_action.take() {
+            Some(dbglib::windows::fifo::FifoRecorderAction::Start) => {
+                emulator.gx.recorder = Some(Box::new(gecko::flipper::gx::recorder::FifoRecorder::new()));
+                debugger_ui.fifo_last_result = "recording until stopped".to_string();
+            }
+            Some(dbglib::windows::fifo::FifoRecorderAction::Stop) => {
+                if let Some(rec) = emulator.gx.recorder.as_deref_mut() {
+                    rec.request_stop();
+                }
+            }
+            Some(dbglib::windows::fifo::FifoRecorderAction::Cancel) => {
+                emulator.gx.recorder = None;
+                debugger_ui.fifo_last_result = "recording cancelled".to_string();
+            }
+            None => {}
+        }
+
+        if emulator
+            .gx
+            .recorder
+            .as_deref()
+            .is_some_and(|r| r.state() == gecko::flipper::gx::recorder::RecorderState::Done)
+        {
+            let rec = emulator.gx.recorder.take().unwrap();
+            let file = rec.into_file();
+            let frame_count = file.frames.len();
+            if frame_count == 0 {
+                debugger_ui.fifo_last_result = "no frames recorded, nothing saved".to_string();
+            } else {
+                let path = std::path::PathBuf::from(debugger_ui.fifo_path_input.trim());
+                debugger_ui.fifo_last_result = match file.save(&path) {
+                    Ok(()) => format!("saved {frame_count} frames to {}", path.display()),
+                    Err(e) => format!("save failed: {e}"),
+                };
+            }
+        }
 
         if std::mem::take(&mut debugger_ui.gx_invalidate_requested) {
             emulator.gx.texture_hashes.clear();
@@ -397,9 +442,6 @@ impl RenderState {
         #[cfg(feature = "renderdoc-capture")]
         self.submit_swapchain_present_marker();
         frame.present();
-
-        #[cfg(feature = "renderdoc-capture")]
-        self.renderer.end_renderdoc_emulated_frame();
     }
 
     #[cfg(feature = "renderdoc-capture")]

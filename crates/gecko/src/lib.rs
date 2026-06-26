@@ -10,7 +10,7 @@ pub mod hollywood;
 pub mod host;
 pub mod input;
 pub mod ipl;
-pub mod jit_cache;
+pub mod jit;
 pub mod mmio;
 pub mod runtime_wasm;
 #[cfg(any(feature = "jit-stats", feature = "profile", feature = "gx-stats"))]
@@ -21,7 +21,7 @@ pub mod system;
 pub mod wii;
 
 pub use gamecube::GameCube;
-pub use input::HostInput;
+pub use input::{HostInput, InputSink};
 pub use system::{ExecutionMode, GC, System, SystemId, WII};
 pub use wii::Wii;
 

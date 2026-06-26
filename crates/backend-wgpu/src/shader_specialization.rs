@@ -15,7 +15,7 @@ const MAIN_WESL: &str = include_str!("shaders/main.wesl");
 
 pub(crate) const KEY_BYTES: usize = 6;
 const CACHE_MAGIC: [u8; 4] = *b"GSKC";
-pub(crate) const CACHE_VERSION: u32 = 6;
+pub(crate) const CACHE_VERSION: u32 = 7;
 pub(crate) const SHADER_CACHE_PATH: &str = "cache/shader_keys.bin";
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
@@ -152,8 +152,16 @@ pub(crate) fn compile_variant(key: ShaderKey) -> String {
     }
 
     let entry = "package::main".parse().expect("valid module path");
-    compiler
+    let out = compiler
         .compile(&entry)
         .expect("WESL specialization failed")
-        .to_string()
+        .to_string();
+    #[cfg(feature = "dump-wgsl")]
+    {
+        let dir = "cache/wgsl";
+        let _ = std::fs::create_dir_all(dir);
+        let name: String = key.to_bytes().iter().map(|b| format!("{b:02X}")).collect();
+        let _ = std::fs::write(format!("{dir}/variant_{name}.wgsl"), &out);
+    }
+    out
 }

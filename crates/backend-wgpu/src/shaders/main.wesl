@@ -38,6 +38,10 @@ struct TevState {
     running_uv: vec2<f32>,
     last_color_dest: u32,
     last_alpha_dest: u32,
+    // Raw (pre-swap-table) texel of the last TEV stage that sampled a
+    // texture. Feeds the Z-texture value in fs_main_ztex (hardware: the
+    // PE's RawTexColor latch).
+    last_raw_tex: vec4<f32>,
 }
 
 fn run_stage(
@@ -80,6 +84,7 @@ fn run_stage(
     var tex_color: vec4<f32>;
     if tex_enabled {
         tex_color = sample_texmap(texmap_idx, indirect.uv);
+        (*state).last_raw_tex = tex_color;
     } else {
         tex_color = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
@@ -129,8 +134,12 @@ fn run_stage(
     (*state).last_alpha_dest = a_dest;
 }
 
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+struct TevResult {
+    color: vec4<f32>,
+    raw_tex: vec4<f32>,
+}
+
+fn run_tev(in: VsOut) -> TevResult {
     var state: TevState;
     state.regs[0] = frame.tev_color_reg0;
     state.regs[1] = frame.tev_color_reg1;
@@ -139,6 +148,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     state.running_uv = vec2<f32>(0.0, 0.0);
     state.last_color_dest = 0u;
     state.last_alpha_dest = 0u;
+    state.last_raw_tex = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
     let color0 = in.color;
     let presampled = sample_indirect_textures(in);
@@ -170,5 +180,39 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
 
-    return color;
+    var result: TevResult;
+    result.color = color;
+    result.raw_tex = state.last_raw_tex;
+    return result;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return run_tev(in).color;
+}
+
+struct FsOutZtex {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+@fragment
+fn fs_main_ztex(in: VsOut) -> FsOutZtex {
+    let r = run_tev(in);
+    let texel = vec4<u32>(round(r.raw_tex * 255.0));
+    var z: u32 = frame.ztex_bias;
+    switch frame.ztex_type {
+        case 0u: { z += texel.a; }
+        case 1u: { z += (texel.a << 8u) | texel.r; }
+        default: { z += (texel.r << 16u) | (texel.g << 8u) | texel.b; }
+    }
+    if frame.ztex_op == 1u {
+        z += u32(round(in.clip_pos.z * 16777215.0));
+    }
+    z = z & 0x00FFFFFFu;
+
+    var out_: FsOutZtex;
+    out_.color = r.color;
+    out_.depth = f32(z) / 16777215.0;
+    return out_;
 }

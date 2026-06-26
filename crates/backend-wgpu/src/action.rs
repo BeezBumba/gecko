@@ -51,7 +51,7 @@ fn pack_u32_slice_to_uvec4x4(data: &[u32]) -> [UVec4; 4] {
 }
 
 impl GxRenderer {
-    fn current_pipeline_key(&self) -> PipelineKey {
+    fn current_pipeline_key(&self, ztex: bool) -> PipelineKey {
         let blend = self.current_blend_mode;
         let zmode = self.current_zmode;
         PipelineKey {
@@ -67,6 +67,7 @@ impl GxRenderer {
             color_update: blend.color_update(),
             alpha_update: blend.alpha_update(),
             cull_mode: self.current_cull_mode,
+            ztex,
         }
     }
 
@@ -272,7 +273,7 @@ impl GxRenderer {
                     self.shader_cache.insert(shader_key, module);
                     tracing::info!(?shader_key, "compiled specialized shader variant");
                 }
-                let pipeline_key = self.current_pipeline_key();
+                let pipeline_key = self.current_pipeline_key(draw.ztex_op != 0);
                 let full_key = FullPipelineKey {
                     shader: shader_key,
                     fixed: pipeline_key,
@@ -293,7 +294,29 @@ impl GxRenderer {
 
                 // Build per-draw uniform using tracked projection.
                 let mvp = self.current_projection;
-                let draw_uniform = DrawUniforms { mvp };
+                let active = draw_active_slot_mask(draw);
+
+                let mut tex_dims = [UVec4::splat(1); 4];
+                if draw.num_indirect_stages > 0 {
+                    for slot in 0..8 {
+                        if (active >> slot) & 1 == 0 {
+                            continue;
+                        }
+                        let Some(tid) = &self.current_texture_ids[slot] else {
+                            continue;
+                        };
+                        let Some((_, tex, _)) = self.texture_cache.get(tid) else {
+                            continue;
+                        };
+
+                        let size = tex.size();
+                        let c = (slot % 2) * 2;
+                        tex_dims[slot / 2][c] = size.width;
+                        tex_dims[slot / 2][c + 1] = size.height;
+                    }
+                }
+
+                let draw_uniform = DrawUniforms { mvp, tex_dims };
 
                 let start = self.scratch_draws.len() * draw_stride;
                 self.scratch_uniform_bytes.resize(start + draw_stride, 0);
@@ -339,6 +362,10 @@ impl GxRenderer {
                         ambient_color1: Vec4::from(draw.ambient_color[1]),
                         material_color0: Vec4::from(draw.material_color[0]),
                         material_color1: Vec4::from(draw.material_color[1]),
+                        ztex_bias: draw.ztex_bias,
+                        ztex_type: draw.ztex_type as u32,
+                        ztex_op: draw.ztex_op as u32,
+                        _pad2: 0,
                     };
 
                     let fstart = self.frame_uniform_bytes.len();
@@ -352,7 +379,6 @@ impl GxRenderer {
                     self.last_frame_uniform_index.unwrap()
                 };
 
-                let active = draw_active_slot_mask(draw);
                 self.draw_pipeline_keys.push(full_key);
                 self.draw_bg_keys
                     .push(trim_bg_key(self.current_bind_group_key(), active));
@@ -527,8 +553,9 @@ impl GxRenderer {
     }
 
     fn execute_action_render_pass(&mut self, device: &wgpu::Device) {
-        let target_width = crate::EFB_WIDTH;
-        let target_height = crate::EFB_HEIGHT;
+        let target_width = self.scaled(crate::EFB_WIDTH);
+        let target_height = self.scaled(crate::EFB_HEIGHT);
+        let scale = self.efb_scale as f32;
         let fallback_sampler_key = (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear);
         let frame_stride = self.frame_stride;
 
@@ -555,6 +582,13 @@ impl GxRenderer {
                         });
                         if let Some(view) = efb_match.or_else(|| tex_entry.map(|(_, _, v)| v)) {
                             tex_views[slot] = view;
+                        } else {
+                            tracing::warn!(
+                                slot,
+                                ram_addr = format!("{:#010X}", tid.ram_addr),
+                                variant = format!("{:08X}", tid.variant),
+                                "bind group: texture id missing from cache, using fallback"
+                            );
                         }
 
                         if let Some(sk) = &bg_key.sampler_keys[slot] {
@@ -746,25 +780,27 @@ impl GxRenderer {
                 }
 
                 let vp = &self.draw_viewports[index];
+                let vp_x = vp.x * scale;
+                let vp_y = vp.y * scale;
                 let max_dim = target_width.max(target_height) as f32;
-                let vp_w = vp.w.clamp(1.0, max_dim);
-                let vp_h = vp.h.clamp(1.0, max_dim);
+                let vp_w = (vp.w * scale).clamp(1.0, max_dim);
+                let vp_h = (vp.h * scale).clamp(1.0, max_dim);
 
-                if vp.x.is_finite() && vp.y.is_finite() && vp_w.is_finite() && vp_h.is_finite() {
+                if vp_x.is_finite() && vp_y.is_finite() && vp_w.is_finite() && vp_h.is_finite() {
                     let mut min_d = vp.min_depth.clamp(0.0, 1.0);
                     let mut max_d = vp.max_depth.clamp(0.0, 1.0);
                     if min_d > max_d {
                         std::mem::swap(&mut min_d, &mut max_d);
                     }
-                    let vp_tuple = (vp.x, vp.y, vp_w, vp_h, min_d, max_d);
+                    let vp_tuple = (vp_x, vp_y, vp_w, vp_h, min_d, max_d);
                     if last_viewport != Some(vp_tuple) {
-                        rpass.set_viewport(vp.x, vp.y, vp_w, vp_h, min_d, max_d);
+                        rpass.set_viewport(vp_x, vp_y, vp_w, vp_h, min_d, max_d);
                         last_viewport = Some(vp_tuple);
                     }
                 } else {
                     tracing::warn!(
-                        x = vp.x,
-                        y = vp.y,
+                        x = vp_x,
+                        y = vp_y,
                         w = vp_w,
                         h = vp_h,
                         "non-finite viewport, skipping set_viewport"
@@ -772,10 +808,10 @@ impl GxRenderer {
                 }
 
                 let sc = &self.draw_scissors[index];
-                let sc_x = sc.x.min(target_width);
-                let sc_y = sc.y.min(target_height);
-                let sc_w = sc.w.min(target_width - sc_x);
-                let sc_h = sc.h.min(target_height - sc_y);
+                let sc_x = self.scaled(sc.x).min(target_width);
+                let sc_y = self.scaled(sc.y).min(target_height);
+                let sc_w = self.scaled(sc.w).min(target_width - sc_x);
+                let sc_h = self.scaled(sc.h).min(target_height - sc_y);
                 let sc_tuple = (sc_x, sc_y, sc_w, sc_h);
                 if last_scissor != Some(sc_tuple) {
                     rpass.set_scissor_rect(sc_x, sc_y, sc_w, sc_h);

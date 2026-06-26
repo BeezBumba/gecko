@@ -12,8 +12,9 @@ const APPLOADER_BASE: u32 = 0x8120_0000;
 /// Stack pointer for apploader execution matching Dolphin.
 const APPLOADER_STACK: u32 = 0x816F_FFF0;
 
-/// Wii: 0x8000_4000 (GC: 0x8000_3100). TODO: Verify?
-const APPLOADER_ARG_BASE: u32 = 0x8000_4000;
+/// Must sit above every plausible DOL section and above the apploader stack
+/// or else you'll be in a world of hurt.
+const APPLOADER_ARG_BASE: u32 = 0x8170_0000;
 
 /// Address of the OSReport function pointer passed to apploader's init().
 /// Write a `blr` here to stub it out.
@@ -253,6 +254,25 @@ impl Wii {
         // OSVideoMode: 0 = NTSC, 1 = PAL/MPAL.
         let video_mode: u32 = if header.is_ntsc() { 0 } else { 1 };
         emu.mmio.phys_write_u32(0x0000_00CC, video_mode);
+
+        if !header.is_ntsc() {
+            emu.vi.dcr.set_video_format(crate::flipper::vi::regs::VideoFormat::Pal);
+            crate::scheduler::reseed_vsync(emu);
+        }
+
+        crate::hollywood::ipc::fs::nand::sync_setting_txt(&emu.starlet.host_fs_root, header.game_code);
+
+        let fs_root = emu.starlet.host_fs_root.clone();
+        emu.starlet.register(
+            "/shared2/sys/SYSCONF",
+            Box::new(crate::hollywood::ipc::sysconf::SysConf::for_game_code(
+                &fs_root,
+                header.game_code,
+            )),
+        );
+
+        // Create the booting title's content/data dirs so saves can be written.
+        crate::hollywood::ipc::fs::nand::ensure_title_dirs(&emu.starlet.host_fs_root, dvd.tmd_title_id());
 
         // Game ID dup.
         emu.mmio.phys_write_u32(0x0000_3180, game_id);
