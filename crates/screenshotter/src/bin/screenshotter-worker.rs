@@ -1,10 +1,10 @@
+use backend_wgpu::sink::InlineSink;
 use backend_wgpu::{GxRenderer, capture};
 use gecko::HostInput;
 use gecko::flipper::si::pad;
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
 use gecko::hollywood::ipc::usb as wiimote;
-use gecko::host::{GxAction, RenderSink};
 use gecko::system::{System, SystemId};
 use gecko::wii::Wii;
 use std::path::PathBuf;
@@ -13,28 +13,6 @@ use std::sync::{Arc, Mutex};
 const IPL: &[u8] = include_bytes!("../../../../private/IPL.decoded.bin");
 const DSP: &[u8] = include_bytes!("../../../../private/dsp_rom.bin");
 const COEF: &[u8] = include_bytes!("../../../../private/dsp_coef.bin");
-
-struct SyncSink {
-    gx: Arc<Mutex<GxRenderer>>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    scratch: Vec<gecko::host::DrawVertex>,
-}
-
-impl RenderSink for SyncSink {
-    fn exec(&mut self, action: GxAction) {
-        self.gx.lock().unwrap().process_action_with_external_scratch(
-            &self.device,
-            &self.queue,
-            &action,
-            &mut self.scratch,
-        );
-    }
-
-    fn vertex_scratch(&mut self) -> &mut Vec<gecko::host::DrawVertex> {
-        &mut self.scratch
-    }
-}
 
 fn take_screenshot(device: &wgpu::Device, queue: &wgpu::Queue, gx: &GxRenderer, code: &str, frame: u32) {
     let _ = device.poll(wgpu::PollType::Wait {
@@ -92,21 +70,30 @@ fn run_one(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::Tex
 
     let name = String::from_utf8_lossy(&image.header().game_name);
     let name = name.trim_end_matches('\0').to_owned();
-    let code = String::from_utf8_lossy(&image.header().game_code);
-    let code = code.trim_end_matches('\0').to_owned();
+    let code = image.header().game_id();
     let is_wii = image.header().is_wii();
     println!("Running: {} ({}) [{}]", name, code, if is_wii { "Wii" } else { "GC" });
 
     let out_dir = format!("screenshotdb/{}", code);
     std::fs::create_dir_all(&out_dir).expect("Failed to create screenshotdb directory");
 
-    let gx = Arc::new(Mutex::new(GxRenderer::new(device, queue, surface_format)));
-    let sink = SyncSink {
-        gx: gx.clone(),
-        device: device.clone(),
-        queue: queue.clone(),
-        scratch: Vec::new(),
-    };
+    let log_file = std::fs::File::create(format!("{}/log.txt", out_dir)).expect("Failed to create log file");
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_env_filter(env_filter)
+        .with_writer(Mutex::new(log_file))
+        .init();
+
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!("{info}");
+        prev_hook(info);
+    }));
+
+    let (gx, sink) = InlineSink::new(device.clone(), queue.clone(), surface_format);
 
     if is_wii {
         let mut wii = Wii::apploader_hle(image).build();
@@ -186,13 +173,7 @@ fn update_gc_input(input: &mut HostInput, idx: usize) {
         return;
     };
     pad.stick_y = pad::STICK_CENTER;
-    pad.buttons = 0;
-
-    if idx == 3 {
-        pad.stick_y = 255;
-    } else if idx > 3 && idx % 5 == 0 {
-        pad.buttons = pad::A | pad::START;
-    }
+    pad.buttons = if idx % 2 == 0 { pad::A } else { pad::START };
 }
 
 fn update_wii_input(input: &mut HostInput, idx: usize) {
@@ -206,14 +187,12 @@ fn update_wii_input(input: &mut HostInput, idx: usize) {
     else {
         return;
     };
-    *wiimote_buttons = 0;
     *nunchuk_buttons = 0;
     *nunchuk_stick_x = wiimote::NUNCHUK_STICK_CENTER;
     *nunchuk_stick_y = wiimote::NUNCHUK_STICK_CENTER;
-
-    if idx == 3 {
-        *nunchuk_stick_y = wiimote::NUNCHUK_STICK_MAX;
-    } else if idx > 3 && idx % 5 == 0 {
-        *wiimote_buttons = wiimote::BTN_A | wiimote::BTN_PLUS;
-    }
+    *wiimote_buttons = if idx % 2 == 0 {
+        wiimote::BTN_A
+    } else {
+        wiimote::BTN_PLUS
+    };
 }

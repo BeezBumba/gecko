@@ -2,9 +2,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-const WORKER_COUNT: usize = 1;
+const WORKER_COUNT: usize = 2;
 const WORKER_BIN: &str = "screenshotter-worker";
+
+const WORKER_MEM_MAX_DEFAULT: &str = "8G";
+const WORKER_TIMEOUT_SECS: u64 = 300;
 
 fn main() {
     let input_dir = PathBuf::from(
@@ -53,11 +57,22 @@ fn main() {
         std::process::exit(1);
     }
 
+    let mem_max = std::env::var("GECKO_WORKER_MEM_MAX").unwrap_or_else(|_| WORKER_MEM_MAX_DEFAULT.to_owned());
+    let capped = cgroup_cap_available();
+    if capped {
+        println!(
+            "Confining each worker to a {mem_max} memory-capped cgroup scope (override with GECKO_WORKER_MEM_MAX)."
+        );
+    } else {
+        eprintln!("fuckyfucky");
+    }
+
     let queue: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(files));
     let mut handles = Vec::with_capacity(WORKER_COUNT);
     for worker_id in 0..WORKER_COUNT {
         let queue = queue.clone();
         let worker_exe = worker_exe.clone();
+        let mem_max = mem_max.clone();
         handles.push(
             std::thread::Builder::new()
                 .name(format!("screenshotter-{worker_id}"))
@@ -68,7 +83,11 @@ fn main() {
                             None => return,
                         };
 
-                        match Command::new(&worker_exe).arg(&file).status() {
+                        match self::run_worker(
+                            self::worker_command(&worker_exe, &file, capped, &mem_max),
+                            capped,
+                            &file,
+                        ) {
                             Ok(status) if status.success() => {}
                             Ok(status) => {
                                 eprintln!("Skipping {}: worker exited with {}", file.display(), status,);
@@ -88,6 +107,69 @@ fn main() {
     }
 
     cleanup("screenshotdb");
+}
+
+fn worker_command(worker_exe: &Path, file: &Path, capped: bool, mem_max: &str) -> Command {
+    if !capped {
+        let mut cmd = Command::new(worker_exe);
+        cmd.arg(file);
+        return cmd;
+    }
+
+    let mut cmd = Command::new("systemd-run");
+    cmd.args(["--user", "--scope", "--quiet", "--collect"])
+        .arg("-p")
+        .arg(format!("MemoryMax={mem_max}"))
+        .arg("-p")
+        .arg("MemorySwapMax=0")
+        .arg("-p")
+        .arg(format!("RuntimeMaxSec={WORKER_TIMEOUT_SECS}"))
+        .arg("--")
+        .arg(worker_exe)
+        .arg(file);
+    cmd
+}
+
+fn run_worker(mut cmd: Command, capped: bool, file: &Path) -> std::io::Result<std::process::ExitStatus> {
+    if capped {
+        return cmd.status();
+    }
+
+    let mut child = cmd.spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(WORKER_TIMEOUT_SECS);
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+
+        if Instant::now() >= deadline {
+            eprintln!(
+                "Killing {}: worker exceeded {WORKER_TIMEOUT_SECS}s timeout",
+                file.display()
+            );
+            let _ = child.kill();
+            return child.wait();
+        }
+
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn cgroup_cap_available() -> bool {
+    Command::new("systemd-run")
+        .args(["--user", "--scope", "--quiet", "-p", "MemoryMax=64M", "--", "true"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn cgroup_cap_available() -> bool {
+    false
 }
 
 fn hash_or_delete_unicolor(path: &Path) -> Option<u64> {

@@ -230,6 +230,15 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         });
     }
 
+    pub fn dcbz_line(&mut self, ea: u32) {
+        let phys = self.translate_addr(ea) & !31;
+        if self.mmio.is_code_chunk(phys) {
+            return;
+        }
+
+        self.mmio.phys_slice_mut(phys, 32).fill(0);
+    }
+
     // Slow path for MMIO
 
     #[inline(never)]

@@ -120,6 +120,7 @@ fn psq_store<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, fs: u8, addr: u32
 
 #[inline(always)]
 pub fn store_load_psq<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     if !ctx.check_fp_available() {
         return;
     }

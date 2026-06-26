@@ -137,6 +137,24 @@ pub struct PeControl {
     pub early_ztest: bool,
 }
 
+// BP 0xF4 Z-texture bias
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TevZtex1 {
+    #[bits(0..=23)]
+    pub bias: u32,
+}
+
+// BP 0xF5 Z-texture control
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TevZtex2 {
+    #[bits(0..=1)]
+    pub tex_type: u8, // 0=u8, 1=u16, 2=u24
+    #[bits(2..=3)]
+    pub op: u8, // 0=disabled, 1=add, 2=replace
+}
+
 // BP 0xF3 Alpha compare
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy, Default)]

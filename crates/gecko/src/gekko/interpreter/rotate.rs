@@ -11,6 +11,7 @@ fn mask(mb: u32, me: u32) -> u32 {
 
 #[inline(always)]
 pub fn rotate<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     let rs = ctx.gekko.read_gpr(instr.rs());
     let mb = instr.mb() as u32;
     let me = instr.me() as u32;

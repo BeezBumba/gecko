@@ -85,7 +85,8 @@ fn is_cache_op_no_side_effect(instr: crate::gekko::instruction::Instruction) -> 
     if instr.primary_opcode() != 31 {
         return false;
     }
-    matches!(instr.xo10(), 86 | 470 | 54 | 278 | 246 | 1014 | 982 | 758)
+
+    matches!(instr.xo10(), 86 | 470 | 54 | 278 | 246 | 982 | 758)
 }
 
 fn classify_branch_to_self(spec: &BlockSpec) -> Option<IdleClass> {

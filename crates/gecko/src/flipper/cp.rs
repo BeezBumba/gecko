@@ -27,6 +27,7 @@ pub struct CommandProcessor {
     pub fifo_read_ptr_hi: regs::FifoReadPtrHi,
     pub fifo_bp_lo: regs::FifoBpLo,
     pub fifo_bp_hi: regs::FifoBpHi,
+    pub clear: regs::CpClear,
 
     pub gather_pipe: [u8; GP_PIPE_CAPACITY],
     pub gather_pos: u32,
@@ -53,6 +54,7 @@ impl CommandProcessor {
             fifo_read_ptr_hi: regs::FifoReadPtrHi::from_raw(0),
             fifo_bp_lo: regs::FifoBpLo::from_raw(0),
             fifo_bp_hi: regs::FifoBpHi::from_raw(0),
+            clear: regs::CpClear::from_raw(0),
             gather_pipe: [0; GP_PIPE_CAPACITY],
             gather_pos: 0,
         }
@@ -296,6 +298,16 @@ pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         sys.gx.drain_fifo(&mut sys.mmio, sys.render_sink.as_mut());
         sys.check_gx_pe_interrupts();
         sys.cp.refresh_status();
+        refresh_interrupts(sys);
+    }
+
+    if consumed > 0
+        && sys.cp.control.bp_interrupt_enable()
+        && !sys.cp.status.bp_interrupt()
+        && sys.cp.fifo_rw_distance() == 0
+        && sys.cp.fifo_read_ptr() == sys.cp.fifo_bp()
+    {
+        sys.cp.status = sys.cp.status.with_bp_interrupt(true);
         refresh_interrupts(sys);
     }
 }

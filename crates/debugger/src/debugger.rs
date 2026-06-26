@@ -23,6 +23,7 @@ pub struct DebuggerUi {
     pub show_lua: bool,
     pub show_breakpoints: bool,
     pub show_about: bool,
+    pub show_fifo_recorder: bool,
     pub memory_base: u32,
     pub memory_addr_input: String,
     pub run_until_addr_input: String,
@@ -33,6 +34,9 @@ pub struct DebuggerUi {
     pub lua_load_pending: bool,
     pub gx_invalidate_requested: bool,
     pub gx_dump_requested: bool,
+    pub fifo_path_input: String,
+    pub fifo_last_result: String,
+    pub fifo_action: Option<dbglib::windows::fifo::FifoRecorderAction>,
 }
 
 impl Default for DebuggerUi {
@@ -52,6 +56,7 @@ impl Default for DebuggerUi {
             show_lua: false,
             show_breakpoints: false,
             show_about: true,
+            show_fifo_recorder: false,
             memory_base: 0x8000_0000,
             memory_addr_input: "80000000".to_string(),
             run_until_addr_input: String::new(),
@@ -62,6 +67,9 @@ impl Default for DebuggerUi {
             lua_load_pending: false,
             gx_invalidate_requested: false,
             gx_dump_requested: false,
+            fifo_path_input: "fifo_dump.dff".to_string(),
+            fifo_last_result: String::new(),
+            fifo_action: None,
         }
     }
 }

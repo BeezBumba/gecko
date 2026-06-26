@@ -69,6 +69,26 @@ impl GraphicsProcessor {
 
         let vertex_count = data.len() / vf.vertex_stride;
 
+        // Resolve any texture slots whose descriptor regs changed since the
+        // last draw. Done lazily here (not at BP write time) because games
+        // write SETMODE0/SETIMAGE0-3 in arbitrary order; only at draw time is
+        // the descriptor guaranteed consistent. Runs before the recorder so
+        // recorded draws reference the resolved textures.
+        if self.tex_dirty != 0 {
+            self.snapshot_dirty_textures(renderer, &mmio.ram_view());
+        }
+
+        if let Some(rec) = self.recorder.as_deref_mut()
+            && rec.is_recording()
+        {
+            let view = mmio.ram_view();
+            self::record_draw_arrays(rec, &view, &vf, data, vertex_count);
+            for desc in self.cur_textures.iter().flatten() {
+                let len = super::texture::raw_data_size(desc.width, desc.height, desc.format);
+                rec.use_draw_texture(&view, desc.ram_addr as u32, len);
+            }
+        }
+
         #[cfg(feature = "gx-stats")]
         {
             self.stats.draw_calls += 1;
@@ -153,6 +173,16 @@ impl GraphicsProcessor {
         boxed.material_color = self.cached_material_color;
         boxed.lights = self.cached_lights;
         boxed.active_texcoords = (self.xf_mem[crate::flipper::gx::constants::XF_NUM_TEXGENS] as u8).min(8);
+        // Z texture: only applied by hardware on the late-Z path; collapse to
+        // disabled under early-Z so the backend can keep early-Z pipelines.
+        let ztex2 = TevZtex2::from_raw(self.bp_regs[BP_TEV_ZTEX2]);
+        boxed.ztex_bias = TevZtex1::from_raw(self.bp_regs[BP_TEV_ZTEX1]).bias();
+        boxed.ztex_type = ztex2.tex_type();
+        boxed.ztex_op = if self.cur_pe_control.early_ztest() {
+            0
+        } else {
+            ztex2.op()
+        };
         boxed.frame_dirty = self.frame_state_dirty;
         self.frame_state_dirty = false;
         renderer.exec(GxAction::Draw(boxed));
@@ -570,6 +600,115 @@ impl GraphicsProcessor {
     }
 }
 
+fn record_draw_arrays(
+    rec: &mut super::recorder::FifoRecorder,
+    ram: &RamView<'_>,
+    vf: &VertexFormat,
+    data: &[u8],
+    vertex_count: usize,
+) {
+    let attr_stream_size = |attr: AttributeType, direct_size: usize| -> usize {
+        match attr {
+            AttributeType::Direct => direct_size,
+            AttributeType::Index8 => 1,
+            AttributeType::Index16 => 2,
+            AttributeType::None => 0,
+        }
+    };
+
+    let mut offset = 0usize;
+    offset += vf.has_pnmtxidx as usize;
+    for has in vf.has_tex_mtx_idx {
+        offset += has as usize;
+    }
+
+    let mut scan = |offset: usize, attr: AttributeType, base: usize, stride: usize, data_size: usize| {
+        self::scan_indexed_component(
+            rec,
+            ram,
+            data,
+            vf.vertex_stride,
+            vertex_count,
+            offset,
+            attr,
+            base,
+            stride,
+            data_size,
+        );
+    };
+
+    scan(offset, vf.pos_attr, vf.pos_base, vf.pos_stride, vf.pos_data_size);
+    offset += attr_stream_size(vf.pos_attr, vf.pos_data_size);
+
+    scan(offset, vf.nrm_attr, vf.nrm_base_addr, vf.nrm_stride, vf.nrm_data_size);
+    offset += vf.vat_a.nrm_stream_size(vf.nrm_attr);
+
+    scan(offset, vf.clr0_attr, vf.clr0_base, vf.clr0_stride, vf.clr0_data_size);
+    offset += attr_stream_size(vf.clr0_attr, vf.clr0_data_size);
+
+    scan(offset, vf.clr1_attr, vf.clr1_base, vf.clr1_stride, vf.clr1_data_size);
+    offset += attr_stream_size(vf.clr1_attr, vf.clr1_data_size);
+
+    for tc in 0..8 {
+        scan(
+            offset,
+            vf.tex_attrs[tc],
+            vf.tex_bases[tc],
+            vf.tex_strides[tc],
+            vf.tex_data_sizes[tc],
+        );
+        offset += attr_stream_size(vf.tex_attrs[tc], vf.tex_data_sizes[tc]);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_indexed_component(
+    rec: &mut super::recorder::FifoRecorder,
+    ram: &RamView<'_>,
+    data: &[u8],
+    vertex_stride: usize,
+    vertex_count: usize,
+    offset: usize,
+    attr: AttributeType,
+    base: usize,
+    stride: usize,
+    data_size: usize,
+) {
+    let idx_size = match attr {
+        AttributeType::Index8 => 1,
+        AttributeType::Index16 => 2,
+        _ => return,
+    };
+
+    // All-ones indices skip the vertex on real hardware.
+    let mut max_index: Option<usize> = None;
+    for v in 0..vertex_count {
+        let p = v * vertex_stride + offset;
+        if p + idx_size > data.len() {
+            break;
+        }
+        let index = if idx_size == 1 {
+            match data[p] {
+                0xFF => continue,
+                i => i as usize,
+            }
+        } else {
+            match u16::from_be_bytes([data[p], data[p + 1]]) {
+                0xFFFF => continue,
+                i => i as usize,
+            }
+        };
+        if max_index.is_none_or(|m| index > m) {
+            max_index = Some(index);
+        }
+    }
+
+    if let Some(max) = max_index {
+        let len = stride * max + data_size;
+        rec.use_memory(ram, base as u32, len, super::recorder::MemoryUpdateType::VertexStream);
+    }
+}
+
 fn read_index(cur: &mut Cursor<&[u8]>, attr: AttributeType) -> usize {
     match attr {
         AttributeType::Index8 => {
@@ -727,21 +866,13 @@ fn dispatch_decode<const SYSTEM: SystemId>(
         };
 
         if let Some(parser) = parser {
-            let gp_raw = gp as *mut GraphicsProcessor as *mut std::ffi::c_void;
             let xf_mem_ptr = gp.xf_mem.as_ptr();
             let arrays_ptr = gp.jit_vtx_arrays.0.as_ptr();
             let base = verts.len();
             let out_ptr = unsafe { verts.as_mut_ptr().add(base) };
 
             unsafe {
-                parser(
-                    gp_raw,
-                    xf_mem_ptr,
-                    arrays_ptr,
-                    data.as_ptr(),
-                    out_ptr,
-                    vertex_count as u32,
-                );
+                parser(xf_mem_ptr, arrays_ptr, data.as_ptr(), out_ptr, vertex_count as u32);
                 verts.set_len(base + vertex_count);
             }
 
@@ -763,11 +894,22 @@ fn run_interpreter<const SYSTEM: SystemId>(
     vf: &VertexFormat,
     verts: &mut Vec<DrawVertex>,
 ) {
+    self::decode_vertices(gp, mmio, data, vertex_count, vf, verts);
+}
+
+fn decode_vertices<const SYSTEM: SystemId>(
+    gp: &mut GraphicsProcessor,
+    mmio: &mut Mmio<SYSTEM>,
+    data: &[u8],
+    vertex_count: usize,
+    vf: &VertexFormat,
+    dest: &mut Vec<DrawVertex>,
+) {
     let view = mmio.ram_view();
     let mut cur = Cursor::new(data);
     for _ in 0..vertex_count {
         let v = gp.decode_vertex(&mut cur, data, &view, vf);
-        verts.push(v);
+        dest.push(v);
     }
 }
 
@@ -780,25 +922,14 @@ fn run_validator<const SYSTEM: SystemId>(
     data: &[u8],
     vertex_count: usize,
     vf: &VertexFormat,
-    verts: &mut Vec<DrawVertex>,
+    verts: &[DrawVertex],
     base: usize,
 ) {
-    if !gp.jit_vtx_validator.enabled {
-        return;
-    }
-
     let mut interp_buf = std::mem::take(&mut gp.jit_vtx_validator.interp_scratch);
     interp_buf.clear();
     interp_buf.reserve(vertex_count);
 
-    {
-        let view = mmio.ram_view();
-        let mut cur = Cursor::new(data);
-        for _ in 0..vertex_count {
-            let v = gp.decode_vertex(&mut cur, data, &view, vf);
-            interp_buf.push(v);
-        }
-    }
+    self::decode_vertices(gp, mmio, data, vertex_count, vf, &mut interp_buf);
 
     let ctx = jit::validate::CompareCtx {
         key,
@@ -808,10 +939,6 @@ fn run_validator<const SYSTEM: SystemId>(
     let jit_slice = &verts[base..base + vertex_count];
     let mismatches = jit::validate::compare_draw_vertices(jit_slice, &interp_buf, &ctx);
     gp.jit_vtx_validator.record(&ctx, &mismatches);
-
-    if !gp.jit_vtx_validator.use_jit_output_downstream {
-        verts[base..base + vertex_count].copy_from_slice(&interp_buf);
-    }
 
     gp.jit_vtx_validator.interp_scratch = interp_buf;
 }

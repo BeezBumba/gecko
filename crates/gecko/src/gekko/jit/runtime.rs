@@ -212,6 +212,7 @@ fn write_spr<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, num: u32, val: u3
                 if let Some((phys, len)) = sys.mmio.process_locked_cache_dma(&dmau, &dmal) {
                     sys.mmio.queue_icbi_for_range(phys, len);
                 }
+                sys.gekko.spr.dmal.set_trigger(false);
             }
         }
         _ => sys.gekko.spr.write(num, val),
@@ -572,6 +573,18 @@ pub extern "C" fn cause_icbi_gc(sys: *mut core::ffi::c_void, ea: u32) {
 }
 pub extern "C" fn cause_icbi_wii(sys: *mut core::ffi::c_void, ea: u32) {
     cause_icbi::<WII>(sys.cast(), ea);
+}
+
+#[inline(always)]
+fn do_dcbz<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, ea: u32) {
+    unsafe { (*sys).dcbz_line(ea) }
+}
+
+pub extern "C" fn dcbz_gc(sys: *mut core::ffi::c_void, ea: u32) {
+    do_dcbz::<GC>(sys.cast(), ea);
+}
+pub extern "C" fn dcbz_wii(sys: *mut core::ffi::c_void, ea: u32) {
+    do_dcbz::<WII>(sys.cast(), ea);
 }
 
 #[inline(always)]

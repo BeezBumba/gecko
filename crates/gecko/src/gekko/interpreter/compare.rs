@@ -5,6 +5,7 @@ use crate::system::{System, SystemId};
 
 #[inline(always)]
 pub fn compare<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
     let mut field = match OP {
         OP_CMP => ConditionRegister::field_from_ord(
             (ctx.gekko.read_gpr(instr.ra()) as i32).cmp(&(ctx.gekko.read_gpr(instr.rb()) as i32)),

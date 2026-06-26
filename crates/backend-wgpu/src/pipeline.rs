@@ -59,10 +59,13 @@ pub(crate) struct PipelineKey {
     pub color_update: bool,
     pub alpha_update: bool,
     pub cull_mode: CullMode,
+    /// Z-texturing active for this draw: selects the `fs_main_ztex` entry
+    /// point, which writes `frag_depth` (disabling early-Z only where needed).
+    pub ztex: bool,
 }
 
 impl PipelineKey {
-    const BYTES: usize = 12;
+    const BYTES: usize = 13;
 
     fn to_bytes(self) -> [u8; Self::BYTES] {
         [
@@ -78,6 +81,7 @@ impl PipelineKey {
             self.color_update as u8,
             self.alpha_update as u8,
             self.cull_mode.raw(),
+            self.ztex as u8,
         ]
     }
 
@@ -95,6 +99,7 @@ impl PipelineKey {
             color_update: b[9] != 0,
             alpha_update: b[10] != 0,
             cull_mode: CullMode::from_raw(b[11]),
+            ztex: b[12] != 0,
         }
     }
 }
@@ -304,7 +309,7 @@ impl GxRenderer {
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if key.ztex { "fs_main_ztex" } else { "fs_main" }),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: self.surface_format,
                     blend,

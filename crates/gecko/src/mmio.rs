@@ -462,9 +462,10 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
     ) -> Option<(u32, u32)> {
         let ram_addr = dmau.ram_addr() << 5;
         let lcache_vaddr = dmal.lcache_addr() << 5;
-        let lcache_paddr = (lcache_vaddr - LCACHE_BASE) as usize;
+        let lcache_paddr = lcache_vaddr as usize & (LCACHE_SIZE - 1);
         let block_count = ((dmau.length_hi() as usize) << 2) | dmal.length_lo() as usize;
-        let length = if block_count == 0 { 128 } else { block_count } * 32;
+        let blocks = if block_count == 0 { 128 } else { block_count };
+        let length = (blocks * 32).min(LCACHE_SIZE - lcache_paddr);
 
         tracing::debug!(
             ram_addr = format!("{ram_addr:08X}"),

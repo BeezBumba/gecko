@@ -83,12 +83,13 @@ pub struct CpClear {
 crate::mmio_reg!(CpClear: u16 @ 0xCC000004);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for CpClear {
-    fn read(_gc: &mut System<SYSTEM>) -> Self {
-        tracing::warn!("attempted to read from write only CpClear register");
-        Self::from_raw(0)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        tracing::debug!("attempted to read from write only CpClear register");
+        sys.cp.clear
     }
 
     fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.cp.clear = self;
         if self.clear_overflow() {
             sys.cp.status = sys.cp.status.with_fifo_overflow(false);
         }

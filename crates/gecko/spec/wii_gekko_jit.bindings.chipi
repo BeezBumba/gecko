@@ -160,13 +160,16 @@ target rust {
             dcbt
             dcbtst
             dcba
-            dcbz
-            dcbz_l
             tlbie
             tlbia
             tlbsync
             tlbld
             tlbli
+        }
+
+        handler dcbz {
+            dcbz
+            dcbz_l
         }
 
         handler icbi {
